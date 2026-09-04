@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/task-contract.schema.json",
+  "title": "TaskContract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "process_id", "role", "goal", "input_artifacts", "expected_output", "capabilities", "effort_budget", "completion_criteria", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "pattern": "^task-[a-z0-9-]+$"},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "role": {"enum": ["orchestrator", "worker", "verifier", "security-investigator"]},
+    "goal": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "input_artifacts": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://"}},
+    "expected_output": {"type": "string", "minLength": 1},
+    "capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "effort_budget": {"type": "integer", "minimum": 1},
+    "completion_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

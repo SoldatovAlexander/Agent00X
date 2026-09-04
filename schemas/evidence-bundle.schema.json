@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/evidence-bundle.schema.json",
+  "title": "EvidenceBundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evidence_id", "process_id", "task_id", "worker_build_id", "patch_digest", "test_results", "source_digests", "assumptions", "limitations", "created_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "evidence_id": {"type": "string", "pattern": "^evidence-[a-z0-9-]+$"},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "task_id": {"type": "string", "pattern": "^task-[a-z0-9-]+$"},
+    "worker_build_id": {"type": "string", "pattern": "^build-[a-z0-9-]+$"},
+    "patch_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "test_results": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["test_id", "status", "report_digest"],
+        "properties": {
+          "test_id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed", "skipped"]},
+          "report_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "source_digests": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

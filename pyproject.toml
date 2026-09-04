@@ -1,0 +1,9 @@
+[project]
+name = "agent-process-platform"
+version = "0.0.1"
+requires-python = ">=3.11"
+description = "Executable contracts for the Agent Process Platform MVP"
+
+[tool.unittest]
+start-directory = "tests"
+

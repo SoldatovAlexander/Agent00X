@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/canonical-envelope.schema.json",
+  "title": "CanonicalEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message_id", "correlation_id", "source", "destination", "intent", "payload", "provenance", "security", "limits"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "message_id": {"type": "string", "pattern": "^msg-[a-z0-9-]+$"},
+    "correlation_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["principal_id", "protocol", "trust_domain"],
+      "properties": {
+        "principal_id": {"type": "string", "minLength": 1},
+        "protocol": {"enum": ["internal", "a2a", "mcp", "ag-ui", "a2ui", "acp", "mhs"]},
+        "trust_domain": {"type": "string", "minLength": 1}
+      }
+    },
+    "destination": {
+      "type": "object", "additionalProperties": false,
+      "required": ["principal_id", "port"],
+      "properties": {
+        "principal_id": {"type": "string", "minLength": 1},
+        "port": {"enum": ["task", "data", "tool", "artifact", "event", "approval", "credential-operation"]}
+      }
+    },
+    "intent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation", "risk_class"],
+      "properties": {
+        "operation": {"type": "string", "minLength": 1},
+        "risk_class": {"enum": ["low", "medium", "high", "critical"]}
+      }
+    },
+    "payload": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "artifact_ref", "content_digest"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "artifact_ref": {"type": "string", "pattern": "^artifact://"},
+        "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["origin", "delegation_chain"],
+      "properties": {
+        "origin": {"type": "string", "minLength": 1},
+        "delegation_chain": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "security": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trust", "sensitivity", "tainted", "permitted_uses", "forbidden_uses"],
+      "properties": {
+        "trust": {"enum": ["trusted-control", "authenticated-untrusted", "untrusted"]},
+        "sensitivity": {"enum": ["public", "internal", "confidential", "restricted"]},
+        "tainted": {"type": "boolean"},
+        "permitted_uses": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "forbidden_uses": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expires_at", "max_response_bytes"],
+      "properties": {
+        "expires_at": {"type": "string", "format": "date-time"},
+        "max_response_bytes": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

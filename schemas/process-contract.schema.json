@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/process-contract.schema.json",
+  "title": "ProcessContract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "process_id", "owner_id", "goal", "repository_id", "acceptance_criteria", "data_classification", "effort_budget", "approval_profile", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "owner_id": {"type": "string", "minLength": 1},
+    "goal": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "repository_id": {"type": "string", "pattern": "^github-installation/[0-9]+/repository/[0-9]+$"},
+    "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "data_classification": {"enum": ["public", "internal", "confidential", "restricted"]},
+    "effort_budget": {"type": "integer", "minimum": 1},
+    "approval_profile": {"enum": ["always", "risk-based", "mandate"]},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

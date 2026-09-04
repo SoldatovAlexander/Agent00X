@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/action-receipt.schema.json",
+  "title": "ActionReceipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "receipt_id", "process_id", "operation", "intent_digest", "staged_change_digest", "policy_decision_id", "approval_id", "repository_id", "branch", "commit_sha", "pull_request_id", "pull_request_url", "idempotency_key", "status", "postcondition", "started_at", "completed_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "receipt_id": {"type": "string", "pattern": "^receipt-[a-z0-9-]+$"},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "operation": {"const": "publish_pull_request"},
+    "intent_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "staged_change_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "policy_decision_id": {"type": "string", "pattern": "^decision-[a-z0-9-]+$"},
+    "approval_id": {"type": "string", "pattern": "^approval-[a-z0-9-]+$"},
+    "repository_id": {"type": "string", "pattern": "^github-installation/[0-9]+/repository/[0-9]+$"},
+    "branch": {"type": "string", "pattern": "^agent/process-[a-z0-9-]+$"},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "pull_request_id": {"type": "integer", "minimum": 1},
+    "pull_request_url": {"type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+$"},
+    "idempotency_key": {"type": "string", "pattern": "^publish/process-[a-z0-9-]+/sha256:[0-9a-f]{64}$"},
+    "status": {"enum": ["succeeded", "failed", "unknown"]},
+    "postcondition": {"enum": ["verified", "failed", "unknown"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"}
+  }
+}

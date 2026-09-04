@@ -1,0 +1,175 @@
+{
+  "process_contract": {
+    "schema_version": 1,
+    "process_id": "process-demo-001",
+    "owner_id": "user-alice",
+    "goal": "Prepare a verified documentation change",
+    "repository_id": "github-installation/42/repository/1001",
+    "acceptance_criteria": ["Tests pass", "Only approved files change"],
+    "data_classification": "internal",
+    "effort_budget": 100,
+    "approval_profile": "always",
+    "expires_at": "2026-09-05T12:00:00Z"
+  },
+  "canonical_envelope": {
+    "schema_version": 1,
+    "message_id": "msg-demo-001",
+    "correlation_id": "process-demo-001",
+    "source": {
+      "principal_id": "user-alice",
+      "protocol": "internal",
+      "trust_domain": "personal"
+    },
+    "destination": {
+      "principal_id": "orchestrator-demo-001",
+      "port": "task"
+    },
+    "intent": {
+      "operation": "repository.change",
+      "risk_class": "medium"
+    },
+    "payload": {
+      "type": "process-contract",
+      "artifact_ref": "artifact://contracts/process-demo-001",
+      "content_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "provenance": {
+      "origin": "user",
+      "delegation_chain": ["user-alice"]
+    },
+    "security": {
+      "trust": "authenticated-untrusted",
+      "sensitivity": "internal",
+      "tainted": false,
+      "permitted_uses": ["task-creation"],
+      "forbidden_uses": ["authorization", "credential-access"]
+    },
+    "limits": {
+      "expires_at": "2026-09-05T12:00:00Z",
+      "max_response_bytes": 65536
+    }
+  },
+  "task_contract": {
+    "schema_version": 1,
+    "task_id": "task-demo-001",
+    "process_id": "process-demo-001",
+    "role": "worker",
+    "goal": "Prepare a minimal verified patch",
+    "input_artifacts": ["artifact://snapshots/demo-001"],
+    "expected_output": "evidence-bundle-v1",
+    "capabilities": ["workspace.read", "workspace.patch", "test.run", "evidence.submit"],
+    "effort_budget": 40,
+    "completion_criteria": ["Patch is scoped", "Allowlisted tests pass"],
+    "expires_at": "2026-09-05T12:00:00Z"
+  },
+  "evidence_bundle": {
+    "schema_version": 1,
+    "evidence_id": "evidence-demo-001",
+    "process_id": "process-demo-001",
+    "task_id": "task-demo-001",
+    "worker_build_id": "build-worker-demo-001",
+    "patch_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "test_results": [
+      {
+        "test_id": "unit-tests",
+        "status": "passed",
+        "report_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ],
+    "source_digests": ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    "assumptions": ["Fixture repository is authoritative"],
+    "limitations": [],
+    "created_at": "2026-09-04T12:02:00Z"
+  },
+  "verification_report": {
+    "schema_version": 1,
+    "verification_id": "verification-demo-001",
+    "process_id": "process-demo-001",
+    "evidence_digest": "sha256:247e8d1293208ad321b1ba5426d7a5a8cc0b3d0a956e44dc3248deafe914e4eb",
+    "verifier_id": "verifier-demo-001",
+    "verifier_build_id": "build-verifier-demo-001",
+    "checks": [
+      {
+        "criterion": "Allowlisted tests pass",
+        "status": "passed",
+        "evidence_ref": "artifact://reports/unit-tests"
+      }
+    ],
+    "verdict": "pass",
+    "blockers": [],
+    "created_at": "2026-09-04T12:03:00Z"
+  },
+  "staged_change": {
+    "schema_version": 1,
+    "staged_change_id": "staged-demo-001",
+    "process_id": "process-demo-001",
+    "repository_id": "github-installation/42/repository/1001",
+    "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "patch_artifact_ref": "artifact://patches/demo-001",
+    "patch_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "evidence_digest": "sha256:247e8d1293208ad321b1ba5426d7a5a8cc0b3d0a956e44dc3248deafe914e4eb",
+    "verification_digest": "sha256:f5831c268aa4abb74103528f650f8d6f30369be9842b2e43c04981c3e250c1c8",
+    "created_at": "2026-09-04T12:00:00Z",
+    "expires_at": "2026-09-05T12:00:00Z"
+  },
+  "approval": {
+    "schema_version": 1,
+    "approval_id": "approval-demo-001",
+    "approver_id": "user-alice",
+    "process_id": "process-demo-001",
+    "operation": "publish_pull_request",
+    "repository_id": "github-installation/42/repository/1001",
+    "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "policy_version": "policy-1",
+    "approved_at": "2026-09-04T12:05:00Z",
+    "expires_at": "2026-09-05T12:00:00Z"
+  },
+  "intent": {
+    "schema_version": 1,
+    "operation": "publish_pull_request",
+    "process_id": "process-demo-001",
+    "repository_id": "github-installation/42/repository/1001",
+    "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "approval_id": "approval-demo-001",
+    "branch_namespace": "agent/process-demo-001",
+    "title_artifact_ref": "artifact://pr/demo-001/title",
+    "body_artifact_ref": "artifact://pr/demo-001/body",
+    "idempotency_key": "publish/process-demo-001/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "audience": "github-installation-42",
+    "expires_at": "2026-09-05T12:00:00Z"
+  },
+  "policy_decision": {
+    "schema_version": 1,
+    "decision_id": "decision-demo-001",
+    "effect": "allow",
+    "reason_codes": ["owner-match", "digest-approved"],
+    "principal_id": "actuator-github-001",
+    "operation": "publish_pull_request",
+    "repository_id": "github-installation/42/repository/1001",
+    "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "policy_version": "policy-1",
+    "evaluated_at": "2026-09-04T12:06:00Z",
+    "expires_at": "2026-09-04T12:11:00Z"
+  },
+  "action_receipt": {
+    "schema_version": 1,
+    "receipt_id": "receipt-demo-001",
+    "process_id": "process-demo-001",
+    "operation": "publish_pull_request",
+    "intent_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "policy_decision_id": "decision-demo-001",
+    "approval_id": "approval-demo-001",
+    "repository_id": "github-installation/42/repository/1001",
+    "branch": "agent/process-demo-001",
+    "commit_sha": "1111111111111111111111111111111111111111",
+    "pull_request_id": 123,
+    "pull_request_url": "https://github.com/example/project/pull/123",
+    "idempotency_key": "publish/process-demo-001/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "status": "succeeded",
+    "postcondition": "verified",
+    "started_at": "2026-09-04T12:06:00Z",
+    "completed_at": "2026-09-04T12:07:00Z"
+  }
+}

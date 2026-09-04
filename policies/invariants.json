@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "invariants": [
+    {
+      "id": "INV-001",
+      "statement": "Agent-facing contracts contain no credential value fields",
+      "enforcement": ["schema-additional-properties-false", "gateway-redaction"],
+      "tests": ["test_secret_field_is_rejected"]
+    },
+    {
+      "id": "INV-002",
+      "statement": "Approval is bound to the canonical StagedChange digest",
+      "enforcement": ["canonical-sha256", "chain-validation"],
+      "tests": ["test_staged_digest_is_computed_from_canonical_content", "test_mutated_staged_change_invalidates_chain"]
+    },
+    {
+      "id": "INV-003",
+      "statement": "Only the registered publish_pull_request operation reaches the MVP actuator",
+      "enforcement": ["intent-const", "actuator-operation-registry"],
+      "tests": ["test_arbitrary_operation_is_rejected"]
+    },
+    {
+      "id": "INV-004",
+      "statement": "External side effects require a valid approval and staged digest",
+      "enforcement": ["workflow-state-machine", "authority-policy"],
+      "tests": ["test_publish_without_approval_is_rejected"]
+    },
+    {
+      "id": "INV-005",
+      "statement": "A process completes only with a receipt and verified postcondition",
+      "enforcement": ["workflow-state-machine"],
+      "tests": ["test_completion_without_receipt_is_rejected"]
+    },
+    {
+      "id": "INV-006",
+      "statement": "Idempotency is bound to process and staged content",
+      "enforcement": ["chain-validation", "actuator-idempotency-store"],
+      "tests": ["test_idempotency_key_is_bound_to_process_and_staged_digest"]
+    },
+    {
+      "id": "INV-007",
+      "statement": "Protocol authentication never grants authority by itself",
+      "enforcement": ["gateway-policy-decision", "capability-check"],
+      "tests": ["planned:gateway-fast-path-privilege-transition"]
+    },
+    {
+      "id": "INV-008",
+      "statement": "Unknown external side-effect outcome is reconciled, never blindly retried",
+      "enforcement": ["workflow-state-machine", "actuator-reconciliation"],
+      "tests": ["planned:crash-recovery-unknown-side-effect"]
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+# Матрица трассируемости PROC-001
+
+Статус: рабочая версия 0.1
+
+## Связи требований и проверок
+
+| Требование | Решения | Сценарии/правила | Валидация |
+|---|---|---|---|
+| Процесс первичен | ADR-001, ADR-013 | SC-001, BR-001, BR-002 | VP-01, VP-07 |
+| Оркестратор не видит секреты | ADR-002, ADR-003 | SC-005, BR-013 | VP-03 |
+| Делегирование только сужает права | ADR-004 | BR-003 | VP-04 |
+| Вся коммуникация через Gateway | ADR-005—ADR-007 | EX-006, BR-014 | VP-02, VP-10 |
+| Injection не приводит к действию | ADR-008 | SC-004, BR-012 | VP-05 |
+| Изменения проходят staging | ADR-009 | SC-006, BR-006—BR-010 | VP-06, VP-07 |
+| Skills не предоставляют права | ADR-010 | TOOL-001—TOOL-006 | VP-09 |
+| Маршрутизация измерима | ADR-011 | SC-002 | VP-08 |
+| LLM не авторизует | ADR-012 | BR-002, BR-007, BR-013 | VP-03—VP-06 |
+| Мультиагентность обоснована | ADR-014 | Worker/Verifier separation | VP-08 |
+| MHS имеет независимую безопасность | ADR-015 | MHS safety rules | VP-11 |
+| Несколько локальных агентов изолированы | ADR-016 | Local Agent Host controls | VP-12 |
+| Создание субагента контролируется | ADR-017 | Delegation limits | VP-04, VP-12 |
+| Governance-контуры имеют проверяемые интерфейсы | ADR-019 | Governance controls | VP-01, VP-05—VP-08 |
+| Повторяемые профили не переносят старые полномочия | ADR-020 | Dormant lifecycle | VP-13 |
+| Agent Instance воспроизводим как полная сборка | ADR-021 | Agent build identity | VP-16 |
+| Рекурсивный spawn оправдан и ограничен | ADR-022 | Delegation Value Gate | VP-04, VP-12, VP-14 |
+| Identity отделена от authority | ADR-023 | Grants, receipts, mandates | VP-14, VP-17 |
+| Связки улучшаются через eval lifecycle | ADR-024 | Shadow and re-evaluation | VP-16 |
+| Gateway адаптирует проверки к риску без обхода инвариантов | ADR-025 | Fast/Slow/Degraded Path | VP-05, VP-18 |
+| Sandbox использует сменный проверяемый backend | ADR-026 | Sandbox profile | VP-02, VP-12 |
+| MVP доказывает secretless публикацию PR | ADR-027 | PROC-001, GitHub Actuator | VP-01—VP-07, VP-18—VP-19 |
+
+## Блокеры MVP
+
+| ID | Блокер | Проверка снятия |
+|---|---|---|
+| BLK-001 | Секрет обнаруживается вне Broker | VP-03 |
+| BLK-002 | Worker обходит Gateway | VP-02 |
+| BLK-003 | Capability расширяется при делегировании | VP-04 |
+| BLK-004 | Injection приводит к write или secret operation | VP-05 |
+| BLK-005 | Approval не связан с digest | VP-06 |
+| BLK-006 | Side effect повторяется после сбоя | VP-07 |
+| BLK-007 | Нельзя восстановить действие по audit | VP-02—VP-07 |
+| BLK-008 | Соседний агент читает чужой workspace или context | VP-12 |
+| BLK-009 | Recursive spawn или resource exhaustion останавливает host | VP-12 |
+| BLK-010 | Dormant Specialist переносит старые права или контекст | VP-13 |
+| BLK-011 | Identity принимается как достаточное полномочие | VP-14 |
+| BLK-012 | Policy replay расходится с runtime enforcement | VP-15 |
+| BLK-013 | Candidate получает side effects в shadow mode | VP-16 |
+| BLK-014 | Внешний агент расширяет trust через протокол | VP-17 |
+
+## Блокеры MHS-пилота
+
+| ID | Блокер | Проверка снятия |
+|---|---|---|
+| MHS-BLK-001 | LLM может обойти аппаратный диапазон | VP-11 |
+| MHS-BLK-002 | Нет независимого emergency stop | VP-11 |
+| MHS-BLK-003 | Не определено безопасное состояние при потере связи | VP-11 |
+| MHS-BLK-004 | Две сессии могут конфликтовать | VP-11 |
+| MHS-BLK-005 | Телеметрия может расширить capabilities | VP-05, VP-11 |
+
+## Правило изменения
+
+Новое архитектурное решение должно получить ADR и как минимум одну проверку.
+Новая capability должна иметь владельца, негативный тест и ссылку на правило.
+Новый критический инструмент должен иметь approval, idempotency и audit contract.

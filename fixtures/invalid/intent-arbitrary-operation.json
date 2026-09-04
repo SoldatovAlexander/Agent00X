@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "operation": "run_arbitrary_shell",
+  "process_id": "process-demo-001",
+  "repository_id": "github-installation/42/repository/1001",
+  "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+  "approval_id": "approval-demo-001",
+  "branch_namespace": "agent/process-demo-001",
+  "title_artifact_ref": "artifact://pr/demo-001/title",
+  "body_artifact_ref": "artifact://pr/demo-001/body",
+  "idempotency_key": "publish/process-demo-001/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+  "audience": "github-installation-42",
+  "expires_at": "2026-09-05T12:00:00Z"
+}

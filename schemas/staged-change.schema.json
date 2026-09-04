@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/staged-change.schema.json",
+  "title": "StagedChange",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "staged_change_id", "process_id", "repository_id", "base_commit", "patch_artifact_ref", "patch_digest", "evidence_digest", "verification_digest", "created_at", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "staged_change_id": {"type": "string", "pattern": "^staged-[a-z0-9-]+$"},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "repository_id": {"type": "string", "pattern": "^github-installation/[0-9]+/repository/[0-9]+$"},
+    "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "patch_artifact_ref": {"type": "string", "pattern": "^artifact://"},
+    "patch_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "verification_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

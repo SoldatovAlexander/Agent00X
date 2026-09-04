@@ -28,7 +28,7 @@ M4 Dual UX                   PLANNED
 | Documentation baseline | Выполнен | Видение, ADR, threat model, process model, бриф и план связаны | Изменять только по результатам реализации |
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
 | M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
-| M1 Safe local preparation | В работе | Docker smoke test подтверждает network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
+| M1 Safe local preparation | В работе | Docker smoke test и GitHub Actions подтверждают network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
 | M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, Broker interface, mock actuator и recovery | GitHub App Broker и real actuator |
 | M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary и threat-corpus tests проходят на mock boundary | Network bypass и real-boundary tests |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
@@ -77,6 +77,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - durable publication journal; recovery по idempotency key или reconciliation_required.
 - Docker sandbox backend с default-deny network profile, без automatic pull/fallback.
 - Docker smoke test: network deny, read-only snapshot и writable ephemeral workspace.
+- GitHub Actions workflow запускает contract- и Docker integration-тесты на каждом push и pull request.
 
 ### Reference preparation pipeline
 
@@ -124,6 +125,9 @@ Threat corpus исполняет ожидаемые результаты Gateway
 Docker smoke test выполнен на Docker Desktop 28.3.3 с образом `python:3.12-alpine`.
 Network deny, read-only snapshot и isolated workspace подтверждены; устойчивость
 к container escape и полноценная kernel isolation ещё не доказаны.
+Тот же профиль успешно прошёл на чистом GitHub runner. Контейнер запускается от
+непривилегированного UID/GID владельца workspace, поэтому writable workspace
+проверяется одинаково локально и в CI.
 
 ## 5. Что ещё не доказано
 
@@ -156,7 +160,8 @@ development fallback и не заявляет network/kernel isolation.
 ### Repository state
 
 Рабочая директория является Git-репозиторием на ветке `main`; remote
-`origin` настроен на GitHub. CI пока не подтверждён.
+`origin` настроен на GitHub. CI подтверждён: workflow `MVP verification`
+выполняет 71 платформенный тест, включая Docker integration profile.
 
 ## 7. Блокеры и ограничения
 

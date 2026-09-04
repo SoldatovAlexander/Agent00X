@@ -171,7 +171,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
         self.assertEqual(token.value, "github-token-opaque")
         self.assertEqual(token.expires_at, "2026-09-04T12:10:00Z")
         self.assertEqual(calls[0][0], "https://api.github.com/app/installations/456/access_tokens")
-        self.assertEqual(calls[0][2], {"repositories": ["example/agent00x-sandbox"], "permissions": {"contents": "write", "pull_requests": "write"}})
+        self.assertEqual(calls[0][2], {"repositories": ["agent00x-sandbox"], "permissions": {"contents": "write", "pull_requests": "write"}})
         jwt = calls[0][1]["Authorization"].removeprefix("Bearer ")
         header, payload, signature = jwt.split(".")
         self.assertEqual(json.loads(base64.urlsafe_b64decode(header + "==")), {"alg": "RS256", "typ": "JWT"})

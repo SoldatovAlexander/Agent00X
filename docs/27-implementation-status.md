@@ -82,6 +82,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - Trusted GitHub PR channel разрешает только связанный installation/repository и `agent/process-*` branch, формируя фиксированный `POST /pulls` payload без произвольного endpoint или credential поля.
 - Перед созданием PR trusted channel выполняет reconciliation по idempotency marker и возвращает уже созданный PR без второго external side effect.
 - Локальная preflight-команда проверяет GitHub App metadata без сетевого вызова и без чтения key content; локальные `.env.github-app`, `.github-app/`, `*.pem` и `*.key` исключены из Git.
+- GitHub installation-token request передаёт GitHub только короткое имя allowlisted repository, как требует API; full `owner/repository` остаётся для endpoint binding и audit context.
 
 ### Reference preparation pipeline
 

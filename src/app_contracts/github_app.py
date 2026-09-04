@@ -109,7 +109,7 @@ class GitHubAppInstallationTokenMinter:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
             {
-                "repositories": [self._config.repository],
+                "repositories": [self._config.repository.split("/", 1)[1]],
                 "permissions": _github_permissions(credential_grant.get("permissions")),
             },
         )

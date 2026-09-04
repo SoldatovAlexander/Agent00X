@@ -21,6 +21,13 @@ class PreparedChange:
     staged_change: dict
 
 
+@dataclass(frozen=True)
+class PublishableFile:
+    path: str
+    content: str
+    content_digest: str
+
+
 def prepare_change(
     sandbox: LocalProcessSandbox,
     *,
@@ -136,6 +143,26 @@ def prepare_change(
     return PreparedChange(patch, evidence, verification, staged)
 
 
+def build_publish_manifest(sandbox: LocalProcessSandbox, prepared: PreparedChange, changes: Mapping[str, str]) -> tuple[PublishableFile, ...]:
+    """Export only verified workspace files after re-binding them to the staged patch."""
+
+    if sha256_bytes(prepared.patch.encode("utf-8")) != prepared.staged_change["patch_digest"]:
+        raise ContractValidationError("staged change patch digest no longer matches prepared change")
+    manifest: list[PublishableFile] = []
+    for relative_name, expected_content in sorted(changes.items()):
+        relative = _safe_relative_path(relative_name)
+        workspace_file = _contained_file(sandbox.workspace, relative)
+        if not workspace_file.is_file() or workspace_file.is_symlink():
+            raise ContractValidationError(f"verified workspace file is unavailable: {relative_name}")
+        content = workspace_file.read_text(encoding="utf-8")
+        if content != expected_content:
+            raise ContractValidationError(f"verified workspace content changed: {relative_name}")
+        manifest.append(PublishableFile(relative.as_posix(), content, sha256_bytes(content.encode("utf-8"))))
+    if not manifest:
+        raise ContractValidationError("publish manifest is empty")
+    return tuple(manifest)
+
+
 def _safe_relative_path(value: str) -> Path:
     path = Path(value)
     if path.is_absolute() or ".." in path.parts or value in {"", "."}:
@@ -152,4 +179,3 @@ def _contained_file(root: Path, relative: Path) -> Path:
 
 def _format_time(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-

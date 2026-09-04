@@ -8,8 +8,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.digests import sha256_digest
-from app_contracts.repository_process import prepare_change
+from app_contracts.digests import sha256_bytes, sha256_digest
+from app_contracts.repository_process import build_publish_manifest, prepare_change
 from app_contracts.sandbox import LocalProcessSandboxBackend
 from app_contracts.validator import ContractValidationError, validate
 
@@ -61,6 +61,15 @@ class RepositoryProcessTests(unittest.TestCase):
         self.assertNotIn("def subtract", (sandbox.snapshot / "calculator.py").read_text())
         self.assertNotIn("def subtract", (self.fixture / "calculator.py").read_text())
         self.assertIn("def subtract", (sandbox.workspace / "calculator.py").read_text())
+
+    def test_publish_manifest_exports_only_verified_workspace_content(self):
+        sandbox, result = self.prepare()
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
+        self.assertEqual(manifest[0].path, "calculator.py")
+        self.assertEqual(manifest[0].content_digest, sha256_bytes(self.new_calculator.encode("utf-8")))
+        (sandbox.workspace / "calculator.py").write_text("mutated", encoding="utf-8")
+        with self.assertRaisesRegex(ContractValidationError, "content changed"):
+            build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
 
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:

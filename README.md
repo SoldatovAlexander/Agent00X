@@ -74,11 +74,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 
 `.env.github-app.example` содержит только метаданные для отдельного
 allowlisted тестового репозитория. `GitHubAppBrokerConfig` выполняет fail-closed
-preflight: принимает лишь положительные App/Installation ID, формат `owner/name`,
+preflight: принимает лишь положительные App/Installation/Repository ID, формат `owner/name`,
 HTTPS API URL и существующий private-key file с правами не шире `0600`. Ключ не
 читается, не печатается и не передаётся worker на этапе preflight. Только
 доверенный Broker может прочитать его для RS256 JWT и получить short-lived token;
 token остаётся во внутреннем канале actuator и не возвращается вызывающей стороне.
+`GitHubAppPublicationChannel` принимает только typed `publish_pull_request` для
+связанного installation/repository и agent branch namespace, затем вызывает
+фиксированный GitHub `POST /repos/{owner}/{repo}/pulls` payload.
 
 ## Документы
 

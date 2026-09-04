@@ -11,9 +11,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from typing import Mapping
+from typing import Any, Mapping
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
+
+from .broker import validate_credential_use_grant
+from .validator import ContractValidationError
 
 
 class GitHubAppConfigurationError(ValueError):
@@ -31,6 +34,7 @@ class GitHubAppBrokerError(RuntimeError):
 class GitHubAppBrokerConfig:
     app_id: int
     installation_id: int
+    repository_id: int
     repository: str
     private_key_path: Path
     api_url: str
@@ -40,6 +44,7 @@ class GitHubAppBrokerConfig:
         source = os.environ if environ is None else environ
         app_id = _positive_integer(source, "AGENT_GITHUB_APP_ID")
         installation_id = _positive_integer(source, "AGENT_GITHUB_INSTALLATION_ID")
+        repository_id = _positive_integer(source, "AGENT_GITHUB_REPOSITORY_ID")
         repository = _required(source, "AGENT_GITHUB_TEST_REPOSITORY")
         if not _REPOSITORY_PATTERN.fullmatch(repository):
             raise GitHubAppConfigurationError("AGENT_GITHUB_TEST_REPOSITORY must be owner/name")
@@ -54,7 +59,7 @@ class GitHubAppBrokerConfig:
         parsed = urlparse(api_url)
         if parsed.scheme != "https" or not parsed.netloc:
             raise GitHubAppConfigurationError("AGENT_GITHUB_API_URL must be an absolute https URL")
-        return cls(app_id, installation_id, repository, key_path, api_url.rstrip("/"))
+        return cls(app_id, installation_id, repository_id, repository, key_path, api_url.rstrip("/"))
 
 
 def _required(source: Mapping[str, str], name: str) -> str:
@@ -160,3 +165,71 @@ def _post_json(url: str, headers: Mapping[str, str], payload: Mapping[str, objec
     if not isinstance(decoded, dict):
         raise GitHubAppBrokerError("GitHub App token response must be an object")
     return decoded
+
+
+@dataclass(frozen=True)
+class GitHubPullRequest:
+    pull_request_id: int
+    pull_request_url: str
+    repository_id: str
+    branch: str
+    staged_change_digest: str
+    idempotency_key: str
+
+
+class GitHubAppPublicationChannel:
+    """Actuator-only channel for one typed GitHub pull-request operation."""
+
+    def __init__(self, config: GitHubAppBrokerConfig, token: _InstallationToken, *, post_json=None) -> None:
+        self._config = config
+        self._token = token
+        self._post_json = post_json or _post_json
+
+    def publish_pull_request(self, request: dict[str, Any]) -> GitHubPullRequest:
+        expected = {"operation", "repository_id", "branch", "staged_change_digest", "idempotency_key", "policy_effect", "approval_valid"}
+        if set(request) != expected or request["operation"] != "publish_pull_request":
+            raise ContractValidationError("GitHub actuator: request shape or operation is invalid")
+        repository_id = f"github-installation/{self._config.installation_id}/repository/{self._config.repository_id}"
+        if request["repository_id"] != repository_id:
+            raise ContractValidationError("GitHub actuator: request repository is not allowlisted")
+        if request["policy_effect"] != "allow" or request["approval_valid"] is not True:
+            raise ContractValidationError("GitHub actuator: authority proof is invalid")
+        branch = request["branch"]
+        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+            raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        response = self._post_json(
+            urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/pulls"),
+            {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self._token.value}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            {
+                "title": f"Agent publication: {branch}",
+                "head": branch,
+                "base": "main",
+                "body": f"Automated publication for staged change `{request['staged_change_digest']}`.",
+            },
+        )
+        number, html_url = response.get("number"), response.get("html_url")
+        if not isinstance(number, int) or number < 1 or not isinstance(html_url, str) or not html_url.startswith("https://"):
+            raise GitHubAppBrokerError("GitHub pull-request response is missing required fields")
+        return GitHubPullRequest(number, html_url, repository_id, branch, request["staged_change_digest"], request["idempotency_key"])
+
+
+class GitHubAppCredentialBroker:
+    """Single-use Broker that mints a private token and opens one actuator channel."""
+
+    def __init__(self, config: GitHubAppBrokerConfig, token_minter: GitHubAppInstallationTokenMinter, *, post_json=None) -> None:
+        self._config = config
+        self._token_minter = token_minter
+        self._post_json = post_json
+        self._used_grants: set[str] = set()
+
+    def open_github_publication_channel(self, credential_grant: dict[str, Any], actuator_request: dict[str, Any]) -> GitHubAppPublicationChannel:
+        validate_credential_use_grant(credential_grant, actuator_request)
+        grant_id = credential_grant["credential_grant_id"]
+        if grant_id in self._used_grants:
+            raise ContractValidationError("broker: credential grant already used")
+        self._used_grants.add(grant_id)
+        return GitHubAppPublicationChannel(self._config, self._token_minter.mint(credential_grant), post_json=self._post_json)

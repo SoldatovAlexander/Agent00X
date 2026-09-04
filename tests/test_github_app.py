@@ -18,6 +18,7 @@ from app_contracts.github_app import (
     GitHubAppInstallationTokenMinter,
     GitHubAppBrokerError,
 )
+from app_contracts.validator import ContractValidationError
 
 
 class GitHubAppConfigurationTests(unittest.TestCase):
@@ -25,6 +26,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
         return {
             "AGENT_GITHUB_APP_ID": "123",
             "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
             "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
             "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
         }
@@ -37,6 +39,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
         self.assertEqual(config.app_id, 123)
         self.assertEqual(config.installation_id, 456)
+        self.assertEqual(config.repository_id, 1001)
         self.assertEqual(config.repository, "example/agent00x-sandbox")
         self.assertEqual(config.api_url, "https://api.github.com")
 
@@ -55,6 +58,42 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             environment["AGENT_GITHUB_API_URL"] = "http://api.github.com"
             with self.assertRaisesRegex(GitHubAppConfigurationError, "https"):
                 GitHubAppBrokerConfig.from_environment(environment)
+
+    def test_publication_channel_posts_only_allowlisted_typed_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            calls = []
+            from app_contracts.github_app import _InstallationToken, GitHubAppPublicationChannel
+            channel = GitHubAppPublicationChannel(
+                config, _InstallationToken("opaque-token", "2026-09-04T12:10:00Z"),
+                post_json=lambda url, headers, payload: calls.append((url, headers, payload)) or {"number": 7, "html_url": "https://github.com/example/agent00x-sandbox/pull/7"},
+            )
+            result = channel.publish_pull_request({
+                "operation": "publish_pull_request",
+                "repository_id": "github-installation/456/repository/1001",
+                "branch": "agent/process-demo-001",
+                "staged_change_digest": "sha256:" + "a" * 64,
+                "idempotency_key": "publish/process-demo-001/sha256:" + "a" * 64,
+                "policy_effect": "allow",
+                "approval_valid": True,
+            })
+        self.assertEqual(result.pull_request_id, 7)
+        self.assertEqual(calls[0][0], "https://api.github.com/repos/example/agent00x-sandbox/pulls")
+        self.assertEqual(calls[0][2]["head"], "agent/process-demo-001")
+        self.assertEqual(calls[0][2]["base"], "main")
+
+    def test_publication_channel_rejects_unallowlisted_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import _InstallationToken, GitHubAppPublicationChannel
+            channel = GitHubAppPublicationChannel(GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"))
+            with self.assertRaisesRegex(ContractValidationError, "not allowlisted"):
+                channel.publish_pull_request({"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/999", "branch": "agent/process-demo-001", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "key", "policy_effect": "allow", "approval_valid": True})
 
     def test_preflight_rejects_key_file_with_broad_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

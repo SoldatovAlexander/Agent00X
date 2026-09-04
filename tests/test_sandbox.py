@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import subprocess
 import sys
 import unittest
 
@@ -66,16 +67,33 @@ class SandboxTests(unittest.TestCase):
     def test_docker_backend_enforces_network_mount_and_workspace_profile(self):
         backend = DockerSandboxBackend("python:3.12-alpine")
         snapshot = ROOT / "fixtures" / "repository" / "project"
-        with backend.create(snapshot, {"python"}) as sandbox:
-            self.assertTrue(sandbox.network_isolated)
-            self.assertEqual(sandbox.run(("python", "--version")).returncode, 0)
-            network = sandbox.run(("python", "-c", "import socket; socket.create_connection(('1.1.1.1', 53), timeout=1)"))
-            self.assertNotEqual(network.returncode, 0)
-            snapshot_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('/snapshot/blocked').write_text('x')"))
-            self.assertNotEqual(snapshot_write.returncode, 0)
-            workspace_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('created-in-container').write_text('ok')"))
-            self.assertEqual(workspace_write.returncode, 0)
-            self.assertTrue((sandbox.workspace / "created-in-container").exists())
+        original_canary = os.environ.get("AGENT_PROCESS_HOST_CANARY")
+        os.environ["AGENT_PROCESS_HOST_CANARY"] = "host-only-value"
+        try:
+            with backend.create(snapshot, {"python", "env"}) as sandbox:
+                self.assertTrue(sandbox.network_isolated)
+                self.assertEqual(sandbox.run(("python", "--version")).returncode, 0)
+                network = sandbox.run(("python", "-c", "import socket; socket.create_connection(('1.1.1.1', 53), timeout=1)"))
+                self.assertNotEqual(network.returncode, 0)
+                snapshot_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('/snapshot/blocked').write_text('x')"))
+                self.assertNotEqual(snapshot_write.returncode, 0)
+                rootfs_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('/root/blocked').write_text('x')"))
+                self.assertNotEqual(rootfs_write.returncode, 0)
+                environment = sandbox.run(("env",))
+                self.assertNotIn("AGENT_PROCESS_HOST_CANARY=host-only-value", environment.stdout)
+                inspection = subprocess.run(
+                    ["docker", "inspect", "--format", "{{.HostConfig.NetworkMode}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.PidsLimit}}", sandbox._container_id],
+                    capture_output=True, text=True, check=True,
+                )
+                self.assertEqual(inspection.stdout.strip(), "none|true|64")
+                workspace_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('created-in-container').write_text('ok')"))
+                self.assertEqual(workspace_write.returncode, 0)
+                self.assertTrue((sandbox.workspace / "created-in-container").exists())
+        finally:
+            if original_canary is None:
+                os.environ.pop("AGENT_PROCESS_HOST_CANARY", None)
+            else:
+                os.environ["AGENT_PROCESS_HOST_CANARY"] = original_canary
 
 
 if __name__ == "__main__":

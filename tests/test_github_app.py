@@ -75,6 +75,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             channel = GitHubAppPublicationChannel(
                 config, _InstallationToken("opaque-token", "2026-09-04T12:10:00Z"),
                 post_json=lambda url, headers, payload: calls.append((url, headers, payload)) or {"number": 7, "html_url": "https://github.com/example/agent00x-sandbox/pull/7"},
+                get_json=lambda _url, _headers: [],
             )
             result = channel.publish_pull_request({
                 "operation": "publish_pull_request",
@@ -89,6 +90,23 @@ class GitHubAppConfigurationTests(unittest.TestCase):
         self.assertEqual(calls[0][0], "https://api.github.com/repos/example/agent00x-sandbox/pulls")
         self.assertEqual(calls[0][2]["head"], "agent/process-demo-001")
         self.assertEqual(calls[0][2]["base"], "main")
+        self.assertIn("agent-process-idempotency", calls[0][2]["body"])
+
+    def test_publication_channel_reconciles_existing_pr_without_second_post(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            request = {"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/1001", "branch": "agent/process-demo-001", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "publish/process-demo-001/sha256:" + "a" * 64, "policy_effect": "allow", "approval_valid": True}
+            marker = f"<!-- agent-process-idempotency: {request['idempotency_key']} -->"
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
+                post_json=lambda *_args: self.fail("a reconciled request must not create a second PR"),
+                get_json=lambda _url, _headers: [{"number": 9, "html_url": "https://github.com/example/agent00x-sandbox/pull/9", "body": marker}],
+            )
+            result = channel.publish_pull_request(request)
+        self.assertEqual(result.pull_request_id, 9)
 
     def test_publication_channel_rejects_unallowlisted_repository(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -168,6 +186,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             broker = GitHubAppCredentialBroker(
                 config, FakeMinter(),
                 post_json=lambda url, headers, payload: api_calls.append((url, headers, payload)) or {"number": 8, "html_url": "https://github.com/example/agent00x-sandbox/pull/8"},
+                get_json=lambda _url, _headers: [],
             )
             actuator_request = {
                 "actuator_id": "actuator-github-001",

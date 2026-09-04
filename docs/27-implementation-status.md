@@ -80,6 +80,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - GitHub Actions workflow запускает contract- и Docker integration-тесты на каждом push и pull request.
 - GitHub App preflight принимает только безопасные metadata и ссылку на private-key file с правами `0600`; trusted Broker подписывает RS256 JWT и запрашивает scoped short-lived token без передачи его worker.
 - Trusted GitHub PR channel разрешает только связанный installation/repository и `agent/process-*` branch, формируя фиксированный `POST /pulls` payload без произвольного endpoint или credential поля.
+- Перед созданием PR trusted channel выполняет reconciliation по idempotency marker и возвращает уже созданный PR без второго external side effect.
 
 ### Reference preparation pipeline
 

@@ -12,7 +12,7 @@ import re
 import shutil
 import subprocess
 from typing import Any, Mapping
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from .broker import validate_credential_use_grant
@@ -167,6 +167,15 @@ def _post_json(url: str, headers: Mapping[str, str], payload: Mapping[str, objec
     return decoded
 
 
+def _get_json(url: str, headers: Mapping[str, str]) -> object:
+    request = Request(url, headers=headers, method="GET")
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310 -- endpoint is validated in config.
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        raise GitHubAppBrokerError("GitHub pull-request reconciliation failed") from error
+
+
 @dataclass(frozen=True)
 class GitHubPullRequest:
     pull_request_id: int
@@ -180,10 +189,11 @@ class GitHubPullRequest:
 class GitHubAppPublicationChannel:
     """Actuator-only channel for one typed GitHub pull-request operation."""
 
-    def __init__(self, config: GitHubAppBrokerConfig, token: _InstallationToken, *, post_json=None) -> None:
+    def __init__(self, config: GitHubAppBrokerConfig, token: _InstallationToken, *, post_json=None, get_json=None) -> None:
         self._config = config
         self._token = token
         self._post_json = post_json or _post_json
+        self._get_json = get_json or _get_json
 
     def publish_pull_request(self, request: dict[str, Any]) -> GitHubPullRequest:
         expected = {"operation", "repository_id", "branch", "staged_change_digest", "idempotency_key", "policy_effect", "approval_valid"}
@@ -197,6 +207,10 @@ class GitHubAppPublicationChannel:
         branch = request["branch"]
         if not isinstance(branch, str) or not branch.startswith("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        marker = f"<!-- agent-process-idempotency: {request['idempotency_key']} -->"
+        existing = self._find_existing_pull_request(branch, marker)
+        if existing is not None:
+            return GitHubPullRequest(existing[0], existing[1], repository_id, branch, request["staged_change_digest"], request["idempotency_key"])
         response = self._post_json(
             urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/pulls"),
             {
@@ -208,7 +222,7 @@ class GitHubAppPublicationChannel:
                 "title": f"Agent publication: {branch}",
                 "head": branch,
                 "base": "main",
-                "body": f"Automated publication for staged change `{request['staged_change_digest']}`.",
+                "body": f"Automated publication for staged change `{request['staged_change_digest']}`.\n\n{marker}",
             },
         )
         number, html_url = response.get("number"), response.get("html_url")
@@ -216,14 +230,39 @@ class GitHubAppPublicationChannel:
             raise GitHubAppBrokerError("GitHub pull-request response is missing required fields")
         return GitHubPullRequest(number, html_url, repository_id, branch, request["staged_change_digest"], request["idempotency_key"])
 
+    def _find_existing_pull_request(self, branch: str, marker: str) -> tuple[int, str] | None:
+        owner = self._config.repository.split("/", 1)[0]
+        url = urljoin(
+            self._config.api_url + "/",
+            f"repos/{self._config.repository}/pulls?state=all&head={quote(f'{owner}:{branch}', safe='')}",
+        )
+        response = self._get_json(url, self._headers())
+        if not isinstance(response, list):
+            raise GitHubAppBrokerError("GitHub pull-request reconciliation response must be a list")
+        for item in response:
+            if not isinstance(item, dict) or marker not in item.get("body", ""):
+                continue
+            number, html_url = item.get("number"), item.get("html_url")
+            if isinstance(number, int) and number > 0 and isinstance(html_url, str) and html_url.startswith("https://"):
+                return number, html_url
+        return None
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {self._token.value}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
 
 class GitHubAppCredentialBroker:
     """Single-use Broker that mints a private token and opens one actuator channel."""
 
-    def __init__(self, config: GitHubAppBrokerConfig, token_minter: GitHubAppInstallationTokenMinter, *, post_json=None) -> None:
+    def __init__(self, config: GitHubAppBrokerConfig, token_minter: GitHubAppInstallationTokenMinter, *, post_json=None, get_json=None) -> None:
         self._config = config
         self._token_minter = token_minter
         self._post_json = post_json
+        self._get_json = get_json
         self._used_grants: set[str] = set()
 
     def open_github_publication_channel(self, credential_grant: dict[str, Any], actuator_request: dict[str, Any]) -> GitHubAppPublicationChannel:
@@ -232,4 +271,4 @@ class GitHubAppCredentialBroker:
         if grant_id in self._used_grants:
             raise ContractValidationError("broker: credential grant already used")
         self._used_grants.add(grant_id)
-        return GitHubAppPublicationChannel(self._config, self._token_minter.mint(credential_grant), post_json=self._post_json)
+        return GitHubAppPublicationChannel(self._config, self._token_minter.mint(credential_grant), post_json=self._post_json, get_json=self._get_json)

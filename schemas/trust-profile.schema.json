@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/trust-profile.schema.json",
+  "title": "TrustProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_id", "principal_id", "level", "permitted_data", "prohibited_data", "allowed_capabilities", "max_delegation_depth", "required_verification", "max_effort_units", "status", "policy_version", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_id": {"type": "string", "pattern": "^trust-[a-z0-9-]+$"},
+    "principal_id": {"type": "string", "minLength": 1},
+    "level": {"enum": ["unknown", "quarantined", "verified", "partner", "organization-trusted"]},
+    "permitted_data": {"type": "array", "items": {"enum": ["public", "internal", "partner-shared", "confidential", "restricted"]}},
+    "prohibited_data": {"type": "array", "items": {"enum": ["public", "internal", "partner-shared", "confidential", "restricted"]}},
+    "allowed_capabilities": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "max_delegation_depth": {"type": "integer", "minimum": 0},
+    "required_verification": {"enum": ["none", "standard", "independent", "human"]},
+    "max_effort_units": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["active", "suspended", "revoked"]},
+    "policy_version": {"type": "string", "minLength": 1},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

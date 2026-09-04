@@ -10,9 +10,11 @@ from .validator import ContractValidationError
 
 def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
     names = (
-        "process_contract", "canonical_envelope", "task_contract",
+        "process_contract", "identity", "capability_grant", "delegation_receipt",
+        "trust_profile", "canonical_envelope", "task_contract",
         "evidence_bundle", "verification_report", "staged_change", "approval",
-        "intent", "policy_decision", "action_receipt",
+        "intent", "policy_decision", "actuator_request", "credential_use_grant",
+        "action_receipt",
     )
     missing = [name for name in names if name not in chain]
     if missing:
@@ -24,6 +26,18 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
     }
     _require_single("process_id", process_ids)
 
+    if chain["identity"]["identity_id"] != chain["capability_grant"]["subject"]:
+        raise ContractValidationError("chain: capability subject identity mismatch")
+    if chain["identity"]["status"] != "active" or chain["capability_grant"]["status"] != "active":
+        raise ContractValidationError("chain: inactive identity or capability grant")
+    if chain["capability_grant"]["process_id"] != chain["process_contract"]["process_id"]:
+        raise ContractValidationError("chain: capability process_id mismatch")
+    if chain["delegation_receipt"]["parent_grant_id"] != chain["capability_grant"]["grant_id"]:
+        raise ContractValidationError("chain: delegation parent grant mismatch")
+    _validate_delegation(chain["capability_grant"], chain["delegation_receipt"])
+    if chain["trust_profile"]["principal_id"] != chain["identity"]["identity_id"]:
+        raise ContractValidationError("chain: trust profile principal mismatch")
+
     repositories = {
         chain[name]["repository_id"]
         for name in ("process_contract", "staged_change", "approval", "intent", "policy_decision", "action_receipt")
@@ -32,6 +46,8 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
 
     if chain["canonical_envelope"]["correlation_id"] != chain["process_contract"]["process_id"]:
         raise ContractValidationError("chain: envelope correlation_id mismatch")
+    if chain["canonical_envelope"]["security"]["tainted"]:
+        raise ContractValidationError("chain: tainted envelope cannot authorize publication")
     if chain["task_contract"]["process_id"] != chain["process_contract"]["process_id"]:
         raise ContractValidationError("chain: task process_id mismatch")
     if chain["evidence_bundle"]["task_id"] != chain["task_contract"]["task_id"]:
@@ -71,6 +87,25 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
         raise ContractValidationError("chain: receipt cannot reference a deny decision")
 
     intent = chain["intent"]
+    request = chain["actuator_request"]
+    for field in ("process_id", "repository_id", "base_commit", "staged_change_digest",
+                  "approval_id", "branch_namespace", "title_artifact_ref",
+                  "body_artifact_ref", "idempotency_key"):
+        if request[field] != intent[field]:
+            raise ContractValidationError(f"chain: actuator request {field} mismatch")
+    if request["policy_decision_id"] != decision_id:
+        raise ContractValidationError("chain: actuator request policy decision mismatch")
+    if request["patch_artifact_ref"] != chain["staged_change"]["patch_artifact_ref"]:
+        raise ContractValidationError("chain: actuator request patch mismatch")
+
+    credential_grant = chain["credential_use_grant"]
+    if credential_grant["actuator_id"] != request["actuator_id"]:
+        raise ContractValidationError("chain: credential grant actuator mismatch")
+    if credential_grant["repository_id"] != request["repository_id"]:
+        raise ContractValidationError("chain: credential grant repository mismatch")
+    if credential_grant["request_digest"] != sha256_digest(request):
+        raise ContractValidationError("chain: credential grant request digest mismatch")
+
     expected_key = f"publish/{intent['process_id']}/{computed_staged_digest}"
     if intent["idempotency_key"] != expected_key:
         raise ContractValidationError("chain: intent idempotency key is not content-bound")
@@ -81,3 +116,16 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
 def _require_single(field: str, values: set[str]) -> None:
     if len(values) != 1:
         raise ContractValidationError(f"chain: {field} mismatch")
+
+
+def _validate_delegation(parent: dict[str, Any], child: dict[str, Any]) -> None:
+    if child["issuer"] != parent["subject"]:
+        raise ContractValidationError("chain: delegation issuer mismatch")
+    if child["process_id"] != parent["process_id"]:
+        raise ContractValidationError("chain: delegation process mismatch")
+    if not set(child["actions"]).issubset(parent["delegable_actions"]):
+        raise ContractValidationError("chain: delegation expands actions")
+    if not set(child["resources"]).issubset(parent["resources"]):
+        raise ContractValidationError("chain: delegation expands resources")
+    if child["remaining_delegation_depth"] >= parent["max_delegation_depth"]:
+        raise ContractValidationError("chain: delegation depth is not reduced")

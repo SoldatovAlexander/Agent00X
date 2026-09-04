@@ -48,6 +48,66 @@
       "statement": "Unknown external side-effect outcome is reconciled, never blindly retried",
       "enforcement": ["workflow-state-machine", "actuator-reconciliation"],
       "tests": ["planned:crash-recovery-unknown-side-effect"]
+    },
+    {
+      "id": "INV-009",
+      "statement": "Delegation can only narrow actions, resources, and remaining depth",
+      "enforcement": ["chain-validation", "gateway-capability-check"],
+      "tests": ["test_delegation_cannot_expand_actions", "test_delegation_depth_must_decrease"]
+    },
+    {
+      "id": "INV-010",
+      "statement": "Credential use is single-use and bound to one typed actuator request without exposing credential values",
+      "enforcement": ["credential-grant-schema", "canonical-request-digest"],
+      "tests": ["test_credential_grant_rejects_token_value", "test_credential_grant_is_bound_to_actuator_request", "test_mutated_actuator_request_invalidates_credential_grant"]
+    },
+    {
+      "id": "INV-011",
+      "statement": "Durable process state changes only through validated, atomic, versioned transitions with append-only events",
+      "enforcement": ["state-machine", "sqlite-transaction", "optimistic-version", "append-only-trigger"],
+      "tests": ["test_state_and_events_survive_reopen", "test_invalid_transition_is_not_persisted", "test_stale_writer_is_rejected", "test_event_table_rejects_update_and_delete"]
+    },
+    {
+      "id": "INV-012",
+      "statement": "Publication policy fails closed and permits only a current approval bound to the exact staged digest, repository, operation, and policy version",
+      "enforcement": ["deterministic-policy", "approval-validation", "repository-allowlist"],
+      "tests": ["test_matching_approval_is_valid", "test_changed_destination_invalidates_approval", "test_expired_approval_is_rejected", "test_policy_returns_allow_for_bound_request", "test_policy_denies_unknown_repository", "test_policy_unavailable_fails_closed"]
+    },
+    {
+      "id": "INV-013",
+      "statement": "Gateway path selection cannot place tainted, external, privileged, or write requests on Fast Path and fails closed when policy is unavailable",
+      "enforcement": ["gateway-path-classifier", "degraded-read-only-allowlist"],
+      "tests": ["test_internal_read_only_request_uses_fast_path", "test_tainted_content_requires_slow_path", "test_external_protocol_requires_slow_path", "test_privilege_transition_never_uses_fast_path", "test_policy_unavailable_allows_only_read_only_allowlist"]
+    },
+    {
+      "id": "INV-014",
+      "statement": "The actuator receives only a typed request whose policy decision matches the operation, repository, and staged digest, plus a valid approval",
+      "enforcement": ["typed-actuator-adapter", "mock-github-boundary"],
+      "tests": ["test_authorized_typed_request_reaches_mock_boundary", "test_policy_mismatch_cannot_reach_mock_boundary", "test_invalid_approval_cannot_reach_mock_boundary"]
+    },
+    {
+      "id": "INV-015",
+      "statement": "A publication side effect requires an allowed Gateway Slow Path and Gateway decisions are retained as append-only sanitized audit events",
+      "enforcement": ["gateway-enforcement", "actuator-slow-path-check", "append-only-audit"],
+      "tests": ["test_fast_path_cannot_reach_actuator", "test_enforcement_emits_sanitized_append_only_audit_event"]
+    },
+    {
+      "id": "INV-016",
+      "statement": "Recovery never blindly retries an uncertain external side effect; it reconciles by idempotency key or enters reconciliation_required",
+      "enforcement": ["durable-publication-journal", "idempotency-reconciliation"],
+      "tests": ["test_crash_before_external_call_remains_explicitly_retryable", "test_crash_after_external_effect_recovers_without_second_publish", "test_unknown_attempt_requires_reconciliation_without_retry"]
+    },
+    {
+      "id": "INV-017",
+      "statement": "Tainted input and policy unavailability cannot authorize publication, while a replay returns the original idempotent side effect only",
+      "enforcement": ["taint-aware-gateway", "degraded-deny", "actuator-idempotency"],
+      "tests": ["test_tainted_payload_cannot_authorize_or_reach_actuator", "test_policy_outage_blocks_full_publication_path", "test_replay_returns_original_side_effect_only"]
+    },
+    {
+      "id": "INV-018",
+      "statement": "A credential-use grant opens one opaque actuator-only channel for the exact request and never exposes a credential value",
+      "enforcement": ["broker-grant-validation", "single-use-broker-channel", "credential-free-schema"],
+      "tests": ["test_brokered_actuator_publishes_without_exposing_credential", "test_credential_grant_cannot_be_reused", "test_grant_cannot_be_used_for_mutated_request"]
     }
   ]
 }

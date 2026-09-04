@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from app_contracts.actuator import publish_authorized_request
+from app_contracts.authority import DeterministicPolicy, PolicyConfig
+from app_contracts.chain import validate_chain
+from app_contracts.gateway import GatewayDecision, GatewayPath, enforce
+from app_contracts.mock_github import MockGitHubEndpoint
+from app_contracts.runtime_store import SQLiteProcessStore
+from app_contracts.validator import ContractValidationError
+
+
+NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+
+
+class AdversarialFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.chain = json.loads((ROOT / "fixtures" / "valid" / "mvp-chain.json").read_text())
+        self.policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+
+    def _publication_envelope(self) -> dict:
+        envelope = json.loads(json.dumps(self.chain["canonical_envelope"]))
+        envelope["intent"] = {"operation": "publish_pull_request", "risk_class": "critical"}
+        envelope["destination"] = {"principal_id": "actuator-github-001", "port": "tool"}
+        return envelope
+
+    def test_tainted_payload_cannot_authorize_or_reach_actuator(self):
+        self.chain["canonical_envelope"]["security"]["tainted"] = True
+        with self.assertRaisesRegex(ContractValidationError, "tainted envelope"):
+            validate_chain(self.chain)
+
+        with tempfile.TemporaryDirectory(prefix="app-adversarial-") as directory:
+            with SQLiteProcessStore(Path(directory) / "runtime.sqlite3") as store:
+                store.create("process-demo-001")
+                envelope = self._publication_envelope()
+                envelope["security"]["tainted"] = True
+                decision = enforce(envelope, policy_available=True, audit_sink=store)
+                self.assertEqual(decision.path, GatewayPath.SLOW)
+                self.assertFalse(decision.allowed)
+                self.assertEqual(store.audit_events("process-demo-001")[0]["result"], "denied")
+
+    def test_policy_outage_blocks_full_publication_path(self):
+        with tempfile.TemporaryDirectory(prefix="app-adversarial-") as directory:
+            with SQLiteProcessStore(Path(directory) / "runtime.sqlite3") as store:
+                store.create("process-demo-001")
+                gateway = enforce(self._publication_envelope(), policy_available=False, audit_sink=store)
+                self.assertFalse(gateway.allowed)
+                self.assertEqual(gateway.path, GatewayPath.DEGRADED)
+                self.assertIn("policy-unavailable", gateway.reason_codes)
+
+    def test_replay_returns_original_side_effect_only(self):
+        endpoint = MockGitHubEndpoint()
+        decision = self.policy.decide(
+            decision_id="decision-demo-001",
+            actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"], intent=self.chain["intent"], now=NOW,
+        )
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        first = publish_authorized_request(
+            endpoint, self.chain["actuator_request"], decision,
+            approval_valid=True, gateway_decision=gateway,
+        )
+        second = publish_authorized_request(
+            endpoint, self.chain["actuator_request"], decision,
+            approval_valid=True, gateway_decision=gateway,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(first.pull_request_id, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

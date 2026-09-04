@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/identity.schema.json",
+  "title": "Identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "identity_id", "principal_type", "issuer", "trust_domain", "status", "issued_at", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "identity_id": {"type": "string", "pattern": "^[a-z]+-[a-z0-9-]+$"},
+    "principal_type": {"enum": ["human", "process", "agent", "service", "external-agent", "tool", "device"]},
+    "issuer": {"type": "string", "minLength": 1},
+    "trust_domain": {"type": "string", "minLength": 1},
+    "status": {"enum": ["active", "suspended", "revoked"]},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

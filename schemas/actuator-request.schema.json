@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/actuator-request.schema.json",
+  "title": "ActuatorRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "actuator_id", "operation", "process_id", "repository_id", "base_commit", "staged_change_digest", "patch_artifact_ref", "approval_id", "policy_decision_id", "branch_namespace", "title_artifact_ref", "body_artifact_ref", "idempotency_key", "expires_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^actuator-request-[a-z0-9-]+$"},
+    "actuator_id": {"type": "string", "pattern": "^actuator-[a-z0-9-]+$"},
+    "operation": {"const": "publish_pull_request"},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "repository_id": {"type": "string", "pattern": "^github-installation/[0-9]+/repository/[0-9]+$"},
+    "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "staged_change_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "patch_artifact_ref": {"type": "string", "pattern": "^artifact://"},
+    "approval_id": {"type": "string", "pattern": "^approval-[a-z0-9-]+$"},
+    "policy_decision_id": {"type": "string", "pattern": "^decision-[a-z0-9-]+$"},
+    "branch_namespace": {"type": "string", "pattern": "^agent/process-[a-z0-9-]+$"},
+    "title_artifact_ref": {"type": "string", "pattern": "^artifact://"},
+    "body_artifact_ref": {"type": "string", "pattern": "^artifact://"},
+    "idempotency_key": {"type": "string", "pattern": "^publish/process-[a-z0-9-]+/sha256:[0-9a-f]{64}$"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

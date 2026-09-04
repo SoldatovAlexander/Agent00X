@@ -62,3 +62,7 @@ class MockGitHubEndpoint:
         self._by_idempotency_key[result.idempotency_key] = result
         return result
 
+    def find_by_idempotency_key(self, idempotency_key: str) -> MockPullRequest | None:
+        """Reconciliation query; it has no side effect."""
+
+        return self._by_idempotency_key.get(idempotency_key)

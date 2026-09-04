@@ -58,19 +58,26 @@
 
 ## Созданные исполняемые артефакты
 
-- Draft 2020-12 schemas десяти ключевых MVP-контрактов в `schemas/`;
+- Draft 2020-12 schemas шестнадцати ключевых MVP-контрактов в `schemas/`;
 - позитивная сквозная и негативные fixtures в `fixtures/`;
 - dependency-free schema-subset validator;
 - канонический SHA-256 digest и cross-contract chain validation;
 - детерминированная state machine `PROC-001`;
-- 29 unit tests контрактов, инвариантов, workflow, sandbox lifecycle и M1 flow;
+- 63 unit tests контрактов, Gateway/policy, Broker, recovery, adversarial controls, durable workflow, sandbox lifecycle и M1 flow;
 - fixture repository и идемпотентная mock GitHub boundary;
 - `SandboxBackend` и development-only process backend для начала M1.
 - reference M1 flow: scoped change, patch, tests, evidence, verification и stage.
+- SQLite Process Runtime с атомарными versioned transitions и append-only events.
+- deterministic policy и approval validation с fail-closed policy-unavailable path.
+- Gateway Fast/Slow/Degraded classifier и typed mock actuator integration.
+- Gateway enforcement, append-only sanitized audit и запрет Fast Path для actuator.
+- Durable publication journal и recovery/reconciliation вокруг mock side effect.
+- Сквозные adversarial tests: taint, policy outage и replay.
+- Broker interface и одноразовый opaque actuator channel без credential value.
 
 ## Следующие исполняемые артефакты
 
-- schemas Capability Card, Trust Profile и Transaction Mandate;
+- schema Capability Card и Transaction Mandate;
 - форматы Process Pattern, Role Profile и Function Pack;
 - исполняемая minimal policy и Gateway profiles;
 - protocol conformance profiles;

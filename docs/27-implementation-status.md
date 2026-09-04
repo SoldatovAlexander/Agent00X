@@ -14,9 +14,10 @@
 ```text
 Documentation baseline       DONE
 M0 Executable contracts      DONE
+M0.5 Authority contracts     DONE
 M1 Safe local preparation    IN PROGRESS
-M2 Controlled publication    PLANNED
-M3 Adversarial validation    PLANNED
+M2 Controlled publication    IN PROGRESS
+M3 Adversarial validation    IN PROGRESS
 M4 Dual UX                   PLANNED
 ```
 
@@ -26,16 +27,17 @@ M4 Dual UX                   PLANNED
 |---|---|---|---|
 | Documentation baseline | Выполнен | Видение, ADR, threat model, process model, бриф и план связаны | Изменять только по результатам реализации |
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
-| M1 Safe local preparation | В работе | Reference change готовится в ephemeral workspace, тестируется и становится Staged Change | Container network/kernel isolation и process persistence |
-| M2 Controlled publication | Не начат | Есть mock GitHub boundary и логические контракты | Gateway, policy, approval, actuator и Broker |
-| M3 Adversarial validation | Не начат | Есть первые negative unit tests | Threat corpus, bypass, replay, crash и canary tests |
+| M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
+| M1 Safe local preparation | В работе | Reference change готовится в ephemeral workspace; SQLite сохраняет состояние и append-only transitions | Container network/kernel isolation и recovery вокруг side effect |
+| M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, Broker interface, mock actuator и recovery | GitHub App Broker и real actuator |
+| M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay и crash tests проходят на mock boundary | Network bypass, canary и real-boundary tests |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
 
 ## 3. Реализованные артефакты
 
 ### Контракты
 
-В `schemas/` находятся десять Draft 2020-12 schemas:
+В `schemas/` находятся шестнадцать Draft 2020-12 schemas:
 
 1. Process Contract;
 2. Canonical Envelope;
@@ -46,7 +48,13 @@ M4 Dual UX                   PLANNED
 7. Approval;
 8. Publish Pull Request Intent;
 9. Policy Decision;
-10. Action Receipt.
+10. Action Receipt;
+11. Identity;
+12. Capability Grant;
+13. Delegation Receipt;
+14. Trust Profile;
+15. Actuator Request;
+16. Credential Use Grant.
 
 Agent-facing schemas используют `additionalProperties: false`; поле credential
 не является частью допустимого контракта.
@@ -62,6 +70,11 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - `SandboxBackend` abstraction;
 - development-only local process backend;
 - reference repository-change preparation pipeline.
+- durable SQLite process state, optimistic versioning и append-only transition events.
+- deterministic policy, repository/actuator allowlist и approval validation.
+- Gateway Fast/Slow/Degraded classifier и typed mock actuator integration.
+- Gateway enforcement, sanitized append-only audit и Slow Path requirement для publication.
+- durable publication journal; recovery по idempotency key или reconciliation_required.
 
 ### Reference preparation pipeline
 
@@ -85,14 +98,23 @@ authorized fixture snapshot
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
-Зафиксированный результат: **29 из 29 платформенных тестов проходят**.
+Зафиксированный результат: **63 из 63 платформенных тестов проходят**.
 Дополнительно проходит один тест fixture repository.
 
 Проверены schema validation, отсутствие credential-поля, зарегистрированная
 operation, связи process/repository/task/evidence/verification/approval/receipt,
-канонические digests, content-bound idempotency, workflow transitions, mock
-publication replay, command allowlist, минимальный environment, разделение
+канонические digests, content-bound idempotency, сужение делегирования,
+привязка credential-use к typed actuator request, durable workflow transitions,
+защита от stale writer, append-only audit, approval expiry/version/destination,
+policy unavailable, mock
+publication replay, Gateway path classification, typed actuator boundary,
+enforced Slow Path, sanitized append-only audit, command allowlist, минимальный environment, разделение
 snapshot/workspace, path traversal и запрет staging после failed tests.
+Recovery после mock side effect проверяет сбой до вызова, сбой после успешного
+внешнего действия и неизвестный исход без слепого повтора.
+Сквозные adversarial tests проверяют taint, недоступность policy и replay.
+Broker interface открывает только одноразовый opaque channel, связанный с digest
+typed actuator request; значение credential не присутствует в контракте.
 
 ## 5. Что ещё не доказано
 
@@ -123,8 +145,8 @@ kernel isolation и не снимает блокер VP-02.
 
 ### Repository state
 
-Рабочая директория не является Git-репозиторием. История изменений, branching и
-CI отсутствуют. Инициализация Git и remote требует отдельного решения владельца.
+Рабочая директория является Git-репозиторием на ветке `main`. Remote и CI пока
+не подтверждены.
 
 ## 7. Блокеры и ограничения
 
@@ -132,11 +154,10 @@ CI отсутствуют. Инициализация Git и remote требуе
 |---|---|---|---|
 | ENV-001 | Среда | Docker daemon недоступен | Блокирует доказательство container isolation, не блокирует Gateway/policy code |
 | ENV-002 | Среда | Node.js повреждён | Не блокирует Python MVP |
-| ENV-003 | Организационное | Git не инициализирован | Не блокирует тесты, блокирует history/CI flow |
 | MVP-001 | Работа | Нет container backend | M1 не завершён |
-| MVP-002 | Работа | Нет durable Process Runtime | Recovery не доказан |
-| MVP-003 | Работа | Нет Gateway/policy/approval | M2 не начат |
-| MVP-004 | Работа | Нет Broker/real actuator | Secretless publication не доказана |
+| MVP-002 | Частично снят | Recovery/reconciliation доказан на mock boundary | Real external publication recovery не доказан |
+| MVP-003 | Работа | Нет integrated Gateway enforcement и real Broker/actuator | M2 не завершён |
+| MVP-004 | Частично снят | Broker interface и grant binding работают на mock boundary | Real GitHub App credential flow не доказан |
 
 Ни одно ограничение не требует возвращения к общей подготовке документов.
 
@@ -144,13 +165,9 @@ CI отсутствуют. Инициализация Git и remote требуе
 
 Пока container daemon недоступен:
 
-1. minimal deterministic policy;
-2. Gateway path classifier и canonical request handling;
-3. approval validation по digest и expiry;
-4. typed actuator request;
-5. append-only audit events;
-6. durable process state на локальном хранилище;
-7. negative tests для policy unavailable, taint и replay.
+1. GitHub App Broker и ограниченный real actuator spike — требует GitHub App и allowlisted test repository;
+2. Docker/Podman backend и network-bypass tests после появления daemon;
+3. canary credential corpus и scan-проверки.
 
 После появления daemon добавляется Docker/Podman backend и выполняются network,
 mount, environment, process и escape tests.
@@ -161,4 +178,3 @@ Milestone меняет статус только при наличии испо�
 автоматических позитивных и негативных тестов, списка снятых и оставшихся
 блокеров и явно зафиксированных свойств, которые ещё не доказаны. Число
 документов, строк кода или happy-path демонстрация не означают завершения.
-

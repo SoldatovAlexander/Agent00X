@@ -10,8 +10,8 @@
 
 ## Текущий статус реализации
 
-Подготовка концептуальной документации завершена. Milestone M0 выполнен:
-добавлены десять машинных JSON Schema, fixtures, канонический digest, сквозные
+Подготовка концептуальной документации завершена. Milestone M0 и контрактный
+инкремент M0.5 выполнены: добавлены шестнадцать машинных JSON Schema, fixtures, канонический digest, сквозные
 инварианты, state machine, fixture repository и mock GitHub boundary. Начат M1:
 реализован `SandboxBackend` и development-only process backend; безопасный
 container backend ожидает доступного Docker/Podman daemon.
@@ -20,6 +20,36 @@ Reference M1 flow уже создаёт ограниченное изменен�
 строит patch, запускает allowlisted tests и выпускает schema-valid Evidence
 Bundle, Verification Report и Staged Change. Это детерминированная реализация;
 подключение LLM-worker будет отдельным адаптером после закрепления границ.
+
+M0.5 добавляет Identity, Capability Grant, Delegation Receipt, Trust Profile,
+typed Actuator Request и Credential Use Grant. Делегирование проверяется на
+монотонное сужение, а credential-use связан с digest одного actuator request и
+не содержит значения credential.
+
+Durable Process Runtime использует SQLite: состояние и переходы сохраняются
+атомарно, конкурентные записи защищены версией, а audit-события append-only.
+
+Минимальная deterministic policy допускает публикацию только для allowlisted
+repository и actuator при действующем approval, привязанном к точному digest,
+operation и версии policy. Недоступная policy даёт fail-closed результат.
+
+Gateway classifier выбирает Fast, Slow или Degraded Path и не допускает write,
+secret или privilege transition на Fast Path. Typed mock actuator принимает
+только согласованную связку request, policy decision и approval.
+
+Gateway enforcement сохраняет в durable append-only audit только actor,
+operation digest, результат и reason codes; Fast Path не может достичь
+публикующего actuator.
+
+Publication journal хранит durable состояние внешнего side effect: recovery
+сверяет idempotency key с boundary и переводит неизвестный исход в
+`reconciliation_required`, не выполняя слепой retry.
+
+Сквозные adversarial tests подтверждают: tainted publish не авторизуется,
+policy outage блокирует publication path, а replay не создаёт второй PR.
+
+Broker предоставляет Actuator только одноразовый opaque channel, привязанный к
+digest request; агентам и контрактам credential value недоступно.
 
 Официальный baseline, ограничения среды и следующий gate:
 [Статус реализации MVP](docs/27-implementation-status.md).

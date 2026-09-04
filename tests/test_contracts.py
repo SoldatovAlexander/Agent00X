@@ -16,6 +16,10 @@ from app_contracts.digests import sha256_digest
 
 SCHEMAS = {
     "process_contract": "process-contract.schema.json",
+    "identity": "identity.schema.json",
+    "capability_grant": "capability-grant.schema.json",
+    "delegation_receipt": "delegation-receipt.schema.json",
+    "trust_profile": "trust-profile.schema.json",
     "canonical_envelope": "canonical-envelope.schema.json",
     "task_contract": "task-contract.schema.json",
     "evidence_bundle": "evidence-bundle.schema.json",
@@ -24,6 +28,8 @@ SCHEMAS = {
     "approval": "approval.schema.json",
     "intent": "publish-pull-request-intent.schema.json",
     "policy_decision": "policy-decision.schema.json",
+    "actuator_request": "actuator-request.schema.json",
+    "credential_use_grant": "credential-use-grant.schema.json",
     "action_receipt": "action-receipt.schema.json",
 }
 
@@ -97,6 +103,36 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("authorization", envelope["security"]["permitted_uses"])
         self.assertIn("authorization", envelope["security"]["forbidden_uses"])
 
+    def test_delegation_cannot_expand_actions(self):
+        chain = json.loads(json.dumps(self.chain))
+        chain["delegation_receipt"]["actions"].append("workspace.patch")
+        with self.assertRaisesRegex(ContractValidationError, "delegation expands actions"):
+            validate_chain(chain)
+
+    def test_delegation_depth_must_decrease(self):
+        chain = json.loads(json.dumps(self.chain))
+        chain["delegation_receipt"]["remaining_delegation_depth"] = 1
+        with self.assertRaisesRegex(ContractValidationError, "depth is not reduced"):
+            validate_chain(chain)
+
+    def test_credential_grant_rejects_token_value(self):
+        grant = json.loads(json.dumps(self.chain["credential_use_grant"]))
+        grant["token"] = "canary-secret"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields.*token"):
+            validate(grant, self.schemas["credential_use_grant"])
+
+    def test_credential_grant_is_bound_to_actuator_request(self):
+        self.assertEqual(
+            self.chain["credential_use_grant"]["request_digest"],
+            sha256_digest(self.chain["actuator_request"]),
+        )
+
+    def test_mutated_actuator_request_invalidates_credential_grant(self):
+        chain = json.loads(json.dumps(self.chain))
+        chain["actuator_request"]["title_artifact_ref"] = "artifact://pr/changed/title"
+        with self.assertRaises(ContractValidationError):
+            validate_chain(chain)
+
     def test_invariant_catalog_has_unique_ids_and_test_links(self):
         catalog = load_json(ROOT / "policies" / "invariants.json")
         invariants = catalog["invariants"]
@@ -106,6 +142,41 @@ class ContractTests(unittest.TestCase):
         state_module = __import__("test_state_machine")
         known_tests |= {
             name for name in dir(state_module.StateMachineTests)
+            if name.startswith("test_")
+        }
+        runtime_module = __import__("test_runtime_store")
+        known_tests |= {
+            name for name in dir(runtime_module.RuntimeStoreTests)
+            if name.startswith("test_")
+        }
+        authority_module = __import__("test_authority")
+        known_tests |= {
+            name for name in dir(authority_module.AuthorityTests)
+            if name.startswith("test_")
+        }
+        gateway_module = __import__("test_gateway")
+        known_tests |= {
+            name for name in dir(gateway_module.GatewayTests)
+            if name.startswith("test_")
+        }
+        actuator_module = __import__("test_actuator")
+        known_tests |= {
+            name for name in dir(actuator_module.ActuatorTests)
+            if name.startswith("test_")
+        }
+        publication_module = __import__("test_publication")
+        known_tests |= {
+            name for name in dir(publication_module.PublicationRecoveryTests)
+            if name.startswith("test_")
+        }
+        adversarial_module = __import__("test_adversarial")
+        known_tests |= {
+            name for name in dir(adversarial_module.AdversarialFlowTests)
+            if name.startswith("test_")
+        }
+        broker_module = __import__("test_broker")
+        known_tests |= {
+            name for name in dir(broker_module.BrokerTests)
             if name.startswith("test_")
         }
         for invariant in invariants:

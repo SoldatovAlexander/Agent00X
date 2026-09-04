@@ -123,7 +123,7 @@
     },
     {
       "id": "INV-021",
-      "statement": "The container backend requests default-deny networking, a read-only root filesystem, dropped capabilities, resource limits, and never silently falls back to host execution",
+      "statement": "The container backend proves default-deny networking, a read-only root filesystem, dropped effective capabilities, resource limits, and never silently falls back to host execution",
       "enforcement": ["docker-sandbox-profile", "image-inspect-before-run"],
       "tests": ["test_docker_profile_disables_network_and_limits_container", "test_docker_backend_refuses_unavailable_daemon_or_image", "test_docker_backend_enforces_network_mount_and_workspace_profile"]
     }

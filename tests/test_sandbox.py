@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import os
 import subprocess
 import sys
@@ -77,6 +78,10 @@ class SandboxTests(unittest.TestCase):
                 self.assertEqual(sandbox.run(("python", "--version")).returncode, 0)
                 network = sandbox.run(("python", "-c", "import socket; socket.create_connection(('1.1.1.1', 53), timeout=1)"))
                 self.assertNotEqual(network.returncode, 0)
+                dns = sandbox.run(("python", "-c", "import socket; socket.gethostbyname('example.com')"))
+                self.assertNotEqual(dns.returncode, 0)
+                capabilities = sandbox.run(("python", "-c", "status=open('/proc/self/status').read(); assert 'CapEff:\\t0000000000000000' in status"))
+                self.assertEqual(capabilities.returncode, 0, capabilities.stderr)
                 snapshot_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('/snapshot/blocked').write_text('x')"))
                 self.assertNotEqual(snapshot_write.returncode, 0)
                 rootfs_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('/root/blocked').write_text('x')"))
@@ -84,10 +89,19 @@ class SandboxTests(unittest.TestCase):
                 environment = sandbox.run(("env",))
                 self.assertNotIn("AGENT_PROCESS_HOST_CANARY=host-only-value", environment.stdout)
                 inspection = subprocess.run(
-                    ["docker", "inspect", "--format", "{{.HostConfig.NetworkMode}}|{{.HostConfig.ReadonlyRootfs}}|{{.HostConfig.PidsLimit}}", sandbox._container_id],
+                    ["docker", "inspect", sandbox._container_id],
                     capture_output=True, text=True, check=True,
                 )
-                self.assertEqual(inspection.stdout.strip(), "none|true|64")
+                configuration = json.loads(inspection.stdout)[0]
+                host_config = configuration["HostConfig"]
+                self.assertEqual(host_config["NetworkMode"], "none")
+                self.assertTrue(host_config["ReadonlyRootfs"])
+                self.assertEqual(host_config["PidsLimit"], 64)
+                self.assertEqual(host_config["Memory"], 512 * 1024 * 1024)
+                self.assertEqual(host_config["NanoCpus"], 1_000_000_000)
+                self.assertEqual(host_config["CapDrop"], ["ALL"])
+                self.assertIn("no-new-privileges", host_config["SecurityOpt"])
+                self.assertEqual(configuration["Config"]["User"], backend.user)
                 workspace_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('created-in-container').write_text('ok')"))
                 self.assertEqual(workspace_write.returncode, 0)
                 self.assertTrue((sandbox.workspace / "created-in-container").exists())

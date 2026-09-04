@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import os
+from datetime import datetime, timezone
+import base64
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -10,7 +12,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.github_app import GitHubAppBrokerConfig, GitHubAppConfigurationError
+from app_contracts.github_app import (
+    GitHubAppBrokerConfig,
+    GitHubAppConfigurationError,
+    GitHubAppInstallationTokenMinter,
+    GitHubAppBrokerError,
+)
 
 
 class GitHubAppConfigurationTests(unittest.TestCase):
@@ -56,6 +63,50 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             key_path.chmod(0o644)
             with self.assertRaisesRegex(GitHubAppConfigurationError, "group or others"):
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+
+    def test_trusted_minter_signs_jwt_and_scopes_token_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            generated = __import__("subprocess").run(
+                ["openssl", "genrsa", "-out", str(key_path), "2048"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            calls = []
+
+            def post_json(url, headers, payload):
+                calls.append((url, headers, payload))
+                return {"token": "github-token-opaque", "expires_at": "2026-09-04T12:10:00Z"}
+
+            minter = GitHubAppInstallationTokenMinter(
+                config, post_json=post_json,
+                now=lambda: datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+            )
+            token = minter.mint({
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "permissions": ["contents:write", "pull_requests:write"],
+            })
+        self.assertEqual(token.value, "github-token-opaque")
+        self.assertEqual(token.expires_at, "2026-09-04T12:10:00Z")
+        self.assertEqual(calls[0][0], "https://api.github.com/app/installations/456/access_tokens")
+        self.assertEqual(calls[0][2], {"repositories": ["example/agent00x-sandbox"], "permissions": {"contents": "write", "pull_requests": "write"}})
+        jwt = calls[0][1]["Authorization"].removeprefix("Bearer ")
+        header, payload, signature = jwt.split(".")
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(header + "==")), {"alg": "RS256", "typ": "JWT"})
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(payload + "=="))["iss"], "123")
+        self.assertTrue(signature)
+
+    def test_minter_rejects_wrong_installation_without_token_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            minter = GitHubAppInstallationTokenMinter(GitHubAppBrokerConfig.from_environment(self._environment(key_path)))
+            with self.assertRaisesRegex(GitHubAppBrokerError, "does not match"):
+                minter.mint({"credential_class": "github-app-installation", "installation_id": 999, "permissions": ["contents:write"]})
 
 
 if __name__ == "__main__":

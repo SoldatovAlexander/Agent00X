@@ -93,6 +93,10 @@ python3 scripts/github_app_preflight.py
 Файл `.env.github-app`, каталоги `.github-app/` и файлы `*.pem`/`*.key`
 исключены из Git, чтобы локальные metadata и private keys не попали в коммит.
 
+Для `testdev` unit [agent00x-broker-preflight.service](deploy/agent00x-broker-preflight.service)
+проверяет metadata при boot после сети. Он не выполняет публикацию и не создаёт
+installation token без явного actuator-запроса.
+
 ## Документы
 
 - [Видение и границы](docs/00-vision-and-scope.md)

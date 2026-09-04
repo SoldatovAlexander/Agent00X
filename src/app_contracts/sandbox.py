@@ -125,7 +125,7 @@ class DockerSandbox:
         completed = subprocess.run(
             [
                 "docker", "exec", "--workdir", "/workspace",
-                "--env", "PATH=/usr/bin:/bin",
+                "--env", "PATH=/usr/local/bin:/usr/bin:/bin",
                 "--env", "PYTHONDONTWRITEBYTECODE=1",
                 "--env", "LANG=C.UTF-8",
                 self._container_id, *argv,

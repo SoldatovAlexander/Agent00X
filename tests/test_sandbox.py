@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 import unittest
 
@@ -42,6 +43,7 @@ class SandboxTests(unittest.TestCase):
     def test_backend_does_not_claim_network_isolation(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             self.assertFalse(sandbox.network_isolated)
+            self.assertEqual(sandbox.security_profile, "development-process-only")
 
     def test_docker_profile_disables_network_and_limits_container(self):
         backend = DockerSandboxBackend("python:3.12-alpine")
@@ -59,7 +61,21 @@ class SandboxTests(unittest.TestCase):
         backend = DockerSandboxBackend("agent-process-image-that-is-not-present")
         with self.assertRaisesRegex(SandboxError, "not automatic"):
             backend._assert_image_available()
-            self.assertEqual(sandbox.security_profile, "development-process-only")
+
+    @unittest.skipUnless(os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1", "Docker integration test is opt-in")
+    def test_docker_backend_enforces_network_mount_and_workspace_profile(self):
+        backend = DockerSandboxBackend("python:3.12-alpine")
+        snapshot = ROOT / "fixtures" / "repository" / "project"
+        with backend.create(snapshot, {"python"}) as sandbox:
+            self.assertTrue(sandbox.network_isolated)
+            self.assertEqual(sandbox.run(("python", "--version")).returncode, 0)
+            network = sandbox.run(("python", "-c", "import socket; socket.create_connection(('1.1.1.1', 53), timeout=1)"))
+            self.assertNotEqual(network.returncode, 0)
+            snapshot_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('/snapshot/blocked').write_text('x')"))
+            self.assertNotEqual(snapshot_write.returncode, 0)
+            workspace_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('created-in-container').write_text('ok')"))
+            self.assertEqual(workspace_write.returncode, 0)
+            self.assertTrue((sandbox.workspace / "created-in-container").exists())
 
 
 if __name__ == "__main__":

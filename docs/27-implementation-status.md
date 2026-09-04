@@ -28,7 +28,7 @@ M4 Dual UX                   PLANNED
 | Documentation baseline | Выполнен | Видение, ADR, threat model, process model, бриф и план связаны | Изменять только по результатам реализации |
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
 | M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
-| M1 Safe local preparation | В работе | Reference change готовится в ephemeral workspace; SQLite сохраняет transitions; Docker profile подготовлен | Container network/kernel isolation на доступном daemon |
+| M1 Safe local preparation | В работе | Docker smoke test подтверждает network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
 | M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, Broker interface, mock actuator и recovery | GitHub App Broker и real actuator |
 | M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary и threat-corpus tests проходят на mock boundary | Network bypass и real-boundary tests |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
@@ -76,6 +76,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - Gateway enforcement, sanitized append-only audit и Slow Path requirement для publication.
 - durable publication journal; recovery по idempotency key или reconciliation_required.
 - Docker sandbox backend с default-deny network profile, без automatic pull/fallback.
+- Docker smoke test: network deny, read-only snapshot и writable ephemeral workspace.
 
 ### Reference preparation pipeline
 
@@ -99,7 +100,7 @@ authorized fixture snapshot
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
-Зафиксированный результат: **70 из 70 платформенных тестов проходят**.
+Зафиксированный результат: **71 из 71 платформенных тестов проходят** при `RUN_DOCKER_SANDBOX_TESTS=1`.
 Дополнительно проходит один тест fixture repository.
 
 Проверены schema validation, отсутствие credential-поля, зарегистрированная
@@ -120,8 +121,9 @@ Canary scan доказывает отсутствие test credential во вс�
 agent-facing и persisted surfaces; искусственные утечки в evidence/audit ловятся.
 Threat corpus исполняет ожидаемые результаты Gateway для taint, внешнего
 протокола, policy outage, privilege transition и read-only path.
-Docker backend ещё не запускался: daemon недоступен, поэтому container isolation
-не считается доказанной.
+Docker smoke test выполнен на Docker Desktop 28.3.3 с образом `python:3.12-alpine`.
+Network deny, read-only snapshot и isolated workspace подтверждены; устойчивость
+к container escape и полноценная kernel isolation ещё не доказаны.
 
 ## 5. Что ещё не доказано
 
@@ -141,9 +143,10 @@ Docker backend ещё не запускался: daemon недоступен, п
 
 ### Docker
 
-Docker CLI установлен, но daemon недоступен. Текущий
-`LocalProcessSandboxBackend` — development fallback: он не заявляет network или
-kernel isolation и не снимает блокер VP-02.
+Docker Desktop 28.3.3 доступен. `DockerSandboxBackend` протестирован с образом
+`python:3.12-alpine`: default-deny network, read-only snapshot и writable
+ephemeral workspace подтверждены. `LocalProcessSandboxBackend` сохраняется как
+development fallback и не заявляет network/kernel isolation.
 
 ### Node.js
 
@@ -152,16 +155,15 @@ kernel isolation и не снимает блокер VP-02.
 
 ### Repository state
 
-Рабочая директория является Git-репозиторием на ветке `main`. Remote и CI пока
-не подтверждены.
+Рабочая директория является Git-репозиторием на ветке `main`; remote
+`origin` настроен на GitHub. CI пока не подтверждён.
 
 ## 7. Блокеры и ограничения
 
 | ID | Тип | Состояние | Влияние |
 |---|---|---|---|
-| ENV-001 | Среда | Docker daemon недоступен | Блокирует доказательство container isolation, не блокирует Gateway/policy code |
 | ENV-002 | Среда | Node.js повреждён | Не блокирует Python MVP |
-| MVP-001 | Работа | Нет container backend | M1 не завершён |
+| MVP-001 | Частично снят | Docker backend и smoke isolation доказаны | Escape/kernel-hardening tests не пройдены |
 | MVP-002 | Частично снят | Recovery/reconciliation доказан на mock boundary | Real external publication recovery не доказан |
 | MVP-003 | Работа | Нет integrated Gateway enforcement и real Broker/actuator | M2 не завершён |
 | MVP-004 | Частично снят | Broker interface и grant binding работают на mock boundary | Real GitHub App credential flow не доказан |
@@ -170,14 +172,9 @@ kernel isolation и не снимает блокер VP-02.
 
 ## 8. Следующий исполняемый инкремент
 
-Пока container daemon недоступен:
-
 1. GitHub App Broker и ограниченный real actuator spike — требует GitHub App и allowlisted test repository;
-2. Docker/Podman backend и network-bypass tests после появления daemon;
+2. container escape/process-limit tests и расширенный network-bypass corpus;
 3. расширить canary scan на реальный Broker и системную телеметрию после их появления.
-
-После появления daemon добавляется Docker/Podman backend и выполняются network,
-mount, environment, process и escape tests.
 
 ## 9. Правило обновления статуса
 

@@ -13,8 +13,9 @@
 Подготовка концептуальной документации завершена. Milestone M0 и контрактный
 инкремент M0.5 выполнены: добавлены шестнадцать машинных JSON Schema, fixtures, канонический digest, сквозные
 инварианты, state machine, fixture repository и mock GitHub boundary. Начат M1:
-реализован `SandboxBackend` и development-only process backend; безопасный
-container backend ожидает доступного Docker/Podman daemon.
+реализованы `SandboxBackend`, development-only process backend и Docker
+container backend. Docker smoke test подтвердил default-deny network, read-only
+snapshot и writable ephemeral workspace; escape/kernel-hardening остаются gate M1.
 
 Reference M1 flow уже создаёт ограниченное изменение в ephemeral workspace,
 строит patch, запускает allowlisted tests и выпускает schema-valid Evidence

@@ -29,7 +29,7 @@ M4 Dual UX                   PLANNED
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
 | M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
 | M1 Safe local preparation | В работе | Docker smoke test и GitHub Actions подтверждают network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
-| M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, Broker interface, mock actuator и recovery | GitHub App Broker и real actuator |
+| M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, Broker interface, mock actuator, recovery и fail-closed GitHub App preflight | GitHub App Broker и real actuator |
 | M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary, threat corpus и Docker network/resource checks проходят | Real-boundary tests и escape/kernel-hardening |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
 
@@ -78,6 +78,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - Docker sandbox backend с default-deny network profile, без automatic pull/fallback.
 - Docker smoke test: network deny, read-only snapshot и writable ephemeral workspace.
 - GitHub Actions workflow запускает contract- и Docker integration-тесты на каждом push и pull request.
+- GitHub App preflight принимает только безопасные metadata и ссылку на private-key file с правами `0600`; key content не читается вне будущего Broker boundary.
 
 ### Reference preparation pipeline
 

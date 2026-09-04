@@ -70,6 +70,15 @@ Docker backend подготовлен без host fallback: он требует 
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
+## Подготовка GitHub App boundary
+
+`.env.github-app.example` содержит только метаданные для отдельного
+allowlisted тестового репозитория. `GitHubAppBrokerConfig` выполняет fail-closed
+preflight: принимает лишь положительные App/Installation ID, формат `owner/name`,
+HTTPS API URL и существующий private-key file с правами не шире `0600`. Ключ не
+читается, не печатается и не передаётся worker; реальный Broker будет единственным
+доверенным процессом, который сможет использовать его для short-lived token.
+
 ## Документы
 
 - [Видение и границы](docs/00-vision-and-scope.md)

@@ -54,6 +54,8 @@ class SandboxTests(unittest.TestCase):
         self.assertIn("--read-only", command)
         self.assertIn("--cap-drop", command)
         self.assertIn("ALL", command)
+        self.assertIn("--user", command)
+        self.assertEqual(command[command.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
         self.assertIn("--pids-limit", command)
         self.assertIn("--memory", command)
         self.assertIn("--cpus", command)

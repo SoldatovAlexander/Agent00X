@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Prepare pinned sandbox image
+      - name: Prepare sandbox image
         run: docker pull python:3.12-alpine
 
       - name: Run contracts and Docker sandbox verification

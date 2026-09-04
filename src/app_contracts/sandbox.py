@@ -160,6 +160,7 @@ class DockerSandboxBackend:
         self.memory = memory
         self.cpus = cpus
         self.pids_limit = pids_limit
+        self.user = f"{os.getuid()}:{os.getgid()}"
 
     def create(self, snapshot: Path, allowed_commands: set[str]) -> DockerSandbox:
         if not snapshot.is_dir():
@@ -197,6 +198,7 @@ class DockerSandboxBackend:
             "--read-only",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
+            "--user", self.user,
             "--pids-limit", str(self.pids_limit),
             "--memory", self.memory,
             "--cpus", self.cpus,

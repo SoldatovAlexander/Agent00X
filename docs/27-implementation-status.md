@@ -29,7 +29,7 @@ M4 Dual UX                   PLANNED
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
 | M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
 | M1 Safe local preparation | В работе | Docker smoke test и GitHub Actions подтверждают network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
-| M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, recovery и сквозной GitHub App Broker → typed PR channel | Real actuator на allowlisted GitHub App |
+| M2 Controlled publication | В работе | Scoped GitHub App создал реальный PR в allowlisted sandbox через typed channel | Связать verified staged artifact с реальным branch/commit flow |
 | M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary, threat corpus и Docker network/resource checks проходят | Real-boundary tests и escape/kernel-hardening |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
 
@@ -83,6 +83,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - Перед созданием PR trusted channel выполняет reconciliation по idempotency marker и возвращает уже созданный PR без второго external side effect.
 - Локальная preflight-команда проверяет GitHub App metadata без сетевого вызова и без чтения key content; локальные `.env.github-app`, `.github-app/`, `*.pem` и `*.key` исключены из Git.
 - GitHub installation-token request передаёт GitHub только короткое имя allowlisted repository, как требует API; full `owner/repository` остаётся для endpoint binding и audit context.
+- Live spike на `testdev` подтвердил GitHub App installation `159119281`: scoped token создал fixture branch и PR [Agent00X-sandbox#1](https://github.com/SoldatovAlexander/Agent00X-sandbox/pull/1). Token и key content не сохранялись в repository, output или audit.
 
 ### Reference preparation pipeline
 
@@ -145,7 +146,7 @@ Network deny, read-only snapshot и isolated workspace подтверждены;
 - cryptographic identity/delegation chain;
 - применение реального short-lived GitHub credential;
 - отсутствие секрета в crash dump и системной телеметрии;
-- реальная публикация GitHub PR;
+- создание реального branch/commit из verified staged artifact (live spike использовал изолированный fixture marker);
 - durable recovery во время side effect;
 - Fast/Slow/Degraded Gateway routing;
 - LLM Worker, Model Router и параллельный Local Agent Host;

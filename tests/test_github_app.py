@@ -17,7 +17,12 @@ from app_contracts.github_app import (
     GitHubAppConfigurationError,
     GitHubAppInstallationTokenMinter,
     GitHubAppBrokerError,
+    GitHubAppCredentialBroker,
+    _InstallationToken,
 )
+from app_contracts.digests import sha256_digest
+from app_contracts.gateway import GatewayDecision, GatewayPath
+from app_contracts.github_actuator import BrokeredGitHubActuator
 from app_contracts.validator import ContractValidationError
 
 
@@ -146,6 +151,60 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             minter = GitHubAppInstallationTokenMinter(GitHubAppBrokerConfig.from_environment(self._environment(key_path)))
             with self.assertRaisesRegex(GitHubAppBrokerError, "does not match"):
                 minter.mint({"credential_class": "github-app-installation", "installation_id": 999, "permissions": ["contents:write"]})
+
+    def test_broker_to_actuator_path_keeps_token_private_and_grant_single_use(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            minted_grants, api_calls = [], []
+
+            class FakeMinter:
+                def mint(self, grant):
+                    minted_grants.append(grant["credential_grant_id"])
+                    return _InstallationToken("opaque-private-token", "2026-09-04T12:10:00Z")
+
+            broker = GitHubAppCredentialBroker(
+                config, FakeMinter(),
+                post_json=lambda url, headers, payload: api_calls.append((url, headers, payload)) or {"number": 8, "html_url": "https://github.com/example/agent00x-sandbox/pull/8"},
+            )
+            actuator_request = {
+                "actuator_id": "actuator-github-001",
+                "operation": "publish_pull_request",
+                "repository_id": "github-installation/456/repository/1001",
+                "branch_namespace": "agent/process-demo-001",
+                "staged_change_digest": "sha256:" + "b" * 64,
+                "idempotency_key": "publish/process-demo-001/sha256:" + "b" * 64,
+            }
+            grant = {
+                "credential_grant_id": "credential-grant-demo-001",
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "repository_id": actuator_request["repository_id"],
+                "permissions": ["contents:write", "pull_requests:write"],
+                "actuator_id": actuator_request["actuator_id"],
+                "operation": actuator_request["operation"],
+                "request_digest": sha256_digest(actuator_request),
+                "single_use": True,
+            }
+            result = BrokeredGitHubActuator(broker).publish_pull_request(
+                actuator_request=actuator_request,
+                credential_grant=grant,
+                policy_decision={"effect": "allow", "operation": "publish_pull_request", "repository_id": actuator_request["repository_id"], "staged_change_digest": actuator_request["staged_change_digest"]},
+                approval_valid=True,
+                gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
+            )
+            self.assertEqual(result.pull_request_id, 8)
+            self.assertEqual(minted_grants, ["credential-grant-demo-001"])
+            self.assertNotIn("opaque-private-token", repr(actuator_request))
+            self.assertEqual(api_calls[0][2]["head"], "agent/process-demo-001")
+            with self.assertRaisesRegex(ContractValidationError, "already used"):
+                BrokeredGitHubActuator(broker).publish_pull_request(
+                    actuator_request=actuator_request, credential_grant=grant,
+                    policy_decision={"effect": "allow", "operation": "publish_pull_request", "repository_id": actuator_request["repository_id"], "staged_change_digest": actuator_request["staged_change_digest"]},
+                    approval_valid=True, gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
+                )
 
 
 if __name__ == "__main__":

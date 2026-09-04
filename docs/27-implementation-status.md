@@ -29,7 +29,7 @@ M4 Dual UX                   PLANNED
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
 | M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
 | M1 Safe local preparation | В работе | Docker smoke test и GitHub Actions подтверждают network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
-| M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, recovery, GitHub App token Broker и typed PR API channel | Real actuator на allowlisted GitHub App |
+| M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, recovery и сквозной GitHub App Broker → typed PR channel | Real actuator на allowlisted GitHub App |
 | M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary, threat corpus и Docker network/resource checks проходят | Real-boundary tests и escape/kernel-hardening |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
 

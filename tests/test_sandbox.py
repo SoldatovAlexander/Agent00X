@@ -102,6 +102,8 @@ class SandboxTests(unittest.TestCase):
                 self.assertEqual(host_config["CapDrop"], ["ALL"])
                 self.assertIn("no-new-privileges", host_config["SecurityOpt"])
                 self.assertEqual(configuration["Config"]["User"], backend.user)
+                pid_limit = sandbox.run(("python", "-c", "import subprocess\nchildren=[]\nexhausted=False\ntry:\n    for _ in range(128):\n        children.append(subprocess.Popen(['sleep', '5']))\nexcept OSError:\n    exhausted=True\nfinally:\n    for child in children:\n        child.terminate()\n    for child in children:\n        child.wait(timeout=2)\nassert exhausted\nassert len(children) < 64"))
+                self.assertEqual(pid_limit.returncode, 0, pid_limit.stderr)
                 workspace_write = sandbox.run(("python", "-c", "from pathlib import Path; Path('created-in-container').write_text('ok')"))
                 self.assertEqual(workspace_write.returncode, 0)
                 self.assertTrue((sandbox.workspace / "created-in-container").exists())

@@ -129,7 +129,8 @@ Network deny, read-only snapshot и isolated workspace подтверждены;
 непривилегированного UID/GID владельца workspace, поэтому writable workspace
 проверяется одинаково локально и в CI.
 Интеграционный тест дополнительно подтверждает deny для DNS и TCP-egress,
-нулевые effective capabilities и фактические CPU/RAM/PID limits из Docker inspect.
+нулевые effective capabilities, фактические CPU/RAM/PID limits из Docker inspect
+и реальное блокирование создания процессов сверх PID limit.
 
 ## 5. Что ещё не доказано
 

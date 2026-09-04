@@ -3,4 +3,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .DS_Store
-
+.env.github-app
+.github-app/
+*.pem
+*.key

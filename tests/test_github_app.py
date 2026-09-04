@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import base64
 import json
 from pathlib import Path
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -125,6 +127,21 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             key_path.chmod(0o644)
             with self.assertRaisesRegex(GitHubAppConfigurationError, "group or others"):
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+
+    def test_preflight_command_reports_metadata_without_key_path_or_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("private-key-canary", encoding="utf-8")
+            key_path.chmod(0o600)
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "github_app_preflight.py")],
+                env={**os.environ, **self._environment(key_path)},
+                capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("preflight passed", completed.stdout)
+        self.assertNotIn("private-key-canary", completed.stdout + completed.stderr)
+        self.assertNotIn(str(key_path), completed.stdout + completed.stderr)
 
     def test_trusted_minter_signs_jwt_and_scopes_token_exchange(self):
         with tempfile.TemporaryDirectory() as directory:

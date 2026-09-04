@@ -83,6 +83,16 @@ token остаётся во внутреннем канале actuator и не �
 связанного installation/repository и agent branch namespace, затем вызывает
 фиксированный GitHub `POST /repos/{owner}/{repo}/pulls` payload.
 
+Для проверки локальной конфигурации без сетевого вызова и без чтения ключа:
+
+```bash
+set -a; source .env.github-app; set +a
+python3 scripts/github_app_preflight.py
+```
+
+Файл `.env.github-app`, каталоги `.github-app/` и файлы `*.pem`/`*.key`
+исключены из Git, чтобы локальные metadata и private keys не попали в коммит.
+
 ## Документы
 
 - [Видение и границы](docs/00-vision-and-scope.md)

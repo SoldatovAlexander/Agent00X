@@ -179,6 +179,21 @@ class ContractTests(unittest.TestCase):
             name for name in dir(broker_module.BrokerTests)
             if name.startswith("test_")
         }
+        secret_scan_module = __import__("test_secret_scan")
+        known_tests |= {
+            name for name in dir(secret_scan_module.CanaryCredentialTests)
+            if name.startswith("test_")
+        }
+        threat_module = __import__("test_threat_corpus")
+        known_tests |= {
+            name for name in dir(threat_module.ThreatCorpusTests)
+            if name.startswith("test_")
+        }
+        sandbox_module = __import__("test_sandbox")
+        known_tests |= {
+            name for name in dir(sandbox_module.SandboxTests)
+            if name.startswith("test_")
+        }
         for invariant in invariants:
             self.assertTrue(invariant["enforcement"])
             self.assertTrue(invariant["tests"])

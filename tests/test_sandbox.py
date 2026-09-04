@@ -6,7 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.sandbox import LocalProcessSandboxBackend, SandboxError
+from app_contracts.sandbox import DockerSandboxBackend, LocalProcessSandboxBackend, SandboxError
 
 
 class SandboxTests(unittest.TestCase):
@@ -42,6 +42,23 @@ class SandboxTests(unittest.TestCase):
     def test_backend_does_not_claim_network_isolation(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             self.assertFalse(sandbox.network_isolated)
+
+    def test_docker_profile_disables_network_and_limits_container(self):
+        backend = DockerSandboxBackend("python:3.12-alpine")
+        command = backend.build_run_command(Path("/tmp/snapshot"), Path("/tmp/workspace"))
+        self.assertIn("--network", command)
+        self.assertEqual(command[command.index("--network") + 1], "none")
+        self.assertIn("--read-only", command)
+        self.assertIn("--cap-drop", command)
+        self.assertIn("ALL", command)
+        self.assertIn("--pids-limit", command)
+        self.assertIn("--memory", command)
+        self.assertIn("--cpus", command)
+
+    def test_docker_backend_refuses_unavailable_daemon_or_image(self):
+        backend = DockerSandboxBackend("agent-process-image-that-is-not-present")
+        with self.assertRaisesRegex(SandboxError, "not automatic"):
+            backend._assert_image_available()
             self.assertEqual(sandbox.security_profile, "development-process-only")
 
 

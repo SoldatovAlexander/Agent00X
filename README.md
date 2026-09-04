@@ -51,6 +51,15 @@ policy outage блокирует publication path, а replay не создаёт
 Broker предоставляет Actuator только одноразовый opaque channel, привязанный к
 digest request; агентам и контрактам credential value недоступно.
 
+Canary scanner проверяет отсутствие тестового credential во всех контролируемых
+agent-facing и persisted surfaces и сигнализирует о найденной утечке.
+
+Machine-readable threat corpus фиксирует security-регрессии Gateway и contract
+injection как исполняемые сценарии, а не только как текстовый backlog.
+
+Docker backend подготовлен без host fallback: он требует доступный daemon и
+локально доступный image, после чего применяет container security profile.
+
 Официальный baseline, ограничения среды и следующий gate:
 [Статус реализации MVP](docs/27-implementation-status.md).
 

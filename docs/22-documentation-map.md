@@ -63,7 +63,7 @@
 - dependency-free schema-subset validator;
 - канонический SHA-256 digest и cross-contract chain validation;
 - детерминированная state machine `PROC-001`;
-- 63 unit tests контрактов, Gateway/policy, Broker, recovery, adversarial controls, durable workflow, sandbox lifecycle и M1 flow;
+- 70 unit tests контрактов, Gateway/policy, Broker, recovery, canary/adversarial controls, threat corpus, durable workflow, sandbox lifecycle и M1 flow;
 - fixture repository и идемпотентная mock GitHub boundary;
 - `SandboxBackend` и development-only process backend для начала M1.
 - reference M1 flow: scoped change, patch, tests, evidence, verification и stage.
@@ -74,6 +74,9 @@
 - Durable publication journal и recovery/reconciliation вокруг mock side effect.
 - Сквозные adversarial tests: taint, policy outage и replay.
 - Broker interface и одноразовый opaque actuator channel без credential value.
+- Canary credential scanner для agent и persisted surfaces.
+- Машиночитаемый threat corpus для Gateway и contract injection.
+- Подготовленный Docker sandbox profile без host fallback.
 
 ## Следующие исполняемые артефакты
 

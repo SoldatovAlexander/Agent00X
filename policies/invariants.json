@@ -108,6 +108,24 @@
       "statement": "A credential-use grant opens one opaque actuator-only channel for the exact request and never exposes a credential value",
       "enforcement": ["broker-grant-validation", "single-use-broker-channel", "credential-free-schema"],
       "tests": ["test_brokered_actuator_publishes_without_exposing_credential", "test_credential_grant_cannot_be_reused", "test_grant_cannot_be_used_for_mutated_request"]
+    },
+    {
+      "id": "INV-019",
+      "statement": "A credential canary is absent from agent context, environment, output, evidence, audit, and credential-grant surfaces",
+      "enforcement": ["canary-surface-scan", "credential-free-contracts", "sanitized-audit"],
+      "tests": ["test_canary_is_absent_from_agent_and_persisted_surfaces", "test_canary_leak_in_audit_is_detected", "test_canary_leak_in_evidence_is_detected"]
+    },
+    {
+      "id": "INV-020",
+      "statement": "The machine-readable threat corpus preserves expected Gateway behavior and rejects credential-style contract injection",
+      "enforcement": ["threat-corpus-regression", "contract-schema-validation"],
+      "tests": ["test_case_ids_are_unique_and_gateway_outcomes_match", "test_contract_injection_case_rejects_credential_field"]
+    },
+    {
+      "id": "INV-021",
+      "statement": "The container backend requests default-deny networking, a read-only root filesystem, dropped capabilities, resource limits, and never silently falls back to host execution",
+      "enforcement": ["docker-sandbox-profile", "image-inspect-before-run"],
+      "tests": ["test_docker_profile_disables_network_and_limits_container", "test_docker_backend_refuses_unavailable_daemon_or_image"]
     }
   ]
 }

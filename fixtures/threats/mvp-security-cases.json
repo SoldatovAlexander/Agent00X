@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "THREAT-001",
+      "name": "tainted publish request",
+      "operation": "publish_pull_request",
+      "port": "tool",
+      "protocol": "internal",
+      "tainted": true,
+      "policy_available": true,
+      "expected_path": "slow",
+      "expected_allowed": false
+    },
+    {
+      "id": "THREAT-002",
+      "name": "external read request",
+      "operation": "repository.read",
+      "port": "data",
+      "protocol": "a2a",
+      "tainted": false,
+      "policy_available": true,
+      "expected_path": "slow",
+      "expected_allowed": true
+    },
+    {
+      "id": "THREAT-003",
+      "name": "policy outage during publication",
+      "operation": "publish_pull_request",
+      "port": "tool",
+      "protocol": "internal",
+      "tainted": false,
+      "policy_available": false,
+      "expected_path": "degraded",
+      "expected_allowed": false
+    },
+    {
+      "id": "THREAT-004",
+      "name": "privilege transition",
+      "operation": "capability.grant",
+      "port": "approval",
+      "protocol": "internal",
+      "tainted": false,
+      "policy_available": true,
+      "expected_path": "slow",
+      "expected_allowed": true
+    },
+    {
+      "id": "THREAT-005",
+      "name": "internal read-only request",
+      "operation": "workspace.read",
+      "port": "data",
+      "protocol": "internal",
+      "tainted": false,
+      "policy_available": true,
+      "expected_path": "fast",
+      "expected_allowed": true
+    }
+  ]
+}

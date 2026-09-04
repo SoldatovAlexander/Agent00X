@@ -28,9 +28,9 @@ M4 Dual UX                   PLANNED
 | Documentation baseline | Выполнен | Видение, ADR, threat model, process model, бриф и план связаны | Изменять только по результатам реализации |
 | M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
 | M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
-| M1 Safe local preparation | В работе | Reference change готовится в ephemeral workspace; SQLite сохраняет состояние и append-only transitions | Container network/kernel isolation и recovery вокруг side effect |
+| M1 Safe local preparation | В работе | Reference change готовится в ephemeral workspace; SQLite сохраняет transitions; Docker profile подготовлен | Container network/kernel isolation на доступном daemon |
 | M2 Controlled publication | В работе | Local chain включает policy, approval, enforced Gateway, Broker interface, mock actuator и recovery | GitHub App Broker и real actuator |
-| M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay и crash tests проходят на mock boundary | Network bypass, canary и real-boundary tests |
+| M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary и threat-corpus tests проходят на mock boundary | Network bypass и real-boundary tests |
 | M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
 
 ## 3. Реализованные артефакты
@@ -75,6 +75,7 @@ Agent-facing schemas используют `additionalProperties: false`; пол�
 - Gateway Fast/Slow/Degraded classifier и typed mock actuator integration.
 - Gateway enforcement, sanitized append-only audit и Slow Path requirement для publication.
 - durable publication journal; recovery по idempotency key или reconciliation_required.
+- Docker sandbox backend с default-deny network profile, без automatic pull/fallback.
 
 ### Reference preparation pipeline
 
@@ -98,7 +99,7 @@ authorized fixture snapshot
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
-Зафиксированный результат: **63 из 63 платформенных тестов проходят**.
+Зафиксированный результат: **70 из 70 платформенных тестов проходят**.
 Дополнительно проходит один тест fixture repository.
 
 Проверены schema validation, отсутствие credential-поля, зарегистрированная
@@ -115,6 +116,12 @@ Recovery после mock side effect проверяет сбой до вызов
 Сквозные adversarial tests проверяют taint, недоступность policy и replay.
 Broker interface открывает только одноразовый opaque channel, связанный с digest
 typed actuator request; значение credential не присутствует в контракте.
+Canary scan доказывает отсутствие test credential во всех контролируемых
+agent-facing и persisted surfaces; искусственные утечки в evidence/audit ловятся.
+Threat corpus исполняет ожидаемые результаты Gateway для taint, внешнего
+протокола, policy outage, privilege transition и read-only path.
+Docker backend ещё не запускался: daemon недоступен, поэтому container isolation
+не считается доказанной.
 
 ## 5. Что ещё не доказано
 
@@ -167,7 +174,7 @@ kernel isolation и не снимает блокер VP-02.
 
 1. GitHub App Broker и ограниченный real actuator spike — требует GitHub App и allowlisted test repository;
 2. Docker/Podman backend и network-bypass tests после появления daemon;
-3. canary credential corpus и scan-проверки.
+3. расширить canary scan на реальный Broker и системную телеметрию после их появления.
 
 После появления daemon добавляется Docker/Podman backend и выполняются network,
 mount, environment, process и escape tests.

@@ -1,0 +1,17 @@
+[Unit]
+Description=Agent00X GitHub App Broker preflight (user service)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/alex/agent00x-broker/app
+EnvironmentFile=/home/alex/agent00x-broker/.env.github-app
+ExecStart=/usr/bin/python3 scripts/github_app_preflight.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

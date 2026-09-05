@@ -97,6 +97,10 @@ python3 scripts/github_app_preflight.py
 проверяет metadata при boot после сети. Он не выполняет публикацию и не создаёт
 installation token без явного actuator-запроса.
 
+Если system-wide sudo недоступен, используйте
+[user service](deploy/agent00x-broker-preflight.user.service) вместе с
+`loginctl enable-linger alex`; это обеспечивает тот же preflight после reboot.
+
 ## Документы
 
 - [Видение и границы](docs/00-vision-and-scope.md)

@@ -23,6 +23,7 @@ from app_contracts.github_app import (
     _InstallationToken,
 )
 from app_contracts.digests import sha256_digest
+from app_contracts.repository_process import PublishableFile
 from app_contracts.gateway import GatewayDecision, GatewayPath
 from app_contracts.github_actuator import BrokeredGitHubActuator
 from app_contracts.validator import ContractValidationError
@@ -119,6 +120,28 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             channel = GitHubAppPublicationChannel(GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"))
             with self.assertRaisesRegex(ContractValidationError, "not allowlisted"):
                 channel.publish_pull_request({"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/999", "branch": "agent/process-demo-001", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "key", "policy_effect": "allow", "approval_valid": True})
+
+    def test_verified_manifest_creates_scoped_branch_and_contents_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            posts, puts = [], []
+            content = "verified content\n"
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: posts.append((url, payload)) or {"ref": payload["ref"]},
+                put_json=lambda url, headers, payload: puts.append((url, payload)) or {"commit": {"sha": "d" * 40}},
+            )
+            sha = channel.publish_verified_files(
+                branch="agent/process-demo-001",
+                staged_change={"repository_id": "github-installation/456/repository/1001", "base_commit": "a" * 40, "patch_digest": "sha256:" + "b" * 64},
+                files=[PublishableFile("proof.txt", content, __import__("app_contracts.digests", fromlist=["sha256_bytes"]).sha256_bytes(content.encode()))],
+            )
+        self.assertEqual(sha, "d" * 40)
+        self.assertEqual(posts[0][1], {"ref": "refs/heads/agent/process-demo-001", "sha": "a" * 40})
+        self.assertEqual(puts[0][1]["branch"], "agent/process-demo-001")
 
     def test_preflight_rejects_key_file_with_broad_permissions(self):
         with tempfile.TemporaryDirectory() as directory:

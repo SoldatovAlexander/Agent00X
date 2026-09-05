@@ -11,11 +11,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from .broker import validate_credential_use_grant
+from .digests import sha256_bytes
 from .validator import ContractValidationError
 
 
@@ -176,6 +177,18 @@ def _get_json(url: str, headers: Mapping[str, str]) -> object:
         raise GitHubAppBrokerError("GitHub pull-request reconciliation failed") from error
 
 
+def _put_json(url: str, headers: Mapping[str, str], payload: Mapping[str, object]) -> Mapping[str, object]:
+    request = Request(url, data=json.dumps(payload).encode("utf-8"), headers={**headers, "Content-Type": "application/json"}, method="PUT")
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310 -- endpoint is validated in config.
+            decoded = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        raise GitHubAppBrokerError("GitHub verified-file publication failed") from error
+    if not isinstance(decoded, dict):
+        raise GitHubAppBrokerError("GitHub verified-file response must be an object")
+    return decoded
+
+
 @dataclass(frozen=True)
 class GitHubPullRequest:
     pull_request_id: int
@@ -189,11 +202,43 @@ class GitHubPullRequest:
 class GitHubAppPublicationChannel:
     """Actuator-only channel for one typed GitHub pull-request operation."""
 
-    def __init__(self, config: GitHubAppBrokerConfig, token: _InstallationToken, *, post_json=None, get_json=None) -> None:
+    def __init__(self, config: GitHubAppBrokerConfig, token: _InstallationToken, *, post_json=None, get_json=None, put_json=None) -> None:
         self._config = config
         self._token = token
         self._post_json = post_json or _post_json
         self._get_json = get_json or _get_json
+        self._put_json = put_json or _put_json
+
+    def publish_verified_files(self, *, branch: str, staged_change: Mapping[str, object], files: Sequence[object]) -> str:
+        """Create a scoped branch and publish only files exported from a verified manifest."""
+
+        repository_id = f"github-installation/{self._config.installation_id}/repository/{self._config.repository_id}"
+        if staged_change.get("repository_id") != repository_id:
+            raise ContractValidationError("GitHub actuator: staged change repository is not allowlisted")
+        base_commit = staged_change.get("base_commit")
+        patch_digest = staged_change.get("patch_digest")
+        if not isinstance(base_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", base_commit):
+            raise ContractValidationError("GitHub actuator: staged change base commit is invalid")
+        if not isinstance(patch_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", patch_digest):
+            raise ContractValidationError("GitHub actuator: staged change patch digest is invalid")
+        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+            raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        if not files:
+            raise ContractValidationError("GitHub actuator: verified publish manifest is empty")
+        self._post_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/refs"), self._headers(), {"ref": f"refs/heads/{branch}", "sha": base_commit})
+        commit_sha = ""
+        for file in files:
+            path, content, content_digest = getattr(file, "path", None), getattr(file, "content", None), getattr(file, "content_digest", None)
+            if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+                raise ContractValidationError("GitHub actuator: manifest path is unsafe")
+            if not isinstance(content, str) or not isinstance(content_digest, str) or sha256_bytes(content.encode("utf-8")) != content_digest:
+                raise ContractValidationError("GitHub actuator: manifest content digest mismatch")
+            response = self._put_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/contents/{quote(path)}"), self._headers(), {"message": f"Apply verified staged change {patch_digest}", "content": base64.b64encode(content.encode("utf-8")).decode("ascii"), "branch": branch})
+            commit = response.get("commit")
+            if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):
+                raise GitHubAppBrokerError("GitHub verified-file response is missing commit SHA")
+            commit_sha = commit["sha"]
+        return commit_sha
 
     def publish_pull_request(self, request: dict[str, Any]) -> GitHubPullRequest:
         expected = {"operation", "repository_id", "branch", "staged_change_digest", "idempotency_key", "policy_effect", "approval_valid"}
@@ -258,11 +303,12 @@ class GitHubAppPublicationChannel:
 class GitHubAppCredentialBroker:
     """Single-use Broker that mints a private token and opens one actuator channel."""
 
-    def __init__(self, config: GitHubAppBrokerConfig, token_minter: GitHubAppInstallationTokenMinter, *, post_json=None, get_json=None) -> None:
+    def __init__(self, config: GitHubAppBrokerConfig, token_minter: GitHubAppInstallationTokenMinter, *, post_json=None, get_json=None, put_json=None) -> None:
         self._config = config
         self._token_minter = token_minter
         self._post_json = post_json
         self._get_json = get_json
+        self._put_json = put_json
         self._used_grants: set[str] = set()
 
     def open_github_publication_channel(self, credential_grant: dict[str, Any], actuator_request: dict[str, Any]) -> GitHubAppPublicationChannel:
@@ -271,4 +317,4 @@ class GitHubAppCredentialBroker:
         if grant_id in self._used_grants:
             raise ContractValidationError("broker: credential grant already used")
         self._used_grants.add(grant_id)
-        return GitHubAppPublicationChannel(self._config, self._token_minter.mint(credential_grant), post_json=self._post_json, get_json=self._get_json)
+        return GitHubAppPublicationChannel(self._config, self._token_minter.mint(credential_grant), post_json=self._post_json, get_json=self._get_json, put_json=self._put_json)

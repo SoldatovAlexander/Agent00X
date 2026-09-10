@@ -54,7 +54,7 @@ class PublicationJournal:
                 and existing.request_digest == request_digest
             ):
                 return existing
-            raise ValueError(f"publication payload conflict for {process_id}")
+            raise ValueError("publication payload conflict")
         try:
             with self._connection:
                 self._connection.execute(
@@ -63,7 +63,7 @@ class PublicationJournal:
                     (process_id, idempotency_key, request_digest),
                 )
         except sqlite3.IntegrityError as exc:
-            raise ValueError(f"publication payload conflict for {process_id}") from exc
+            raise ValueError("publication payload conflict") from exc
         return self.get(process_id)
 
     def get(self, process_id: str) -> PublicationRecord:

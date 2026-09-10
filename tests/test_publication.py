@@ -45,6 +45,28 @@ class PublicationRecoveryTests(unittest.TestCase):
             request_digest="sha256:" + "b" * 64,
         )
 
+    def test_conflict_errors_carry_no_injected_values(self):
+        with PublicationJournal(self.database) as journal:
+            journal.prepare(
+                "process-evil-caller-secret-001",
+                idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
+                request_digest="sha256:" + "e" * 64,
+            )
+            with self.assertRaisesRegex(ValueError, "^publication payload conflict$") as first:
+                journal.prepare(
+                    "process-evil-caller-secret-001",
+                    idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
+                    request_digest="sha256:" + "f" * 64,
+                )
+            self.assertNotIn("caller-secret", str(first.exception))
+            with self.assertRaisesRegex(ValueError, "^publication payload conflict$") as second:
+                journal.prepare(
+                    "process-other-003",
+                    idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
+                    request_digest="sha256:" + "e" * 64,
+                )
+            self.assertNotIn("caller-secret", str(second.exception))
+
     def test_identical_prepare_replay_returns_existing_record(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

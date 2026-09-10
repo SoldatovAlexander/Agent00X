@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.digests import sha256_bytes, sha256_digest
-from app_contracts.repository_process import build_publish_manifest, prepare_change
+from app_contracts.repository_process import (
+    _safe_relative_path,
+    build_publish_manifest,
+    prepare_change,
+)
 from app_contracts.sandbox import LocalProcessSandboxBackend
 from app_contracts.validator import ContractValidationError, validate
 
@@ -151,6 +155,29 @@ class RepositoryProcessTests(unittest.TestCase):
         (sandbox.workspace / "test_calculator.py").write_text("tampered", encoding="utf-8")
         with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
             build_publish_manifest(sandbox, result, changes)
+
+    def test_unsafe_path_variants_leave_workspace_untouched(self):
+        for unsafe in ("./calculator.py", "pkg//calculator.py", "dir\\calculator.py", "../escape.py"):
+            with self.subTest(path=unsafe):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={unsafe: "evil"},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                self.assertEqual(
+                    sorted(path.name for path in sandbox.workspace.iterdir()),
+                    ["calculator.py", "test_calculator.py"],
+                )
+
+    def test_normal_nested_relative_path_stays_accepted(self):
+        self.assertEqual(_safe_relative_path("pkg/mod.py").as_posix(), "pkg/mod.py")
 
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:

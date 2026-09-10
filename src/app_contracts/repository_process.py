@@ -182,7 +182,16 @@ def build_publish_manifest(sandbox: LocalProcessSandbox, prepared: PreparedChang
 
 def _safe_relative_path(value: str) -> Path:
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts or value in {"", "."}:
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or value in {"", "."}
+        or value.startswith(("./", "../"))
+        or "/./" in value
+        or value.endswith("/.")
+        or "//" in value
+        or "\\" in value
+    ):
         raise ContractValidationError(f"unsafe relative path: {value}")
     return path
 

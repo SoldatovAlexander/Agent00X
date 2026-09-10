@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.validator import ContractValidationError, validate
+from app_contracts.validator import ContractValidationError, validate, validate_schema
 from app_contracts.chain import validate_chain
 from app_contracts.digests import sha256_digest
 
@@ -200,6 +200,34 @@ class ContractTests(unittest.TestCase):
             for test_name in invariant["tests"]:
                 if not test_name.startswith("planned:"):
                     self.assertIn(test_name, known_tests)
+
+
+class SchemaStructureTests(unittest.TestCase):
+    def test_malformed_required_is_rejected_before_instance_check(self):
+        schema = {"type": "object", "required": "field", "properties": {"field": {"type": "string"}}}
+        with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*required"):
+            validate({"field": "value"}, schema)
+        with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*required"):
+            validate_schema(schema)
+
+    def test_malformed_properties_is_rejected_before_instance_check(self):
+        schema = {"type": "object", "properties": ["field"]}
+        with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*properties"):
+            validate({"field": "value"}, schema)
+
+    def test_truthy_additional_properties_string_does_not_widen_payload(self):
+        schema = {
+            "type": "object",
+            "properties": {"field": {"type": "string"}},
+            "additionalProperties": "false",
+        }
+        with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*additionalProperties"):
+            validate({"field": "value", "evil": "payload"}, schema)
+
+    def test_all_project_schema_files_are_structurally_valid(self):
+        for schema_file in sorted((ROOT / "schemas").glob("*.schema.json")):
+            with self.subTest(schema=schema_file.name):
+                validate_schema(load_json(schema_file))
 
 
 if __name__ == "__main__":

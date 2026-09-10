@@ -23,7 +23,46 @@ _SUPPORTED = _ANNOTATIONS | {
 }
 
 
+def validate_schema(schema: Any, path: str = "$") -> None:
+    """Fail closed on malformed schema declarations before any instance check.
+
+    A malformed ``required``, ``properties`` or ``additionalProperties``
+    declaration must never silently widen the accepted payload (for example a
+    truthy ``additionalProperties`` string would disable unknown-field
+    rejection), so structural violations raise RuntimeError deterministically.
+    """
+
+    if not isinstance(schema, dict):
+        raise RuntimeError(f"invalid schema declaration at {path}: schema must be an object")
+    unknown = set(schema) - _SUPPORTED
+    if unknown:
+        raise RuntimeError(f"unsupported schema keywords at {path}: {sorted(unknown)}")
+    if "required" in schema:
+        required = schema["required"]
+        if not isinstance(required, list) or not all(isinstance(name, str) for name in required):
+            raise RuntimeError(f"invalid schema declaration at {path}: required must be a list of strings")
+    if "properties" in schema:
+        properties = schema["properties"]
+        if not isinstance(properties, dict) or not all(
+            isinstance(name, str) and isinstance(subschema, dict) for name, subschema in properties.items()
+        ):
+            raise RuntimeError(f"invalid schema declaration at {path}: properties must map names to schemas")
+        for name, subschema in properties.items():
+            validate_schema(subschema, f"{path}.{name}")
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        raise RuntimeError(
+            f"invalid schema declaration at {path}: additionalProperties must be a boolean"
+        )
+    if "items" in schema:
+        validate_schema(schema["items"], f"{path}[]")
+
+
 def validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
+    validate_schema(schema, path)
+    _validate(instance, schema, path)
+
+
+def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
     unknown = set(schema) - _SUPPORTED
     if unknown:
         raise RuntimeError(f"unsupported schema keywords at {path}: {sorted(unknown)}")
@@ -59,14 +98,14 @@ def validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
                 raise ContractValidationError(f"{path}: unknown fields {sorted(extra)}")
         for name, value in instance.items():
             if name in properties:
-                validate(value, properties[name], f"{path}.{name}")
+                _validate(value, properties[name], f"{path}.{name}")
 
     if isinstance(instance, list):
         if len(instance) < schema.get("minItems", 0):
             raise ContractValidationError(f"{path}: too few items")
         if "items" in schema:
             for index, value in enumerate(instance):
-                validate(value, schema["items"], f"{path}[{index}]")
+                _validate(value, schema["items"], f"{path}[{index}]")
 
     if isinstance(instance, str):
         if len(instance) < schema.get("minLength", 0):

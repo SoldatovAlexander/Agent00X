@@ -71,6 +71,30 @@ class RepositoryProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "content changed"):
             build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
 
+    def test_publish_manifest_rejects_resubmitted_mapping_with_new_content(self):
+        sandbox, result = self.prepare()
+        tampered = self.new_calculator + "# tampered-after-verification\n"
+        (sandbox.workspace / "calculator.py").write_text(tampered, encoding="utf-8")
+        with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
+            build_publish_manifest(sandbox, result, {"calculator.py": tampered})
+
+    def test_publish_manifest_rejects_empty_and_unfixed_file_lists(self):
+        sandbox, result = self.prepare()
+        with self.assertRaisesRegex(ContractValidationError, "empty"):
+            build_publish_manifest(sandbox, result, {})
+        with self.assertRaisesRegex(ContractValidationError, "does not match verified"):
+            build_publish_manifest(
+                sandbox, result, {"calculator.py": self.new_calculator, "extra.py": "unverified"}
+            )
+        with self.assertRaisesRegex(ContractValidationError, "does not match verified"):
+            build_publish_manifest(sandbox, result, {"other.py": self.new_calculator})
+
+    def test_publish_manifest_ignores_resubmitted_mapping_values(self):
+        sandbox, result = self.prepare()
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": "stale-or-forged-value"})
+        self.assertEqual(manifest[0].content, self.new_calculator)
+        self.assertEqual(manifest[0].content_digest, sha256_bytes(self.new_calculator.encode("utf-8")))
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

@@ -19,6 +19,7 @@ class PreparedChange:
     evidence_bundle: dict
     verification_report: dict
     staged_change: dict
+    verified_contents: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ def prepare_change(
     changed_paths: list[str] = []
     patch_parts: list[str] = []
     source_digests: list[str] = []
+    verified_pairs: list[tuple[str, str]] = []
 
     for relative_name, new_content in sorted(changes.items()):
         relative = _safe_relative_path(relative_name)
@@ -62,6 +64,7 @@ def prepare_change(
             raise ContractValidationError(f"proposed content is unchanged: {relative_name}")
         workspace_file.write_text(new_content, encoding="utf-8")
         changed_paths.append(relative.as_posix())
+        verified_pairs.append((relative.as_posix(), new_content))
         source_digests.append(sha256_bytes(old_content.encode("utf-8")))
         patch_parts.extend(
             difflib.unified_diff(
@@ -140,22 +143,36 @@ def prepare_change(
         "created_at": _format_time(timestamp),
         "expires_at": _format_time(timestamp + timedelta(hours=24)),
     }
-    return PreparedChange(patch, evidence, verification, staged)
+    return PreparedChange(patch, evidence, verification, staged, tuple(sorted(verified_pairs)))
 
 
 def build_publish_manifest(sandbox: LocalProcessSandbox, prepared: PreparedChange, changes: Mapping[str, str]) -> tuple[PublishableFile, ...]:
-    """Export only verified workspace files after re-binding them to the staged patch."""
+    """Export only verified workspace files bound to the prepared change.
+
+    The re-passed ``changes`` mapping is not trusted for content: its values are
+    ignored and only its keys must exactly match the immutable contents fixed in
+    ``prepared`` before verification. Workspace files are re-read and compared
+    against the fixed contents.
+    """
 
     if sha256_bytes(prepared.patch.encode("utf-8")) != prepared.staged_change["patch_digest"]:
         raise ContractValidationError("staged change patch digest no longer matches prepared change")
+    verified = dict(prepared.verified_contents)
+    if not verified:
+        raise ContractValidationError("publish manifest is empty")
+    if not changes:
+        raise ContractValidationError("publish manifest is empty")
+    requested = {_safe_relative_path(name).as_posix() for name in changes}
+    if requested != set(verified):
+        raise ContractValidationError("publish manifest request does not match verified prepared contents")
     manifest: list[PublishableFile] = []
-    for relative_name, expected_content in sorted(changes.items()):
+    for relative_name in sorted(verified):
         relative = _safe_relative_path(relative_name)
         workspace_file = _contained_file(sandbox.workspace, relative)
         if not workspace_file.is_file() or workspace_file.is_symlink():
             raise ContractValidationError(f"verified workspace file is unavailable: {relative_name}")
         content = workspace_file.read_text(encoding="utf-8")
-        if content != expected_content:
+        if content != verified[relative_name]:
             raise ContractValidationError(f"verified workspace content changed: {relative_name}")
         manifest.append(PublishableFile(relative.as_posix(), content, sha256_bytes(content.encode("utf-8"))))
     if not manifest:

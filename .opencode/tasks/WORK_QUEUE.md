@@ -2604,13 +2604,10 @@ Commit: ALLOWED
 Зависит от: EXP-098
 Среда исполнения: local
 Внешняя цель: none
-Вне scope: real credentials, Docker, testdev, GitHub.
+Вне scope: real credentials, GitHub App, Docker, testdev, GitHub.
 Разрешённые пути:
 - src/app_contracts/broker.py
-- src/app_contracts/github_app.py
-- src/app_contracts/github_actuator.py
 - tests/test_broker.py
-- tests/test_github_app.py
 Критерии приёмки:
 - malformed grant/request binding is denied and channel factory call count stays zero;
 - valid grant path remains green.
@@ -2627,10 +2624,13 @@ Commit: ALLOWED
 Зависит от: EXP-099
 Среда исполнения: local
 Внешняя цель: none
-Вне scope: real credentials, GitHub App, Docker, testdev, GitHub.
+Вне scope: real credentials, Docker, testdev, GitHub.
 Разрешённые пути:
 - src/app_contracts/broker.py
+- src/app_contracts/github_app.py
+- src/app_contracts/github_actuator.py
 - tests/test_broker.py
+- tests/test_github_app.py
 Критерии приёмки:
 - malformed and expired grant deny without channel creation or secret exposure on every broker opening path;
 - valid unexpired grant path remains green.

@@ -205,6 +205,32 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertNotIn("Stored rationale", str(raised.exception))
 
 
+    def test_result_to_result_reference_is_denied_without_payload(self):
+        store = ObservationStore()
+        earlier_result = valid_event("event-store-demo-001", 0)
+        earlier_result["event_type"] = "tool_completed"
+        earlier_result["invocation_id"] = "invocation-store-demo-001"
+        earlier_result["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(earlier_result)
+        later_result = valid_event("event-store-demo-002", 1)
+        later_result["event_type"] = "tool_completed"
+        later_result["invocation_id"] = "invocation-store-demo-001"
+        with self.assertRaisesRegex(
+            ContractValidationError, "invocation reference is not an intent"
+        ) as raised:
+            store.check_result_causality(later_result)
+        self.assertNotIn("Stored rationale", str(raised.exception))
+
+    def test_self_reference_is_denied(self):
+        store = ObservationStore()
+        lonely_result = valid_event("event-store-demo-001", 0)
+        lonely_result["event_type"] = "tool_completed"
+        lonely_result["invocation_id"] = "invocation-store-demo-001"
+        store.append(lonely_result)
+        with self.assertRaisesRegex(ContractValidationError, "unknown invocation reference"):
+            store.check_result_causality(dict(lonely_result))
+
+
 class FailingStore(ObservationStore):
     def append(self, event):
         raise ContractValidationError("injected store failure")

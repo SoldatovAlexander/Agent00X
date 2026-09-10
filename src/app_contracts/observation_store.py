@@ -24,6 +24,14 @@ def _load_schema(name: str) -> dict[str, Any]:
 EVENT_SCHEMA = _load_schema("observation-event.schema.json")
 CHECKPOINT_SCHEMA = _load_schema("checkpoint.schema.json")
 
+_RESULT_EVENT_TYPES = frozenset({
+    "tool_completed",
+    "tool_failed",
+    "tool_denied",
+    "outcome_unknown",
+    "agent_finished",
+})
+
 
 class EventConflictError(ValueError):
     """A second record reuses an event_id with different content."""
@@ -152,8 +160,11 @@ class ObservationStore:
         if not invocation_id:
             raise ContractValidationError("result has no invocation reference")
         for position, stored in enumerate(self._events):
-            if stored.get("invocation_id") == invocation_id and stored["event_id"] != result_event["event_id"]:
-                return position
+            if stored.get("invocation_id") != invocation_id or stored["event_id"] == result_event["event_id"]:
+                continue
+            if stored.get("event_type") in _RESULT_EVENT_TYPES:
+                raise ContractValidationError("invocation reference is not an intent")
+            return position
         raise ContractValidationError(f"unknown invocation reference: {invocation_id}")
 
     def events(self) -> tuple[dict[str, Any], ...]:

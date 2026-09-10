@@ -103,6 +103,24 @@ class CanaryCredentialTests(unittest.TestCase):
         )
         self.assertNotIn(self.canary, str(raised.exception))
 
+    def test_unsupported_value_yields_finding_without_repr_or_value(self):
+        class Unprintable:
+            def __str__(self):
+                raise RuntimeError("synthetic-serialization-failure-001")
+
+            def __repr__(self):
+                return "Unprintable(synthetic-repr-002)"
+
+        surfaces = {"agent-context": {"opaque": Unprintable()}, "stdout": "clean"}
+        self.assertEqual(find_canary_surfaces(self.canary, surfaces), ["agent-context"])
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, surfaces)
+        message = str(raised.exception)
+        self.assertIn("agent-context", message)
+        self.assertNotIn("synthetic-serialization-failure-001", message)
+        self.assertNotIn("synthetic-repr-002", message)
+        self.assertNotIn(self.canary, message)
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

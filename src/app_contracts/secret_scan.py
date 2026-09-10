@@ -13,10 +13,10 @@ class CredentialLeakDetected(RuntimeError):
 def find_canary_surfaces(canary: str, surfaces: Mapping[str, Any]) -> list[str]:
     """Return the names of surfaces containing an exact canary value.
 
-    A surface that cannot be serialized (cyclic or otherwise unbounded) is
-    reported as a finding: absence can never be proven there, so fail-closed
-    suspicion replaces silent traversal. Only surface names are reported,
-    never scanned values.
+    A surface that cannot be serialized (cyclic, unbounded, or otherwise
+    unsupported) is reported as a finding: absence can never be proven
+    there, so fail-closed suspicion replaces silent traversal or a raw
+    exception. Only surface names are reported, never scanned values.
     """
 
     if not canary:
@@ -25,7 +25,7 @@ def find_canary_surfaces(canary: str, surfaces: Mapping[str, Any]) -> list[str]:
     for name, value in surfaces.items():
         try:
             serialized = _serialize(value)
-        except (ValueError, RecursionError):
+        except Exception:
             found.append(name)
             continue
         if canary in serialized:

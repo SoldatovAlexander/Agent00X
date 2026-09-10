@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-process.local/schemas/observation-event.schema.json",
   "title": "ObservationEvent",
-  "description": "Minimal R0 contract for a structured observer event from document 28. Values must not contain secrets or raw prompts.",
+  "description": "Minimal R0 contract for a structured observer event from document 28. safe_parameters is a strict allowlist of typed redacted metadata; raw payload, secret-like keys and prompt text are rejected.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "event_id", "event_type", "process_id", "run_id", "branch_id", "task_id", "agent_id", "sequence", "occurred_at", "recorded_at", "classification", "redaction_status"],
@@ -28,7 +28,17 @@
     "input_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://"}},
     "output_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://"}},
     "decision_or_tool": {"type": "string", "minLength": 1},
-    "safe_parameters": {"type": "object"},
+    "safe_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+$", "minLength": 1, "maxLength": 256},
+        "max_bytes": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 0},
+        "offset": {"type": "integer", "minimum": 0},
+        "artifact_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256}
+      }
+    },
     "rationale": {"type": "string", "minLength": 1},
     "expected_result": {"type": "string", "minLength": 1},
     "authority_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://"}},

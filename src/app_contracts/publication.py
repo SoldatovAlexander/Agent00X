@@ -45,6 +45,17 @@ class PublicationJournal:
 
     def prepare(self, process_id: str, *, idempotency_key: str, request_digest: str) -> PublicationRecord:
         try:
+            existing = self.get(process_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if (
+                existing.idempotency_key == idempotency_key
+                and existing.request_digest == request_digest
+            ):
+                return existing
+            raise ValueError(f"publication payload conflict for {process_id}")
+        try:
             with self._connection:
                 self._connection.execute(
                     """INSERT INTO publication_attempts(process_id, idempotency_key, request_digest, status)
@@ -52,7 +63,7 @@ class PublicationJournal:
                     (process_id, idempotency_key, request_digest),
                 )
         except sqlite3.IntegrityError as exc:
-            raise ValueError(f"publication already prepared for {process_id}") from exc
+            raise ValueError(f"publication payload conflict for {process_id}") from exc
         return self.get(process_id)
 
     def get(self, process_id: str) -> PublicationRecord:

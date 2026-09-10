@@ -45,6 +45,31 @@ class PublicationRecoveryTests(unittest.TestCase):
             request_digest="sha256:" + "b" * 64,
         )
 
+    def test_identical_prepare_replay_returns_existing_record(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            replayed = journal.prepare(
+                self.request["process_id"],
+                idempotency_key=self.request["idempotency_key"],
+                request_digest="sha256:" + "b" * 64,
+            )
+            self.assertEqual(replayed.status, "prepared")
+            self.assertEqual(replayed.request_digest, "sha256:" + "b" * 64)
+
+    def test_conflicting_digest_prepare_is_rejected_without_second_record(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            with self.assertRaisesRegex(ValueError, "payload conflict"):
+                journal.prepare(
+                    self.request["process_id"],
+                    idempotency_key=self.request["idempotency_key"],
+                    request_digest="sha256:" + "c" * 64,
+                )
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.request_digest, "sha256:" + "b" * 64)
+            self.assertEqual(record.status, "prepared")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_crash_before_external_call_remains_explicitly_retryable(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

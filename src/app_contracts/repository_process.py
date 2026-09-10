@@ -28,6 +28,10 @@ class PublishableFile:
     content: str
     content_digest: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not isinstance(self.content, str):
+            raise ContractValidationError("publishable file content is not text")
+
 
 def prepare_change(
     sandbox: LocalProcessSandbox,

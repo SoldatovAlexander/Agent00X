@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.digests import sha256_bytes, sha256_digest
 from app_contracts.repository_process import (
+    PublishableFile,
     _safe_relative_path,
     build_publish_manifest,
     prepare_change,
@@ -311,6 +312,19 @@ class RepositoryProcessTests(unittest.TestCase):
             )
         manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
         self.assertEqual([item.path for item in manifest], ["calculator.py"])
+
+    def test_non_text_publishable_content_rejected_without_output(self):
+        for bad in (b"bytes-content", None, 123):
+            with self.subTest(kind=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "content is not text"
+                ):
+                    PublishableFile("calculator.py", bad, "sha256:" + "a" * 64)
+        manifest_item = PublishableFile(
+            "calculator.py", self.new_calculator,
+            sha256_bytes(self.new_calculator.encode("utf-8")),
+        )
+        self.assertEqual(manifest_item.content, self.new_calculator)
 
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:

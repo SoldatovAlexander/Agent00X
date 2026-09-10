@@ -93,6 +93,16 @@ class StateMachineTests(unittest.TestCase):
         self.assertNotIn("contract_complete", message)
         self.assertNotIn("staged_digest", message)
 
+    def test_malformed_evidence_denies_without_transition(self):
+        for bad in (None, {"contract_complete": True}, "evidence", 42, object()):
+            with self.subTest(evidence=type(bad).__name__):
+                with self.assertRaisesRegex(InvalidTransition, "^transition evidence is invalid$"):
+                    transition(ProcessState.RECEIVED, ProcessState.SPECIFIED, bad)
+        state = transition(
+            ProcessState.RECEIVED, ProcessState.SPECIFIED, TransitionEvidence(contract_complete=True)
+        )
+        self.assertEqual(state, ProcessState.SPECIFIED)
+
     def test_unknown_shortcut_is_rejected(self):
         with self.assertRaisesRegex(InvalidTransition, "is not allowed"):
             transition(ProcessState.RECEIVED, ProcessState.APPLYING, TransitionEvidence())

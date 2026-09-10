@@ -233,6 +233,36 @@ class RuntimeStoreTests(unittest.TestCase):
                 )
             self.assertNotIn("contract_complete", str(raised.exception))
 
+    def test_audit_records_are_isolated_per_process(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-012")
+            store.create("process-durable-013")
+            store.append_audit_event(
+                "process-durable-012", actor_id="agent-worker-001",
+                event_type="gateway.request", input_digest="sha256:" + "a" * 64,
+                result="allowed", reason_codes=("internal-read-only",),
+            )
+            store.append_audit_event(
+                "process-durable-013", actor_id="agent-worker-002",
+                event_type="gateway.request", input_digest="sha256:" + "b" * 64,
+                result="denied", reason_codes=("write-or-unknown-denied",),
+            )
+            store.append_audit_event(
+                "process-durable-012", actor_id="agent-worker-001",
+                event_type="gateway.request", input_digest="sha256:" + "c" * 64,
+                result="denied", reason_codes=("tainted-content",),
+            )
+            own = store.audit_events("process-durable-012")
+            self.assertEqual([event["input_digest"] for event in own], ["sha256:" + "a" * 64, "sha256:" + "c" * 64])
+            self.assertTrue(all(event["actor_id"] == "agent-worker-001" for event in own))
+            other = store.audit_events("process-durable-013")
+            self.assertEqual(len(other), 1)
+            self.assertNotIn("sha256:" + "b" * 64, [event["input_digest"] for event in own])
+            with self.assertRaises(ProcessNotFound):
+                store.audit_events("process-unknown-999")
+            with self.assertRaises(ProcessNotFound):
+                store.events("process-unknown-999")
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

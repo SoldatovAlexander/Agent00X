@@ -72,11 +72,11 @@ class AdversarialFlowTests(unittest.TestCase):
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
         first = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision,
-            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"],
+            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
         )
         second = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision,
-            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"],
+            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
         )
         self.assertEqual(first, second)
         self.assertEqual(first.pull_request_id, 1)
@@ -112,7 +112,7 @@ class AdversarialFlowTests(unittest.TestCase):
                 with self.assertRaises(ContractValidationError):
                     publish_authorized_request(
                         endpoint, request, decision, approval_valid=True,
-                        gateway_decision=gateway, intent=self.chain["intent"],
+                        gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
                     )
                 self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
                 self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
@@ -130,7 +130,7 @@ class AdversarialFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "approved intent branch_namespace mismatch"):
             publish_authorized_request(
                 endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
-                intent=self.chain["intent"],
+                intent=self.chain["intent"], now=NOW,
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
 
@@ -149,6 +149,7 @@ class AdversarialFlowTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             publish_authorized_request(  # type: ignore[call-arg]
                 endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
+                now=NOW,
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
         self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
@@ -163,7 +164,7 @@ class AdversarialFlowTests(unittest.TestCase):
         )
         result = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision, approval_valid=True,
-            gateway_decision=gateway, intent=self.chain["intent"],
+            gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
         )
         self.assertEqual(result.pull_request_id, 1)
         self.assertIsNotNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))

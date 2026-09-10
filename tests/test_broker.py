@@ -18,6 +18,9 @@ from app_contracts.mock_github import MockGitHubEndpoint
 from app_contracts.validator import ContractValidationError
 
 
+NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+
+
 class BrokerTests(unittest.TestCase):
     def setUp(self):
         self.chain = json.loads((ROOT / "fixtures" / "valid" / "mvp-chain.json").read_text())
@@ -33,7 +36,7 @@ class BrokerTests(unittest.TestCase):
             decision_id="decision-broker-001",
             actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
             staged_change=self.chain["staged_change"], intent=self.chain["intent"],
-            now=datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc),
+            now=NOW,
         )
         self.gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
 
@@ -45,6 +48,7 @@ class BrokerTests(unittest.TestCase):
             approval_valid=True,
             gateway_decision=self.gateway,
             intent=self.chain["intent"],
+            now=NOW,
         )
 
     def test_brokered_actuator_publishes_without_exposing_credential(self):
@@ -76,6 +80,7 @@ class BrokerTests(unittest.TestCase):
                 approval_valid=True,
                 gateway_decision=self.gateway,
                 intent=self.chain["intent"],
+                now=NOW,
             )
 
         with self.assertRaisesRegex(RuntimeError, "injected provider failure"):
@@ -113,6 +118,7 @@ class BrokerTests(unittest.TestCase):
                 approval_valid=True,
                 gateway_decision=self.gateway,
                 intent=self.chain["intent"],
+                now=NOW,
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(evil_request["idempotency_key"]))
         self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))

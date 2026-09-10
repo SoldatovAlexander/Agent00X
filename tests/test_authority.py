@@ -167,6 +167,88 @@ class DecisionUseBoundary:
         return "mock-receipt"
 
 
+class RealActuatorExpiryTests(unittest.TestCase):
+    """Actual-call regression on the real actuator boundary.
+
+    The production `publish_authorized_request` (and the brokered actuator
+    built on it) must enforce the allow-decision expiry at use time:
+    before-expiry use reaches the mock boundary, at/after-expiry use is
+    refused with no mock side effect and no approval-content leakage.
+    """
+
+    def _allow_decision(self):
+        chain = load_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id="decision-use-010",
+            actuator_request=chain["actuator_request"],
+            approval=chain["approval"],
+            staged_change=chain["staged_change"],
+            intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        return chain, decision
+
+    def test_real_boundary_enforces_before_at_after_expiry(self):
+        from app_contracts.actuator import publish_authorized_request
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.mock_github import MockGitHubEndpoint
+
+        chain, decision = self._allow_decision()
+        expires_at = datetime.fromisoformat(decision["expires_at"].replace("Z", "+00:00"))
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        for moment in (NOW, expires_at - timedelta(seconds=1)):
+            with self.subTest(now=moment):
+                endpoint = MockGitHubEndpoint()
+                result = publish_authorized_request(
+                    endpoint, chain["actuator_request"], decision, approval_valid=True,
+                    gateway_decision=gateway, intent=chain["intent"], now=moment,
+                )
+                self.assertEqual(result.pull_request_id, 1)
+                self.assertIsNotNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+        for moment in (expires_at, expires_at + timedelta(seconds=1)):
+            with self.subTest(now=moment):
+                endpoint = MockGitHubEndpoint()
+                with self.assertRaisesRegex(ContractValidationError, "decision: expired") as raised:
+                    publish_authorized_request(
+                        endpoint, chain["actuator_request"], decision, approval_valid=True,
+                        gateway_decision=gateway, intent=chain["intent"], now=moment,
+                    )
+                self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+                leaked = str(raised.exception)
+                self.assertNotIn(chain["approval"]["approval_id"], leaked)
+                self.assertNotIn(chain["approval"]["staged_change_digest"], leaked)
+
+    def test_brokered_boundary_rejects_expired_before_provider(self):
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+
+        chain, decision = self._allow_decision()
+        expires_at = datetime.fromisoformat(decision["expires_at"].replace("Z", "+00:00"))
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        with self.assertRaisesRegex(ContractValidationError, "decision: expired"):
+            actuator.publish_pull_request(
+                actuator_request=chain["actuator_request"],
+                credential_grant=chain["credential_use_grant"],
+                policy_decision=decision,
+                approval_valid=True,
+                gateway_decision=gateway,
+                intent=chain["intent"],
+                now=expires_at + timedelta(seconds=1),
+            )
+        self.assertEqual(broker.opened_grants, [])
+        self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+
+
 class DecisionUseBoundaryTests(unittest.TestCase):
     def _allow_decision(self) -> tuple[dict, dict]:
         chain = load_chain()

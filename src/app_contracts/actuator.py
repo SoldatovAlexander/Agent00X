@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
+from .authority import check_decision_usable
 from .mock_github import MockGitHubEndpoint, MockPullRequest
 from .gateway import GatewayDecision, GatewayPath
 from .validator import ContractValidationError
@@ -17,17 +19,22 @@ def publish_authorized_request(
     approval_valid: bool,
     gateway_decision: GatewayDecision,
     intent: dict[str, Any],
+    now: datetime,
 ) -> MockPullRequest:
     """Publish only a typed request matched to an allow decision and approval.
 
-    The request must match the allow decision on operation, repository and
-    staged digest, and its idempotency key must be consistent with its own
-    branch and digest. The approval-bound ``intent`` is required: the request
-    branch and idempotency key must equal the approved values, so a post-allow
-    swap of branch or key is rejected here instead of reaching the mock
-    boundary. This also covers the brokered path, which forwards its intent.
+    The allow decision must still be usable at the explicit timezone-aware
+    ``now``: an expired (or non-allow) decision is refused before any other
+    check and never reaches the mock boundary. The request must then match
+    the decision on operation, repository and staged digest, and its
+    idempotency key must be consistent with its own branch and digest. The
+    approval-bound ``intent`` is required: the request branch and idempotency
+    key must equal the approved values, so a post-allow swap of branch or key
+    is rejected here instead of reaching the mock boundary. This also covers
+    the brokered path, which forwards its intent and use time.
     """
 
+    check_decision_usable(policy_decision, now=now)
     if not gateway_decision.allowed or gateway_decision.path is not GatewayPath.SLOW:
         raise ContractValidationError("actuator: gateway has not authorized slow path")
     if policy_decision["effect"] != "allow":

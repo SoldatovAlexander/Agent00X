@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from dataclasses import FrozenInstanceError, replace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,30 @@ class StateMachineTests(unittest.TestCase):
                             transition(terminal, target, evidence)
                         self.assertNotIn("payload", str(raised.exception))
                         self.assertIn(str(terminal), str(raised.exception))
+
+    def test_evidence_is_frozen_and_reusable(self):
+        evidence = TransitionEvidence(contract_complete=True)
+        with self.assertRaises(FrozenInstanceError):
+            evidence.contract_complete = False  # type: ignore[misc]
+        first = transition(ProcessState.RECEIVED, ProcessState.SPECIFIED, evidence)
+        second = transition(ProcessState.RECEIVED, ProcessState.SPECIFIED, evidence)
+        self.assertEqual((first, second), (ProcessState.SPECIFIED, ProcessState.SPECIFIED))
+        derived = replace(evidence, contract_complete=False)
+        with self.assertRaisesRegex(InvalidTransition, "lacks required evidence"):
+            transition(ProcessState.RECEIVED, ProcessState.SPECIFIED, derived)
+        self.assertTrue(evidence.contract_complete)
+
+    def test_transition_errors_carry_no_evidence_payload(self):
+        with self.assertRaises(InvalidTransition) as raised:
+            transition(
+                ProcessState.WAITING_APPROVAL,
+                ProcessState.APPLYING,
+                TransitionEvidence(staged_digest=True),
+            )
+        message = str(raised.exception)
+        self.assertNotIn("True", message)
+        self.assertNotIn("contract_complete", message)
+        self.assertNotIn("staged_digest", message)
 
     def test_unknown_shortcut_is_rejected(self):
         with self.assertRaisesRegex(InvalidTransition, "is not allowed"):

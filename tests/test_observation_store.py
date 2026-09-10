@@ -266,6 +266,34 @@ class ObservationStoreTests(unittest.TestCase):
         result["invocation_id"] = "invocation-store-demo-001"
         self.assertEqual(store.check_result_causality(result), 0)
 
+    def test_only_allowlisted_types_qualify_as_intent_predecessor(self):
+        allowed = {"decision_proposed", "tool_requested"}
+        schema_types = (
+            "decision_proposed", "decision_applied", "tool_requested", "tool_completed",
+            "tool_failed", "tool_denied", "outcome_unknown", "agent_started",
+            "agent_finished", "correction_proposed", "branch_created",
+        )
+        for event_type in schema_types:
+            with self.subTest(event_type=event_type):
+                store = ObservationStore()
+                predecessor = valid_event("event-store-demo-001", 0)
+                predecessor["event_type"] = event_type
+                predecessor["invocation_id"] = "invocation-store-demo-001"
+                predecessor["rationale"] = "Stored rationale must never leak through rejection."
+                store.append(predecessor)
+                result = valid_event("event-store-demo-002", 1)
+                result["event_type"] = "tool_completed"
+                result["invocation_id"] = "invocation-store-demo-001"
+                if event_type in allowed:
+                    self.assertEqual(store.check_result_causality(result), 0)
+                else:
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "invocation reference is not an intent"
+                    ) as raised:
+                        store.check_result_causality(result)
+                    self.assertNotIn("Stored rationale", str(raised.exception))
+                    self.assertNotIn("invocation-store-demo-001", str(raised.exception))
+
     def test_result_to_result_reference_is_denied_without_payload(self):
         store = ObservationStore()
         earlier_result = valid_event("event-store-demo-001", 0)

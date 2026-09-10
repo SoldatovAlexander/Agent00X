@@ -65,6 +65,19 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(recovered.pull_request_id, 1)
             self.assertEqual(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]).pull_request_id, 1)
 
+    def test_repeated_unknown_recovery_creates_no_side_effect_and_leaks_nothing(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            with self.assertRaises(PublicationRecoveryRequired) as first:
+                recover_publication(journal, self.endpoint, self.request["process_id"])
+            self.assertEqual(first.exception.args, (self.request["process_id"],))
+            for _ in range(2):
+                with self.assertRaises(PublicationRecoveryRequired):
+                    recover_publication(journal, self.endpoint, self.request["process_id"])
+            self.assertEqual(journal.get(self.request["process_id"]).status, "reconciliation_required")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_unknown_attempt_requires_reconciliation_without_retry(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

@@ -31,6 +31,9 @@ _REQUIRED_GRANT_FIELDS = (
 )
 
 
+_REQUIRED_REQUEST_FIELDS = ("actuator_id", "repository_id", "operation")
+
+
 def validate_credential_use_grant(credential_grant: dict[str, Any], actuator_request: dict[str, Any]) -> None:
     """Ensure a single-use broker channel is scoped to exactly one request."""
 
@@ -38,6 +41,10 @@ def validate_credential_use_grant(credential_grant: dict[str, Any], actuator_req
         field not in credential_grant for field in _REQUIRED_GRANT_FIELDS
     ):
         raise ContractValidationError("broker: credential grant is malformed")
+    if not isinstance(actuator_request, dict) or any(
+        field not in actuator_request for field in _REQUIRED_REQUEST_FIELDS
+    ):
+        raise ContractValidationError("broker: actuator request is malformed")
     if credential_grant["actuator_id"] != actuator_request["actuator_id"]:
         raise ContractValidationError("broker: actuator identity mismatch")
     if credential_grant["repository_id"] != actuator_request["repository_id"]:

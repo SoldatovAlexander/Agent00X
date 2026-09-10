@@ -30,6 +30,32 @@ class CanaryCredentialTests(unittest.TestCase):
         self.assertEqual(find_canary_surfaces(self.canary, self.clean_surfaces), [])
         assert_canary_absent(self.canary, self.clean_surfaces)
 
+    def test_nested_canary_reports_location_without_value(self):
+        surfaces = dict(self.clean_surfaces)
+        surfaces["agent-context"] = {
+            "task": "prepare patch",
+            "history": [{"tool": "workspace.read", "output": {"note": self.canary}}],
+        }
+        self.assertEqual(find_canary_surfaces(self.canary, surfaces), ["agent-context"])
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, surfaces)
+        self.assertIn("agent-context", str(raised.exception))
+        self.assertNotIn(self.canary, str(raised.exception))
+
+    def test_redacted_artifact_reference_is_not_a_finding(self):
+        surfaces = dict(self.clean_surfaces)
+        surfaces["agent-context"] = {
+            "task": "prepare patch",
+            "inputs": ["artifact://snapshots/observer-demo", "artifact://evidence/observer-demo-001"],
+        }
+        self.assertEqual(find_canary_surfaces(self.canary, surfaces), [])
+        assert_canary_absent(self.canary, surfaces)
+
+    def test_scanner_reads_no_credential_files(self):
+        source = (ROOT / "src" / "app_contracts" / "secret_scan.py").read_text(encoding="utf-8")
+        self.assertNotIn("open(", source)
+        self.assertNotIn(".env", source)
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

@@ -35,6 +35,10 @@ class MockGitHubEndpoint:
         if request["policy_effect"] != "allow" or request["approval_valid"] is not True:
             raise ContractValidationError("mock github: authority proof is invalid")
 
+        for field in ("repository_id", "branch", "staged_change_digest", "idempotency_key"):
+            if not isinstance(request[field], str) or not request[field]:
+                raise ContractValidationError("mock github: boundary field is invalid")
+
         expected_key = (
             f"publish/{request['branch'].removeprefix('agent/')}/"
             f"{request['staged_change_digest']}"

@@ -93,6 +93,31 @@ class MockGitHubTests(unittest.TestCase):
         for forbidden in ("token", "secret", "password"):
             self.assertNotIn(forbidden, payload)
 
+    def test_malformed_scalars_denied_with_zero_side_effect(self):
+        cases = (
+            ("branch", 123),
+            ("branch", None),
+            ("branch", ["agent/process-demo-001"]),
+            ("repository_id", 42),
+            ("staged_change_digest", 12345),
+            ("idempotency_key", None),
+            ("idempotency_key", ""),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, value=type(value).__name__):
+                endpoint = MockGitHubEndpoint()
+                request = dict(self.request, **{field: value})
+                with self.assertRaises(ContractValidationError) as raised:
+                    endpoint.publish_pull_request(request)
+                self.assertIn(
+                    str(raised.exception),
+                    (
+                        "mock github: boundary field is invalid",
+                        "mock github: idempotency key mismatch",
+                    ),
+                )
+                self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

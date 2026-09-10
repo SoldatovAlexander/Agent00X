@@ -45,6 +45,18 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(decision.path, GatewayPath.SLOW)
         self.assertIn("privilege-transition", decision.reason_codes)
 
+    def test_unknown_write_like_operation_never_uses_fast_path(self):
+        for operation in ("workspace.delete", "repository.push", "unknown.op"):
+            with self.subTest(operation=operation):
+                decision = classify(envelope(operation), policy_available=True)
+                self.assertNotEqual(decision.path, GatewayPath.FAST)
+                self.assertIn("write-or-unknown-operation", decision.reason_codes)
+                for code in decision.reason_codes:
+                    self.assertNotIn(operation, code)
+                degraded = classify(envelope(operation), policy_available=False)
+                self.assertEqual(degraded.path, GatewayPath.DEGRADED)
+                self.assertFalse(degraded.allowed)
+
     def test_policy_unavailable_allows_only_read_only_allowlist(self):
         allowed = classify(envelope("workspace.read"), policy_available=False)
         denied = classify(envelope("publish_pull_request", port="tool"), policy_available=False)

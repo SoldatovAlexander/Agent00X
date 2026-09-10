@@ -206,6 +206,33 @@ class RuntimeStoreTests(unittest.TestCase):
             record = store.create("process-durable-010", now=datetime(2026, 9, 4, 12, 0, tzinfo=tz))
             self.assertTrue(record.updated_at.endswith("Z"))
 
+    def test_readback_mutation_cannot_alter_event_history(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-011")
+            store.advance(
+                "process-durable-011",
+                ProcessState.SPECIFIED,
+                TransitionEvidence(contract_complete=True),
+                expected_version=0,
+            )
+            first_read = store.events("process-durable-011")
+            first_read[1]["evidence"]["contract_complete"] = False
+            first_read[1]["evidence"]["forged"] = True
+            first_read[1]["state"] = "failed"
+            second_read = store.events("process-durable-011")
+            self.assertTrue(second_read[1]["evidence"]["contract_complete"])
+            self.assertNotIn("forged", second_read[1]["evidence"])
+            self.assertEqual(second_read[1]["state"], "specified")
+            self.assertEqual([event["sequence"] for event in second_read], [0, 1])
+            with self.assertRaises(InvalidTransition) as raised:
+                store.advance(
+                    "process-durable-011",
+                    ProcessState.APPLYING,
+                    TransitionEvidence(),
+                    expected_version=1,
+                )
+            self.assertNotIn("contract_complete", str(raised.exception))
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

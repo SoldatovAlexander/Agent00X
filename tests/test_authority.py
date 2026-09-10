@@ -196,6 +196,33 @@ class AuthorityTests(unittest.TestCase):
         self.assertNotIn(self.chain["approval"]["approval_id"], message)
         self.assertNotIn(self.chain["approval"]["staged_change_digest"], message)
 
+    def test_malformed_approval_digests_denied_as_contract_errors(self):
+        cases = (
+            ("approval", "staged_change_digest", 123, "staged change digest is invalid"),
+            ("approval", "staged_change_digest", None, "staged change digest is invalid"),
+            ("intent", "staged_change_digest", "", "intent staged change digest is invalid"),
+            ("approval", "approved_intent_digest", 123, "approved intent digest is invalid"),
+        )
+        for holder, field, bad, reason in cases:
+            with self.subTest(holder=holder, field=field):
+                approval = dict(self.chain["approval"])
+                intent = dict(self.chain["intent"])
+                target = approval if holder == "approval" else intent
+                if bad is None:
+                    del target[field]
+                else:
+                    target[field] = bad
+                with self.assertRaisesRegex(ContractValidationError, reason) as raised:
+                    validate_approval(
+                        approval, self.chain["staged_change"], intent,
+                        policy_version="policy-1", now=NOW,
+                    )
+                self.assertNotIn("caller-secret", str(raised.exception))
+        validate_approval(
+            self.chain["approval"], self.chain["staged_change"], self.chain["intent"],
+            policy_version="policy-1", now=NOW,
+        )
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

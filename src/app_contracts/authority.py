@@ -22,6 +22,12 @@ class PolicyConfig:
     decision_ttl_seconds: int = 300
 
 
+def _require_digest(value: Any, message: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ContractValidationError(message)
+    return value
+
+
 def check_intent_approved(intent: dict[str, Any], approval: dict[str, Any]) -> None:
     """Fail closed when the presented intent is not the approval-bound intent.
 
@@ -31,7 +37,10 @@ def check_intent_approved(intent: dict[str, Any], approval: dict[str, Any]) -> N
     credential contents.
     """
 
-    if approval.get("approved_intent_digest") != sha256_digest(intent):
+    approved = _require_digest(
+        approval.get("approved_intent_digest"), "approval: approved intent digest is invalid"
+    )
+    if approved != sha256_digest(intent):
         raise ContractValidationError("approval: approved intent digest mismatch")
 
 
@@ -51,9 +60,13 @@ def validate_approval(
     for field in required_matches:
         if approval[field] != intent[field]:
             raise ContractValidationError(f"approval: {field} mismatch")
-    if approval["staged_change_digest"] != staged_digest:
+    if _require_digest(
+        approval.get("staged_change_digest"), "approval: staged change digest is invalid"
+    ) != staged_digest:
         raise ContractValidationError("approval: staged change digest mismatch")
-    if intent["staged_change_digest"] != staged_digest:
+    if _require_digest(
+        intent.get("staged_change_digest"), "approval: intent staged change digest is invalid"
+    ) != staged_digest:
         raise ContractValidationError("approval: intent staged change digest mismatch")
     check_intent_approved(intent, approval)
     if intent["approval_id"] != approval["approval_id"]:

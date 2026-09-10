@@ -123,6 +123,17 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "depth is not reduced"):
             validate_chain(chain)
 
+    def test_approval_rejects_unknown_control_fields(self):
+        schema = self.schemas["approval"]
+        validate(self.chain["approval"], schema)
+        for field in ("capability", "credential", "token", "grant"):
+            with self.subTest(field=field):
+                forged = json.loads(json.dumps(self.chain["approval"]))
+                forged[field] = "injected-value"
+                with self.assertRaisesRegex(ContractValidationError, f"unknown fields.*{field}"):
+                    validate(forged, schema)
+        self.assertNotIn("capability", json.dumps(schema["properties"]))
+
     def test_credential_grant_rejects_token_value(self):
         grant = json.loads(json.dumps(self.chain["credential_use_grant"]))
         grant["token"] = "canary-secret"

@@ -29,6 +29,31 @@ class EventConflictError(ValueError):
     """A second record reuses an event_id with different content."""
 
 
+class PreDispatchError(RuntimeError):
+    """The pre-dispatch gate refused; no side effect was started."""
+
+
+def run_gated_dispatch(
+    store: ObservationStore,
+    *,
+    checkpoint: dict[str, Any],
+    intent_event: dict[str, Any],
+    dispatch,
+):
+    """Validate the checkpoint and record the intent event before dispatch.
+
+    The ``dispatch`` callable runs only after both writes succeed. Any store
+    failure raises PreDispatchError without starting the side effect.
+    """
+
+    try:
+        store.check_checkpoint(checkpoint)
+        cursor = store.append(intent_event)
+    except (ContractValidationError, EventConflictError) as exc:
+        raise PreDispatchError(f"pre-dispatch gate refused: {exc}") from exc
+    return cursor, dispatch()
+
+
 class ObservationStore:
     """Append-only insertion-ordered store of schema-valid observation events."""
 

@@ -9,7 +9,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.observation_store import EventConflictError, ObservationStore
+from app_contracts.observation_store import (
+    EventConflictError,
+    ObservationStore,
+    PreDispatchError,
+    run_gated_dispatch,
+)
 from app_contracts.validator import ContractValidationError
 
 
@@ -106,6 +111,58 @@ class ObservationStoreTests(unittest.TestCase):
         store.append(valid_event("event-store-demo-001", 0))
         with self.assertRaisesRegex(ContractValidationError, "beyond journal end"):
             store.check_checkpoint(valid_checkpoint(cursor=5))
+
+
+class FailingStore(ObservationStore):
+    def append(self, event):
+        raise ContractValidationError("injected store failure")
+
+
+class PreDispatchGateTests(unittest.TestCase):
+    def test_gate_records_checkpoint_and_intent_before_dispatch(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        calls: list[str] = []
+        cursor, outcome = run_gated_dispatch(
+            store,
+            checkpoint=valid_checkpoint(),
+            intent_event=valid_event("event-store-demo-002", 1),
+            dispatch=lambda: calls.append("dispatched") or "mock-receipt",
+        )
+        self.assertEqual(calls, ["dispatched"])
+        self.assertEqual(outcome, "mock-receipt")
+        self.assertEqual(cursor, 1)
+        self.assertEqual(
+            [event["event_id"] for event in store.events()],
+            ["event-store-demo-001", "event-store-demo-002"],
+        )
+
+    def test_injected_store_failure_blocks_dispatch(self):
+        store = FailingStore()
+        ObservationStore.append(store, valid_event("event-store-demo-001", 0))
+        calls: list[str] = []
+        with self.assertRaisesRegex(PreDispatchError, "pre-dispatch gate refused"):
+            run_gated_dispatch(
+                store,
+                checkpoint=valid_checkpoint(),
+                intent_event=valid_event("event-store-demo-002", 1),
+                dispatch=lambda: calls.append("dispatched"),
+            )
+        self.assertEqual(calls, [])
+
+    def test_invalid_checkpoint_blocks_dispatch(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        calls: list[str] = []
+        with self.assertRaises(PreDispatchError):
+            run_gated_dispatch(
+                store,
+                checkpoint=valid_checkpoint(trigger_event_id="event-store-demo-999"),
+                intent_event=valid_event("event-store-demo-002", 1),
+                dispatch=lambda: calls.append("dispatched"),
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(len(store), 1)
 
 
 if __name__ == "__main__":

@@ -2443,6 +2443,413 @@ Commit: ALLOWED
   было; последующая публикация репозитория выполняется отдельным решением Control
   Plane.
 
+## Batch K — contract-boundary regression sweep
+
+Исполнитель выполняет только карточки `EXP-092`—`EXP-111`, строго сверху вниз и
+по одной. Для каждой: минимальный scope, штатный suite, diff/status, один local
+commit и отдельный evidence. При первой ошибке, неясном контракте или выходе за
+scope — остановиться; не переходить к следующей карточке. Никаких внешних систем.
+
+## EXP-092 — causal precedence priority regression
+Статус: READY
+Цель: закрепить приоритет denial для позднего allowlisted intent над чужими non-intent событиями.
+Гипотеза: mixed history не превращает future intent в валидную причину.
+Зависит от: EXP-091
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema redesign, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- result перед allowlisted intent с тем же invocation остаётся denied without payload leak даже при preceding non-intent;
+- existing causal outcomes stay green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-093 — checkpoint cursor type boundary
+Статус: READY
+Цель: malformed checkpoint cursor fails closed before journal comparison.
+Гипотеза: bool, float and non-integer cursor values cannot alias valid cursors.
+Зависит от: EXP-092
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: durable journal, schema redesign, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- invalid cursor types are rejected with stable non-payload error;
+- valid cursor and existing checkpoint cases remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-094 — checkpoint trigger identity regression
+Статус: READY
+Цель: checkpoint trigger ID comparison cannot be confused by malformed identifier types.
+Гипотеза: only schema-valid trigger references reach journal lookup.
+Зависит от: EXP-093
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema redesign, durable journal, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- malformed trigger identity is denied without stored event payload;
+- recognised checkpoint remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-095 — pre-dispatch atomic refusal regression
+Статус: READY
+Цель: dispatch is never invoked when either pre-dispatch journal write fails.
+Гипотеза: failure of checkpoint or intent recording has no side effect.
+Зависит от: EXP-094
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: durable journal, external dispatch, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- each injected write failure raises PreDispatchError and leaves dispatch call count zero;
+- successful path stays green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние commands:
+- none
+Commit: ALLOWED
+
+## EXP-096 — approval identifier type boundary
+Статус: READY
+Цель: malformed approval identifiers are rejected as contract errors, not raw lookup failures.
+Гипотеза: invalid identity fields cannot enter authorization comparison.
+Зависит от: EXP-095
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy redesign, signatures, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed required approval/intent identifier produces stable non-secret denial;
+- valid approval path remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-097 — decision expiry parsing regression
+Статус: READY
+Цель: malformed decision expiry fails closed as ContractValidationError.
+Гипотеза: expiry parsing never exposes raw parser exception at an actuator boundary.
+Зависит от: EXP-096
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy redesign, clock service, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed, non-string and naive expiry values deny with stable message;
+- valid future and expired decision cases remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-098 — policy TTL configuration boundary
+Статус: READY
+Цель: non-positive policy decision TTL cannot create immediately invalid allow decisions.
+Гипотеза: invalid policy configuration is rejected deterministically.
+Зависит от: EXP-097
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy redesign, config framework, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- zero, negative and invalid TTL values fail closed without decision issuance;
+- positive configured TTL behaviour remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-099 — credential grant identifier boundary
+Статус: READY
+Цель: malformed credential grant binding cannot open a publication channel.
+Гипотеза: broker validates grant identity before channel factory access.
+Зависит от: EXP-098
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real credentials, GitHub App, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- tests/test_broker.py
+Критерии приёмки:
+- malformed grant/request binding is denied and channel factory call count stays zero;
+- valid grant path remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-100 — credential grant expiry regression
+Статус: READY
+Цель: invalid or expired credential grant cannot be used to obtain a publication channel.
+Гипотеза: broker enforces grant lifetime before external channel access.
+Зависит от: EXP-099
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real credentials, GitHub App, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- tests/test_broker.py
+Критерии приёмки:
+- malformed and expired grant deny without channel creation or secret exposure;
+- valid unexpired grant path remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-101 — actuator request identity regression
+Статус: READY
+Цель: malformed actuator request identity is denied before publish invocation.
+Гипотеза: request contract boundary prevents raw errors and channel side effects.
+Зависит от: EXP-100
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real publish, GitHub App, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/actuator.py
+- tests/test_actuator.py
+Критерии приёмки:
+- malformed request identity fails closed with publisher call count zero;
+- existing authorized path remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-102 — publication process ID boundary
+Статус: READY
+Цель: invalid publication process ID cannot create or mutate journal state.
+Гипотеза: journal rejects malformed identity before SQLite persistence.
+Зависит от: EXP-101
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema migration, real GitHub, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- invalid process ID fails deterministically and creates no record;
+- valid prepare/recovery cases remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-103 — publication state transition regression
+Статус: READY
+Цель: journal cannot mark completion from an unprepared or wrong state.
+Гипотеза: receipt insertion remains bound to the expected transition.
+Зависит от: EXP-102
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema migration, real GitHub, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- invalid transition leaves record unchanged and no receipt is stored;
+- ordinary publication flow remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-104 — runtime audit reason-code boundary
+Статус: READY
+Цель: malformed audit reason codes cannot be persisted or masquerade as valid audit evidence.
+Гипотеза: runtime store validates shape and scalar type before insert.
+Зависит от: EXP-103
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration, production store, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/runtime_store.py
+- tests/test_runtime_store.py
+Критерии приёмки:
+- malformed reason codes fail closed and audit history is unchanged;
+- valid audit event remains readable.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-105 — runtime optimistic-version boundary
+Статус: READY
+Цель: bool and malformed expected versions cannot alias an integer record version.
+Гипотеза: version conflict protection remains type-safe.
+Зависит от: EXP-104
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration, production store, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/runtime_store.py
+- tests/test_runtime_store.py
+Критерии приёмки:
+- invalid expected version rejects without state mutation;
+- correct version still advances exactly once.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-106 — repository manifest duplicate-path regression
+Статус: READY
+Цель: manifest cannot contain duplicate canonical target paths.
+Гипотеза: two input spellings cannot create ambiguous publication content.
+Зависит от: EXP-105
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real repository, GitHub, Docker, testdev.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- duplicate canonical path is denied before manifest output;
+- distinct safe paths retain deterministic manifest behaviour.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-107 — repository content type boundary
+Статус: READY
+Цель: non-text publishable file content is rejected before hashing or manifest creation.
+Гипотеза: manifest digest has one explicit content representation.
+Зависит от: EXP-106
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real repository, GitHub, Docker, testdev.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- bytes, null and non-string content fail without file output;
+- valid text content remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-108 — secret scan nested serialization regression
+Статус: READY
+Цель: canary detection covers nested mapping/list surfaces without leaking the canary in errors.
+Гипотеза: recursive diagnostic serialization cannot hide nested credential material.
+Зависит от: EXP-107
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real secrets, external scanner, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/secret_scan.py
+- tests/test_secret_scan.py
+Критерии приёмки:
+- nested canary is detected and exception reports only surface names;
+- clean nested values remain accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-109 — state transition evidence type regression
+Статус: READY
+Цель: malformed transition evidence cannot authorize a state change.
+Гипотеза: transition enforces evidence contract before evaluating target state.
+Зависит от: EXP-108
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: workflow redesign, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/state_machine.py
+- tests/test_state_machine.py
+Критерии приёмки:
+- malformed evidence denies without transition;
+- legitimate existing transitions remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-110 — memory summary interval timezone regression
+Статус: READY
+Цель: naive or malformed summary timestamps fail closed.
+Гипотеза: summary interval ordering compares only timezone-aware parsed timestamps.
+Зависит от: EXP-109
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: memory backend, schema redesign, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/memory_summary.py
+- tests/test_memory_summary.py
+Критерии приёмки:
+- malformed/naive timestamps deny without source payload leak;
+- valid ordered interval remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-111 — learning correction version type boundary
+Статус: READY
+Цель: correction version cannot be aliased by bool, float or invalid scalar types.
+Гипотеза: version gate accepts only the supported explicit integer version.
+Зависит от: EXP-110
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: learning backend, schema redesign, Docker, testdev, GitHub.
+Разрешённые пути:
+- src/app_contracts/learning_correction.py
+- tests/test_learning_correction.py
+Критерии приёмки:
+- malformed versions fail with stable non-payload validation error;
+- current valid correction remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
 ## Формат task card
 
 Добавляйте карточки в порядке выполнения. Исполнитель работает только с `READY`

@@ -120,5 +120,8 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
             except ValueError as exc:
                 raise ContractValidationError(f"{path}: invalid date-time") from exc
 
-    if isinstance(instance, int) and "minimum" in schema and instance < schema["minimum"]:
-        raise ContractValidationError(f"{path}: below minimum")
+    if "minimum" in schema:
+        if isinstance(instance, bool):
+            raise ContractValidationError(f"{path}: expected number")
+        if isinstance(instance, int) and instance < schema["minimum"]:
+            raise ContractValidationError(f"{path}: below minimum")

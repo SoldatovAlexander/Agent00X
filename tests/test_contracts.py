@@ -229,6 +229,16 @@ class SchemaStructureTests(unittest.TestCase):
             with self.subTest(schema=schema_file.name):
                 validate_schema(load_json(schema_file))
 
+    def test_boolean_is_not_a_number(self):
+        for schema in ({"type": "integer"}, {"type": "integer", "minimum": 0}, {"minimum": 0}):
+            for value in (True, False):
+                with self.subTest(schema=schema, value=value):
+                    with self.assertRaises(ContractValidationError):
+                        validate(value, schema)
+        validate(0, {"type": "integer", "minimum": 0})
+        validate(7, {"type": "integer", "minimum": 0})
+        validate(True, {"type": "boolean"})
+
 
 class CanonicalDigestTests(unittest.TestCase):
     def test_digest_ignores_mapping_key_order(self):

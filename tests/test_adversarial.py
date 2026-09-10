@@ -82,5 +82,72 @@ class AdversarialFlowTests(unittest.TestCase):
         self.assertEqual(first.pull_request_id, 1)
 
 
+    def test_post_allow_request_swaps_are_rejected_before_mock_boundary(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+
+        def allow_decision():
+            return self.policy.decide(
+                decision_id="decision-demo-002",
+                actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
+                staged_change=self.chain["staged_change"], intent=self.chain["intent"], now=NOW,
+            )
+
+        swaps = {
+            "repository": {"repository_id": "github-installation/42/repository/9999"},
+            "branch": {
+                "branch_namespace": "agent/process-evil-001",
+                "idempotency_key": f"publish/process-evil-001/{digest}",
+            },
+            "digest": {"staged_change_digest": "sha256:" + "0" * 64},
+            "idempotency_key": {"idempotency_key": f"publish/process-demo-001/{'sha256:' + '0' * 64}"},
+        }
+        for name, mutation in swaps.items():
+            with self.subTest(swap=name):
+                endpoint = MockGitHubEndpoint()
+                decision = allow_decision()
+                self.assertEqual(decision["effect"], "allow")
+                request = json.loads(json.dumps(self.chain["actuator_request"]))
+                request.update(mutation)
+                with self.assertRaises(ContractValidationError):
+                    publish_authorized_request(
+                        endpoint, request, decision, approval_valid=True,
+                        gateway_decision=gateway, intent=self.chain["intent"],
+                    )
+                self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
+                self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
+    def test_branch_only_swap_is_rejected_without_intent(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        endpoint = MockGitHubEndpoint()
+        decision = self.policy.decide(
+            decision_id="decision-demo-003",
+            actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"], intent=self.chain["intent"], now=NOW,
+        )
+        request = json.loads(json.dumps(self.chain["actuator_request"]))
+        request["branch_namespace"] = "agent/process-evil-001"
+        with self.assertRaisesRegex(ContractValidationError, "idempotency key does not match"):
+            publish_authorized_request(
+                endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
+            )
+        self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
+
+    def test_matching_bound_request_reaches_mock_boundary(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        endpoint = MockGitHubEndpoint()
+        decision = self.policy.decide(
+            decision_id="decision-demo-004",
+            actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"], intent=self.chain["intent"], now=NOW,
+        )
+        result = publish_authorized_request(
+            endpoint, self.chain["actuator_request"], decision, approval_valid=True,
+            gateway_decision=gateway, intent=self.chain["intent"],
+        )
+        self.assertEqual(result.pull_request_id, 1)
+        self.assertIsNotNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
+
 if __name__ == "__main__":
     unittest.main()

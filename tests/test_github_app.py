@@ -132,7 +132,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             channel = GitHubAppPublicationChannel(
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
                 post_json=lambda url, headers, payload: posts.append((url, payload)) or {"ref": payload["ref"]},
-                get_json=lambda _url, _headers: [],
+                get_json=lambda _url, _headers: None,
                 put_json=lambda url, headers, payload: puts.append((url, payload)) or {"commit": {"sha": "d" * 40}},
             )
             sha = channel.publish_verified_files(
@@ -305,7 +305,7 @@ class GitHubReconciliationTests(unittest.TestCase):
         refs_posts = []
         channel = self._channel((
             lambda url, headers, payload: refs_posts.append(payload) or {"ref": payload["ref"]},
-            lambda _url, _headers: [],
+            lambda _url, _headers: None,
             lambda _url, _headers, _payload: (_ for _ in ()).throw(RuntimeError("injected failure after branch")),
         ))
         with self.assertRaisesRegex(RuntimeError, "injected failure after branch"):
@@ -400,7 +400,7 @@ class ManifestDigestTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: [],
+            get_json=lambda _url, _headers: None,
             put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
         )
 
@@ -445,6 +445,105 @@ class ManifestDigestTests(unittest.TestCase):
         )
         self.assertEqual(result, "f" * 40)
         self.assertEqual([method for method, _ in calls], ["POST", "PUT"])
+
+
+class MalformedReconciliationTests(unittest.TestCase):
+    def _branch_channel(self, calls, branch_payload):
+        from app_contracts.github_app import GitHubAppPublicationChannel
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+        return GitHubAppPublicationChannel(
+            GitHubAppBrokerConfig.from_environment(environment),
+            _InstallationToken("opaque", "future"),
+            post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
+            get_json=lambda _url, _headers: branch_payload,
+            put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
+        )
+
+    def _staged_change(self):
+        return {
+            "repository_id": "github-installation/456/repository/1001",
+            "base_commit": "a" * 40,
+            "patch_digest": "sha256:" + "b" * 64,
+        }
+
+    def _files(self):
+        from app_contracts.digests import sha256_bytes
+        content = "verified content\n"
+        return [PublishableFile("proof.txt", content, sha256_bytes(content.encode()))]
+
+    def test_malformed_branch_payload_causes_unknown_not_side_effect(self):
+        from app_contracts.github_app import GitHubAppBrokerError
+        for malformed in ("ok", 42, [], {"unexpected": "shape"}, [{"ref": "refs/heads/agent/process-demo-001"}]):
+            with self.subTest(payload=malformed):
+                calls = []
+                channel = self._branch_channel(calls, malformed)
+                self.assertIsNone(channel.reconcile_branch("agent/process-demo-001"))
+                with self.assertRaisesRegex(GitHubAppBrokerError, "outcome unknown"):
+                    channel.publish_verified_files(
+                        branch="agent/process-demo-001",
+                        staged_change=self._staged_change(),
+                        files=self._files(),
+                    )
+                self.assertEqual(calls, [])
+
+    def test_absent_branch_is_distinct_from_malformed(self):
+        calls = []
+        channel = self._branch_channel(calls, None)
+        self.assertFalse(channel.reconcile_branch("agent/process-demo-001"))
+        sha = channel.publish_verified_files(
+            branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+        )
+        self.assertEqual(sha, "f" * 40)
+        self.assertEqual([method for method, _ in calls], ["POST", "PUT"])
+
+    def test_malformed_pr_entry_blocks_post(self):
+        from app_contracts.github_app import GitHubAppBrokerError, GitHubAppPublicationChannel
+        digest = "sha256:" + "d" * 64
+        key = f"publish/process-demo-001/{digest}"
+        marker = f"<!-- agent-process-idempotency: {key} -->"
+        request = {
+            "operation": "publish_pull_request",
+            "repository_id": "github-installation/456/repository/1001",
+            "branch": "agent/process-demo-001",
+            "staged_change_digest": digest,
+            "idempotency_key": key,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+        calls = []
+        channel = GitHubAppPublicationChannel(
+            GitHubAppBrokerConfig.from_environment(environment),
+            _InstallationToken("opaque", "future"),
+            post_json=lambda *_args: calls.append("POST"),
+            get_json=lambda _url, _headers: [{"number": "NaN", "html_url": "https://github.com/example/x/pull/1", "body": marker}],
+        )
+        with self.assertRaisesRegex(GitHubAppBrokerError, "malformed"):
+            channel.publish_pull_request(request)
+        self.assertEqual(calls, [])
+        self.assertIsNone(channel.reconcile_pull_request(branch=request["branch"], idempotency_key=key))
 
 
 if __name__ == "__main__":

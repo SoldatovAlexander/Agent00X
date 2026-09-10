@@ -227,9 +227,11 @@ class GitHubAppPublicationChannel:
             return False
         except Exception:
             return None
+        if response is None:
+            return False
         if isinstance(response, dict) and response.get("ref") == f"refs/heads/{branch}":
             return True
-        return False
+        return None
 
     def reconcile_pull_request(self, *, branch: str, idempotency_key: str, staged_change_digest: str = "") -> GitHubPullRequest | None:
         """Read-only lookup of an existing pull request by idempotency marker.
@@ -335,8 +337,9 @@ class GitHubAppPublicationChannel:
             if not isinstance(item, dict) or marker not in item.get("body", ""):
                 continue
             number, html_url = item.get("number"), item.get("html_url")
-            if isinstance(number, int) and number > 0 and isinstance(html_url, str) and html_url.startswith("https://"):
-                return number, html_url
+            if not (isinstance(number, int) and number > 0 and isinstance(html_url, str) and html_url.startswith("https://")):
+                raise GitHubAppBrokerError("GitHub pull-request entry is malformed")
+            return number, html_url
         return None
 
     def _headers(self) -> dict[str, str]:

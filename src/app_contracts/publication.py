@@ -89,6 +89,9 @@ class PublicationJournal:
         record = self.get(process_id)
         if record.status != "attempting":
             raise ValueError("publication is not attempting")
+        receipt_id = pull_request.pull_request_id
+        if isinstance(receipt_id, bool) or not isinstance(receipt_id, int) or receipt_id < 1:
+            raise ValueError("publication receipt is invalid")
         branch, digest = pull_request.branch, pull_request.staged_change_digest
         expected_key = (
             f"publish/{branch.removeprefix('agent/')}/{digest}"

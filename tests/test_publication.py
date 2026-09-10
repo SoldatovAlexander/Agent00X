@@ -123,6 +123,34 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.status, "attempting")
             self.assertIsNone(record.pull_request_id)
 
+    def test_malformed_receipt_id_leaves_attempt_untouched(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            for bad_id in (None, "9", 0, -3, True):
+                with self.subTest(receipt_id=bad_id):
+                    forged = MockPullRequest(
+                        bad_id, self.request["repository_id"], self.request["branch"],
+                        self.request["staged_change_digest"], self.request["idempotency_key"],
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication receipt is invalid$"
+                    ) as raised:
+                        journal.mark_completed(self.request["process_id"], forged)
+                    self.assertNotIn(str(bad_id), str(raised.exception))
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertIsNone(record.pull_request_id)
+            journal.mark_completed(
+                self.request["process_id"],
+                MockPullRequest(
+                    1, self.request["repository_id"], self.request["branch"],
+                    self.request["staged_change_digest"], self.request["idempotency_key"],
+                ),
+            )
+            completed = journal.get(self.request["process_id"])
+            self.assertEqual((completed.status, completed.pull_request_id), ("completed", 1))
+
     def test_invalid_status_transitions_change_nothing(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

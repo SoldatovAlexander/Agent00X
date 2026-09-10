@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from dataclasses import FrozenInstanceError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +78,20 @@ class MockGitHubTests(unittest.TestCase):
         replayed = self.endpoint.publish_pull_request(dict(self.request))
         self.assertEqual(replayed, original)
         self.assertEqual(replayed.pull_request_id, 1)
+
+    def test_caller_mutation_cannot_alter_stored_receipt(self):
+        import json
+        receipt = self.endpoint.publish_pull_request(self.request)
+        self.request["branch"] = "agent/process-mutated-001"
+        self.request["staged_change_digest"] = "sha256:" + "f" * 64
+        with self.assertRaises(FrozenInstanceError):
+            receipt.branch = "agent/process-mutated-001"  # type: ignore[misc]
+        reread = self.endpoint.find_by_idempotency_key(receipt.idempotency_key)
+        self.assertEqual(reread, receipt)
+        self.assertEqual(reread.branch, "agent/process-demo-001")
+        payload = json.dumps(reread.__dict__)
+        for forbidden in ("token", "secret", "password"):
+            self.assertNotIn(forbidden, payload)
 
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")

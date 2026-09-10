@@ -132,6 +132,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             channel = GitHubAppPublicationChannel(
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
                 post_json=lambda url, headers, payload: posts.append((url, payload)) or {"ref": payload["ref"]},
+                get_json=lambda _url, _headers: [],
                 put_json=lambda url, headers, payload: puts.append((url, payload)) or {"commit": {"sha": "d" * 40}},
             )
             sha = channel.publish_verified_files(
@@ -264,6 +265,120 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                     policy_decision={"effect": "allow", "operation": "publish_pull_request", "repository_id": actuator_request["repository_id"], "staged_change_digest": actuator_request["staged_change_digest"]},
                     approval_valid=True, gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
                 )
+
+
+class GitHubReconciliationTests(unittest.TestCase):
+    def _channel(self, config_factory_post_get_put):
+        from app_contracts.github_app import GitHubAppPublicationChannel
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+        post_json, get_json, put_json = config_factory_post_get_put
+        return GitHubAppPublicationChannel(
+            GitHubAppBrokerConfig.from_environment(environment),
+            _InstallationToken("opaque", "future"),
+            post_json=post_json, get_json=get_json, put_json=put_json,
+        )
+
+    def _staged_change(self):
+        return {
+            "repository_id": "github-installation/456/repository/1001",
+            "base_commit": "a" * 40,
+            "patch_digest": "sha256:" + "b" * 64,
+        }
+
+    def _files(self):
+        from app_contracts.digests import sha256_bytes
+        content = "verified content\n"
+        return [PublishableFile("proof.txt", content, sha256_bytes(content.encode()))]
+
+    def test_branch_failure_then_retry_skips_duplicate_branch_post(self):
+        refs_posts = []
+        channel = self._channel((
+            lambda url, headers, payload: refs_posts.append(payload) or {"ref": payload["ref"]},
+            lambda _url, _headers: [],
+            lambda _url, _headers, _payload: (_ for _ in ()).throw(RuntimeError("injected failure after branch")),
+        ))
+        with self.assertRaisesRegex(RuntimeError, "injected failure after branch"):
+            channel.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(len(refs_posts), 1)
+
+        retry_posts = []
+        retry = self._channel((
+            lambda _url, _headers, _payload: self.fail("a reconciled retry must not recreate the branch"),
+            lambda _url, _headers: {"ref": "refs/heads/agent/process-demo-001"},
+            lambda url, headers, payload: {"commit": {"sha": "e" * 40}},
+        ))
+        sha = retry.publish_verified_files(
+            branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+        )
+        self.assertEqual(sha, "e" * 40)
+        self.assertEqual(retry_posts, [])
+
+    def test_unknown_branch_outcome_blocks_retry_without_side_effect(self):
+        calls = []
+        channel = self._channel((
+            lambda url, headers, payload: calls.append(("post", payload)),
+            lambda _url, _headers: (_ for _ in ()).throw(RuntimeError("injected transport failure")),
+            lambda url, headers, payload: calls.append(("put", payload)),
+        ))
+        with self.assertRaisesRegex(GitHubAppBrokerError, "outcome unknown"):
+            channel.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(calls, [])
+
+    def test_lost_pr_response_reconciles_to_existing_receipt(self):
+        from app_contracts.github_app import GitHubAppPublicationChannel
+        branch = "agent/process-demo-001"
+        digest = "sha256:" + "c" * 64
+        key = f"publish/process-demo-001/{digest}"
+        marker = f"<!-- agent-process-idempotency: {key} -->"
+        request = {
+            "operation": "publish_pull_request",
+            "repository_id": "github-installation/456/repository/1001",
+            "branch": branch,
+            "staged_change_digest": digest,
+            "idempotency_key": key,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        channel = self._channel((
+            lambda *_args: self.fail("a reconciled retry must not create a second PR"),
+            lambda _url, _headers: [{"number": 13, "html_url": "https://github.com/example/agent00x-sandbox/pull/13", "body": marker}],
+            None,
+        ))
+        result = channel.publish_pull_request(request)
+        self.assertEqual(result.pull_request_id, 13)
+        self.assertIsInstance(channel, GitHubAppPublicationChannel)
+        receipt = channel.reconcile_pull_request(branch=branch, idempotency_key=key, staged_change_digest=digest)
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertEqual(receipt.pull_request_id, 13)
+        self.assertEqual(receipt.idempotency_key, key)
+
+    def test_reconcile_returns_unknown_when_lookup_fails(self):
+        channel = self._channel((
+            None,
+            lambda _url, _headers: (_ for _ in ()).throw(RuntimeError("injected lookup failure")),
+            None,
+        ))
+        self.assertIsNone(channel.reconcile_pull_request(
+            branch="agent/process-demo-001",
+            idempotency_key="publish/process-demo-001/sha256:" + "c" * 64,
+        ))
+        self.assertIsNone(channel.reconcile_branch("agent/process-demo-001"))
 
 
 if __name__ == "__main__":

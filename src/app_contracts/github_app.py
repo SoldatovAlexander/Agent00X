@@ -209,6 +209,46 @@ class GitHubAppPublicationChannel:
         self._get_json = get_json or _get_json
         self._put_json = put_json or _put_json
 
+    def reconcile_branch(self, branch: str) -> bool | None:
+        """Read-only check whether the scoped branch already exists.
+
+        Returns True when the branch exists, False when it is absent, and
+        None when the outcome is unknown (transport failure). A None result
+        must be resolved before any retry; it never implies permission to
+        repeat a side effect blindly.
+        """
+
+        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+            raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        url = urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/ref/heads/{branch}")
+        try:
+            response = self._get_json(url, self._headers())
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return None
+        if isinstance(response, dict) and response.get("ref") == f"refs/heads/{branch}":
+            return True
+        return False
+
+    def reconcile_pull_request(self, *, branch: str, idempotency_key: str, staged_change_digest: str = "") -> GitHubPullRequest | None:
+        """Read-only lookup of an existing pull request by idempotency marker.
+
+        Returns the existing receipt, or None when no matching pull request
+        is known. None is an explicit unknown outcome, not a missing receipt.
+        """
+
+        repository_id = f"github-installation/{self._config.installation_id}/repository/{self._config.repository_id}"
+        marker = f"<!-- agent-process-idempotency: {idempotency_key} -->"
+        try:
+            found = self._find_existing_pull_request(branch, marker)
+        except Exception:
+            return None
+        if found is None:
+            return None
+        number, html_url = found
+        return GitHubPullRequest(number, html_url, repository_id, branch, staged_change_digest, idempotency_key)
+
     def publish_verified_files(self, *, branch: str, staged_change: Mapping[str, object], files: Sequence[object]) -> str:
         """Create a scoped branch and publish only files exported from a verified manifest."""
 
@@ -225,7 +265,11 @@ class GitHubAppPublicationChannel:
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
         if not files:
             raise ContractValidationError("GitHub actuator: verified publish manifest is empty")
-        self._post_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/refs"), self._headers(), {"ref": f"refs/heads/{branch}", "sha": base_commit})
+        branch_state = self.reconcile_branch(branch)
+        if branch_state is None:
+            raise GitHubAppBrokerError("GitHub branch outcome unknown; reconcile before retry")
+        if branch_state is False:
+            self._post_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/refs"), self._headers(), {"ref": f"refs/heads/{branch}", "sha": base_commit})
         commit_sha = ""
         for file in files:
             path, content, content_digest = getattr(file, "path", None), getattr(file, "content", None), getattr(file, "content_digest", None)

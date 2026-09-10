@@ -57,6 +57,32 @@ class BrokerTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "already used"):
             self._publish()
 
+    def test_grant_replay_after_channel_failure_stays_denied(self):
+        calls = []
+
+        def failing_factory():
+            calls.append("factory")
+            raise RuntimeError("injected provider failure")
+
+        broker = InMemoryCredentialBroker(failing_factory)
+        actuator = BrokeredGitHubActuator(broker)
+
+        def attempt():
+            return actuator.publish_pull_request(
+                actuator_request=self.chain["actuator_request"],
+                credential_grant=self.chain["credential_use_grant"],
+                policy_decision=self.decision,
+                approval_valid=True,
+                gateway_decision=self.gateway,
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "injected provider failure"):
+            attempt()
+        with self.assertRaisesRegex(ContractValidationError, "already used"):
+            attempt()
+        self.assertEqual(calls, ["factory"])
+        self.assertNotIn("token", json.dumps(self.chain["credential_use_grant"]))
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

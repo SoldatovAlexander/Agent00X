@@ -72,11 +72,11 @@ class AdversarialFlowTests(unittest.TestCase):
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
         first = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision,
-            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
+            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
         )
         second = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision,
-            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
+            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
         )
         self.assertEqual(first, second)
         self.assertEqual(first.pull_request_id, 1)
@@ -112,10 +112,36 @@ class AdversarialFlowTests(unittest.TestCase):
                 with self.assertRaises(ContractValidationError):
                     publish_authorized_request(
                         endpoint, request, decision, approval_valid=True,
-                        gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
+                        gateway_decision=gateway, intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
                     )
                 self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
                 self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
+    def test_coordinated_triple_swap_is_rejected_by_approval_digest(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+        evil_request = json.loads(json.dumps(self.chain["actuator_request"]))
+        evil_request["branch_namespace"] = "agent/process-evil-001"
+        evil_request["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        evil_intent = json.loads(json.dumps(self.chain["intent"]))
+        evil_intent["branch_namespace"] = "agent/process-evil-001"
+        evil_intent["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        endpoint = MockGitHubEndpoint()
+        with self.assertRaisesRegex(ContractValidationError, "approved intent digest mismatch") as raised:
+            publish_authorized_request(
+                endpoint, evil_request, self.policy.decide(
+                    decision_id="decision-demo-006",
+                    actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
+                    staged_change=self.chain["staged_change"], intent=self.chain["intent"], now=NOW,
+                ),
+                approval_valid=True, gateway_decision=gateway,
+                intent=evil_intent, now=NOW, approval=self.chain["approval"],
+            )
+        self.assertIsNone(endpoint.find_by_idempotency_key(evil_request["idempotency_key"]))
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+        leaked = str(raised.exception)
+        self.assertNotIn(evil_intent["branch_namespace"], leaked)
+        self.assertNotIn(self.chain["approval"]["approval_id"], leaked)
 
     def test_branch_only_swap_is_rejected_without_intent(self):
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
@@ -130,7 +156,7 @@ class AdversarialFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "approved intent branch_namespace mismatch"):
             publish_authorized_request(
                 endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
-                intent=self.chain["intent"], now=NOW,
+                intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
 
@@ -164,7 +190,7 @@ class AdversarialFlowTests(unittest.TestCase):
         )
         result = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision, approval_valid=True,
-            gateway_decision=gateway, intent=self.chain["intent"], now=NOW,
+            gateway_decision=gateway, intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
         )
         self.assertEqual(result.pull_request_id, 1)
         self.assertIsNotNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))

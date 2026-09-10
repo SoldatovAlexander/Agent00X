@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from .actuator import publish_authorized_request
-from .authority import check_decision_usable
+from .authority import check_decision_usable, check_intent_approved
 from .broker import CredentialBroker
 from .gateway import GatewayDecision
 from .mock_github import MockPullRequest
@@ -26,19 +26,26 @@ class BrokeredGitHubActuator:
         gateway_decision: GatewayDecision,
         intent: dict[str, Any],
         now: datetime,
+        approval: dict[str, Any] | None = None,
     ) -> MockPullRequest:
         # The allow decision must still be usable at the explicit use time.
         # This gate runs before the broker opens its provider channel, so an
         # expired decision never reaches the broker/provider boundary.
         check_decision_usable(policy_decision, now=now)
+        # When the approval is supplied, the presented intent must equal the
+        # full canonical approved intent before any provider channel opens,
+        # so a coordinated post-approval swap of request, intent, or grant
+        # never reaches the broker/provider boundary.
+        if approval is not None:
+            check_intent_approved(intent, approval)
         # The broker validates grant/request binding before any provider call.
         channel = self._broker.open_github_publication_channel(credential_grant, actuator_request)
         # The channel is intentionally opaque. It alone performs the provider operation.
-        # The approved intent and use time are forwarded so a post-allow
-        # branch/key swap or a stale decision is rejected at the actuator
+        # The approval, approved intent, and use time are forwarded so a
+        # post-allow swap or a stale decision is rejected at the actuator
         # boundary instead of reaching the provider.
         return publish_authorized_request(
             channel, actuator_request, policy_decision,
             approval_valid=approval_valid, gateway_decision=gateway_decision,
-            intent=intent, now=now,
+            intent=intent, now=now, approval=approval,
         )

@@ -117,6 +117,42 @@ class AuthorityTests(unittest.TestCase):
         schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
         validate(decision, schema)
 
+    def test_approval_with_tampered_intent_digest_is_rejected(self):
+        self.chain["approval"]["approved_intent_digest"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(ValueError, "approved intent digest mismatch"):
+            validate_approval(
+                self.chain["approval"], self.chain["staged_change"], self.chain["intent"],
+                policy_version="policy-1", now=NOW,
+            )
+        decision = self.policy.decide(
+            decision_id="decision-policy-007",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        self.assertEqual(decision["reason_codes"], ["approval-approved-intent-digest-mismatch"])
+        schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
+        validate(decision, schema)
+
+    def test_coordinated_triple_swap_is_rejected_by_intent_digest(self):
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+        for name in ("actuator_request", "intent"):
+            self.chain[name]["branch_namespace"] = "agent/process-evil-001"
+            self.chain[name]["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        decision = self.policy.decide(
+            decision_id="decision-policy-008",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        self.assertEqual(decision["reason_codes"], ["approval-approved-intent-digest-mismatch"])
+        schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
+        validate(decision, schema)
+
     def test_allow_decision_expiry_boundary(self):
         decision = self.policy.decide(
             decision_id="decision-policy-005",

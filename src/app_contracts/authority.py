@@ -22,6 +22,19 @@ class PolicyConfig:
     decision_ttl_seconds: int = 300
 
 
+def check_intent_approved(intent: dict[str, Any], approval: dict[str, Any]) -> None:
+    """Fail closed when the presented intent is not the approval-bound intent.
+
+    The approval binds the full canonical approved intent by digest, so any
+    coordinated swap of the intent (branch, key, or other fields) after
+    approval is rejected here. The message carries no intent, grant, or
+    credential contents.
+    """
+
+    if approval.get("approved_intent_digest") != sha256_digest(intent):
+        raise ContractValidationError("approval: approved intent digest mismatch")
+
+
 def validate_approval(
     approval: dict[str, Any],
     staged_change: dict[str, Any],
@@ -42,6 +55,7 @@ def validate_approval(
         raise ContractValidationError("approval: staged change digest mismatch")
     if intent["staged_change_digest"] != staged_digest:
         raise ContractValidationError("approval: intent staged change digest mismatch")
+    check_intent_approved(intent, approval)
     if intent["approval_id"] != approval["approval_id"]:
         raise ContractValidationError("approval: approval_id mismatch")
     if approval["policy_version"] != policy_version:

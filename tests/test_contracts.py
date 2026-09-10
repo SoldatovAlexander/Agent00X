@@ -76,6 +76,14 @@ class ContractTests(unittest.TestCase):
         expected = sha256_digest(self.chain["staged_change"])
         self.assertEqual(self.chain["approval"]["staged_change_digest"], expected)
 
+    def test_approval_binds_full_canonical_intent_digest(self):
+        self.assertEqual(
+            self.chain["approval"]["approved_intent_digest"],
+            sha256_digest(self.chain["intent"]),
+        )
+        validate(self.chain["approval"], self.schemas["approval"])
+        validate_chain(self.chain)
+
     def test_mutated_staged_change_invalidates_chain(self):
         chain = json.loads(json.dumps(self.chain))
         chain["staged_change"]["patch_digest"] = "sha256:" + "0" * 64

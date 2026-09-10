@@ -179,6 +179,7 @@
     "operation": "publish_pull_request",
     "repository_id": "github-installation/42/repository/1001",
     "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "approved_intent_digest": "sha256:f994316c8145e4fc0ec3cf13abf4c70dd43997ccfd6eac53422807999381c5a0",
     "policy_version": "policy-1",
     "approved_at": "2026-09-04T12:05:00Z",
     "expires_at": "2026-09-05T12:00:00Z"

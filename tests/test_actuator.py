@@ -42,7 +42,7 @@ class ActuatorTests(unittest.TestCase):
         result = publish_authorized_request(
             self.endpoint, self.chain["actuator_request"], self.decision, approval_valid=True,
             gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
-            intent=self.chain["intent"], now=NOW,
+            intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
         )
         self.assertEqual(result.pull_request_id, 1)
 
@@ -52,7 +52,7 @@ class ActuatorTests(unittest.TestCase):
             publish_authorized_request(
                 self.endpoint, self.chain["actuator_request"], self.decision, approval_valid=True,
                 gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
-                intent=self.chain["intent"], now=NOW,
+                intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
             )
 
     def test_invalid_approval_cannot_reach_mock_boundary(self):
@@ -60,7 +60,7 @@ class ActuatorTests(unittest.TestCase):
             publish_authorized_request(
                 self.endpoint, self.chain["actuator_request"], self.decision, approval_valid=False,
                 gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
-                intent=self.chain["intent"], now=NOW,
+                intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
             )
 
     def test_fast_path_cannot_reach_actuator(self):
@@ -68,7 +68,7 @@ class ActuatorTests(unittest.TestCase):
             publish_authorized_request(
                 self.endpoint, self.chain["actuator_request"], self.decision, approval_valid=True,
                 gateway_decision=GatewayDecision(GatewayPath.FAST, True, ("internal-read-only",)),
-                intent=self.chain["intent"], now=NOW,
+                intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
             )
 
 

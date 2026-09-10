@@ -49,6 +49,7 @@ class BrokerTests(unittest.TestCase):
             gateway_decision=self.gateway,
             intent=self.chain["intent"],
             now=NOW,
+            approval=self.chain["approval"],
         )
 
     def test_brokered_actuator_publishes_without_exposing_credential(self):
@@ -81,6 +82,7 @@ class BrokerTests(unittest.TestCase):
                 gateway_decision=self.gateway,
                 intent=self.chain["intent"],
                 now=NOW,
+                approval=self.chain["approval"],
             )
 
         with self.assertRaisesRegex(RuntimeError, "injected provider failure"):
@@ -133,9 +135,63 @@ class BrokerTests(unittest.TestCase):
                 gateway_decision=self.gateway,
                 intent=self.chain["intent"],
                 now=NOW,
+                approval=self.chain["approval"],
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(evil_request["idempotency_key"]))
         self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
+    def test_brokered_coordinated_triple_swap_is_rejected_before_provider(self):
+        import copy
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.digests import sha256_digest
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+        evil_request = copy.deepcopy(self.chain["actuator_request"])
+        evil_request["branch_namespace"] = "agent/process-evil-001"
+        evil_request["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        evil_intent = copy.deepcopy(self.chain["intent"])
+        evil_intent["branch_namespace"] = "agent/process-evil-001"
+        evil_intent["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        evil_grant = copy.deepcopy(self.chain["credential_use_grant"])
+        evil_grant["credential_grant_id"] = "credential-grant-evil-051"
+        evil_grant["request_digest"] = sha256_digest(evil_request)
+
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        fresh = policy.decide(
+            decision_id="decision-evil-051",
+            actuator_request=evil_request, approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"], intent=evil_intent, now=now,
+        )
+        self.assertEqual(fresh["effect"], "deny")
+        self.assertEqual(fresh["reason_codes"], ["approval-approved-intent-digest-mismatch"])
+
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        with self.assertRaisesRegex(ContractValidationError, "approved intent digest mismatch") as raised:
+            actuator.publish_pull_request(
+                actuator_request=evil_request,
+                credential_grant=evil_grant,
+                policy_decision=self.decision,
+                approval_valid=True,
+                gateway_decision=self.gateway,
+                intent=evil_intent,
+                now=NOW,
+                approval=self.chain["approval"],
+            )
+        self.assertEqual(broker.opened_grants, [])
+        self.assertIsNone(endpoint.find_by_idempotency_key(evil_request["idempotency_key"]))
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+        leaked = str(raised.exception)
+        self.assertNotIn(evil_intent["branch_namespace"], leaked)
+        self.assertNotIn(evil_grant["request_digest"], leaked)
 
 
 if __name__ == "__main__":

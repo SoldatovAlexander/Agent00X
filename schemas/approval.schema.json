@@ -4,7 +4,7 @@
   "title": "Approval",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "approval_id", "approver_id", "process_id", "operation", "repository_id", "staged_change_digest", "policy_version", "approved_at", "expires_at"],
+  "required": ["schema_version", "approval_id", "approver_id", "process_id", "operation", "repository_id", "staged_change_digest", "approved_intent_digest", "policy_version", "approved_at", "expires_at"],
   "properties": {
     "schema_version": {"const": 1},
     "approval_id": {"type": "string", "pattern": "^approval-[a-z0-9-]+$"},
@@ -13,6 +13,7 @@
     "operation": {"const": "publish_pull_request"},
     "repository_id": {"type": "string", "pattern": "^github-installation/[0-9]+/repository/[0-9]+$"},
     "staged_change_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "approved_intent_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "policy_version": {"type": "string", "minLength": 1},
     "approved_at": {"type": "string", "format": "date-time"},
     "expires_at": {"type": "string", "format": "date-time"}

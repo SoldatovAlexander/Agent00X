@@ -50,6 +50,9 @@ def validate_credential_use_grant(credential_grant: dict[str, Any], actuator_req
             value = mapping[field]
             if not isinstance(value, str) or not value:
                 raise ContractValidationError("broker: binding value is invalid")
+    grant_id = credential_grant["credential_grant_id"]
+    if not isinstance(grant_id, str) or not grant_id:
+        raise ContractValidationError("broker: binding value is invalid")
     if credential_grant["actuator_id"] != actuator_request["actuator_id"]:
         raise ContractValidationError("broker: actuator identity mismatch")
     if credential_grant["repository_id"] != actuator_request["repository_id"]:

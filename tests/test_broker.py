@@ -148,6 +148,19 @@ class BrokerTests(unittest.TestCase):
                         )
         self.assertEqual(calls, [])
 
+    def test_malformed_grant_identifier_never_reaches_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        for bad in (None, 123, "", ["grant-001"]):
+            with self.subTest(identifier=type(bad).__name__):
+                grant = dict(self.chain["credential_use_grant"])
+                grant["credential_grant_id"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^broker: binding value is invalid$"
+                ):
+                    broker.open_github_publication_channel(grant, self.chain["actuator_request"])
+        self.assertEqual(calls, [])
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

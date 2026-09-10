@@ -222,6 +222,23 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertNotIn("Stored rationale", str(raised.exception))
         self.assertNotIn("invocation-store-demo-001", str(raised.exception))
 
+    def test_reversed_result_before_intent_is_denied_without_payload(self):
+        store = ObservationStore()
+        early_result = valid_event("event-store-demo-001", 0)
+        early_result["event_type"] = "tool_completed"
+        early_result["invocation_id"] = "invocation-store-demo-001"
+        early_result["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(early_result)
+        late_intent = valid_event("event-store-demo-002", 1)
+        late_intent["invocation_id"] = "invocation-store-demo-001"
+        store.append(late_intent)
+        with self.assertRaisesRegex(
+            ContractValidationError, "invocation reference is not preceding"
+        ) as raised:
+            store.check_result_causality(dict(early_result))
+        self.assertNotIn("Stored rationale", str(raised.exception))
+        self.assertNotIn("invocation-store-demo-001", str(raised.exception))
+
     def test_result_to_result_reference_is_denied_without_payload(self):
         store = ObservationStore()
         earlier_result = valid_event("event-store-demo-001", 0)

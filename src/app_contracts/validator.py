@@ -83,8 +83,13 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
 
     if "const" in schema and instance != schema["const"]:
         raise ContractValidationError(f"{path}: expected constant {schema['const']!r}")
-    if "enum" in schema and instance not in schema["enum"]:
-        raise ContractValidationError(f"{path}: value is not in enum")
+    if "enum" in schema:
+        members = schema["enum"]
+        if isinstance(instance, bool):
+            if not any(type(member) is bool and member == instance for member in members):
+                raise ContractValidationError(f"{path}: value is not in enum")
+        elif instance not in members:
+            raise ContractValidationError(f"{path}: value is not in enum")
 
     if isinstance(instance, dict):
         required = schema.get("required", [])

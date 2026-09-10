@@ -247,6 +247,18 @@ class SchemaStructureTests(unittest.TestCase):
         validate(7, {"type": "integer", "minimum": 0})
         validate(True, {"type": "boolean"})
 
+    def test_boolean_identity_in_numeric_enum(self):
+        with self.assertRaisesRegex(ContractValidationError, "not in enum") as raised:
+            validate(True, {"enum": [1]})
+        self.assertNotIn("True", str(raised.exception))
+        with self.assertRaises(ContractValidationError):
+            validate(False, {"enum": [0]})
+        with self.assertRaises(ContractValidationError):
+            validate(True, {"type": "integer", "enum": [1]})
+        validate(1, {"enum": [1]})
+        validate(True, {"enum": [True, False]})
+        validate(False, {"enum": [True, False]})
+
 
 class CanonicalDigestTests(unittest.TestCase):
     def test_digest_ignores_mapping_key_order(self):

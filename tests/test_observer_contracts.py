@@ -332,5 +332,34 @@ class R0SchemaCatalogTests(unittest.TestCase):
                 validate(fixture, schema)
 
 
+class CausalReferenceTests(unittest.TestCase):
+    def test_event_with_id_references_stays_valid(self):
+        event = valid_event()
+        event["causal_event_ids"] = ["event-observer-demo-000", "event-observer-demo-001"]
+        event["checkpoint_id"] = "checkpoint-observer-demo-001"
+        event["invocation_id"] = "invocation-observer-demo-001"
+        validate(event, load_schema())
+
+    def test_empty_causal_reference_list_is_rejected(self):
+        event = valid_event()
+        event["causal_event_ids"] = []
+        with self.assertRaisesRegex(ContractValidationError, "too few items"):
+            validate(event, load_schema())
+
+    def test_malformed_causal_reference_is_rejected(self):
+        for bad in ("event-BAD_ID!", "token-abc-123", ""):
+            with self.subTest(ref=bad):
+                event = valid_event()
+                event["causal_event_ids"] = [bad]
+                with self.assertRaisesRegex(ContractValidationError, "pattern mismatch"):
+                    validate(event, load_schema())
+
+    def test_freeform_object_reference_is_rejected(self):
+        event = valid_event()
+        event["causal_event_ids"] = [{"event_id": "event-observer-demo-000"}]
+        with self.assertRaisesRegex(ContractValidationError, "expected string"):
+            validate(event, load_schema())
+
+
 if __name__ == "__main__":
     unittest.main()

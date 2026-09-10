@@ -265,18 +265,21 @@ class GitHubAppPublicationChannel:
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
         if not files:
             raise ContractValidationError("GitHub actuator: verified publish manifest is empty")
-        branch_state = self.reconcile_branch(branch)
-        if branch_state is None:
-            raise GitHubAppBrokerError("GitHub branch outcome unknown; reconcile before retry")
-        if branch_state is False:
-            self._post_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/refs"), self._headers(), {"ref": f"refs/heads/{branch}", "sha": base_commit})
-        commit_sha = ""
+        validated: list[tuple[str, str]] = []
         for file in files:
             path, content, content_digest = getattr(file, "path", None), getattr(file, "content", None), getattr(file, "content_digest", None)
             if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
                 raise ContractValidationError("GitHub actuator: manifest path is unsafe")
             if not isinstance(content, str) or not isinstance(content_digest, str) or sha256_bytes(content.encode("utf-8")) != content_digest:
                 raise ContractValidationError("GitHub actuator: manifest content digest mismatch")
+            validated.append((path, content))
+        branch_state = self.reconcile_branch(branch)
+        if branch_state is None:
+            raise GitHubAppBrokerError("GitHub branch outcome unknown; reconcile before retry")
+        if branch_state is False:
+            self._post_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/refs"), self._headers(), {"ref": f"refs/heads/{branch}", "sha": base_commit})
+        commit_sha = ""
+        for path, content in validated:
             response = self._put_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/contents/{quote(path)}"), self._headers(), {"message": f"Apply verified staged change {patch_digest}", "content": base64.b64encode(content.encode("utf-8")).decode("ascii"), "branch": branch})
             commit = response.get("commit")
             if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):

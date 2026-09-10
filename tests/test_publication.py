@@ -72,6 +72,20 @@ class PublicationRecoveryTests(unittest.TestCase):
                 )
             self.assertNotIn("caller-secret", str(second.exception))
 
+    def test_invalid_process_id_creates_no_record(self):
+        with PublicationJournal(self.database) as journal:
+            for bad in (None, 123, "", ["process-publication-001"]):
+                with self.subTest(process_id=type(bad).__name__):
+                    with self.assertRaisesRegex(ValueError, "^publication process ID is invalid$"):
+                        journal.prepare(
+                            bad,
+                            idempotency_key=self.request["idempotency_key"],
+                            request_digest="sha256:" + "b" * 64,
+                            repository_id=self.request["repository_id"],
+                        )
+            with self.assertRaises(KeyError):
+                journal.get(self.request["process_id"])
+
     def test_identical_prepare_replay_returns_existing_record(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

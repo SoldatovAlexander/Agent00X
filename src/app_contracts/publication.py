@@ -49,6 +49,8 @@ class PublicationJournal:
     def prepare(
         self, process_id: str, *, idempotency_key: str, request_digest: str, repository_id: str,
     ) -> PublicationRecord:
+        if not isinstance(process_id, str) or not process_id:
+            raise ValueError("publication process ID is invalid")
         try:
             existing = self.get(process_id)
         except KeyError:

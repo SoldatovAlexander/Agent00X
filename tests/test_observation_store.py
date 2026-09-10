@@ -31,6 +31,24 @@ def valid_event(event_id: str = "event-store-demo-001", sequence: int = 0) -> di
     }
 
 
+def valid_checkpoint(trigger_event_id: str = "event-store-demo-001", cursor: int = 0) -> dict:
+    return {
+        "schema_version": 1,
+        "checkpoint_id": "checkpoint-store-demo-001",
+        "kind": "tool_call",
+        "process_id": "process-store-demo",
+        "run_id": "run-store-demo-001",
+        "branch_id": "branch-main",
+        "agent_id": "agent-worker-001",
+        "trigger_event_id": trigger_event_id,
+        "event_cursor": cursor,
+        "state_ref": "artifact://states/store-demo-000",
+        "completeness": "complete",
+        "restore_mode": "simulation",
+        "created_at": "2026-09-07T12:00:02Z",
+    }
+
+
 class ObservationStoreTests(unittest.TestCase):
     def test_accepts_only_schema_valid_events(self):
         store = ObservationStore()
@@ -68,6 +86,26 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual([event["event_id"] for event in snapshot], ["event-store-demo-001", "event-store-demo-002"])
         snapshot[0]["sequence"] = 999
         self.assertEqual(store.events()[0]["sequence"], 0)
+
+
+    def test_valid_checkpoint_reference_is_accepted_without_payload(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        result = store.check_checkpoint(valid_checkpoint())
+        self.assertEqual(result, 0)
+        self.assertIsInstance(result, int)
+
+    def test_missing_trigger_event_is_rejected(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        with self.assertRaisesRegex(ContractValidationError, "unknown trigger event"):
+            store.check_checkpoint(valid_checkpoint(trigger_event_id="event-store-demo-999"))
+
+    def test_cursor_beyond_journal_end_is_rejected(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        with self.assertRaisesRegex(ContractValidationError, "beyond journal end"):
+            store.check_checkpoint(valid_checkpoint(cursor=5))
 
 
 if __name__ == "__main__":

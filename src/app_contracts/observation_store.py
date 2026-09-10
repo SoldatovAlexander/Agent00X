@@ -15,13 +15,14 @@ from .digests import sha256_digest
 from .validator import ContractValidationError, validate
 
 
-def _load_event_schema() -> dict[str, Any]:
-    schema_path = Path(__file__).resolve().parents[2] / "schemas" / "observation-event.schema.json"
+def _load_schema(name: str) -> dict[str, Any]:
+    schema_path = Path(__file__).resolve().parents[2] / "schemas" / name
     with schema_path.open(encoding="utf-8") as handle:
         return json.load(handle)
 
 
-EVENT_SCHEMA = _load_event_schema()
+EVENT_SCHEMA = _load_schema("observation-event.schema.json")
+CHECKPOINT_SCHEMA = _load_schema("checkpoint.schema.json")
 
 
 class EventConflictError(ValueError):
@@ -54,6 +55,23 @@ class ObservationStore:
         self._events.append(copy.deepcopy(event))
         self._digests[event_id] = digest
         return len(self._events) - 1
+
+    def check_checkpoint(self, checkpoint: dict[str, Any]) -> int:
+        """Validate a checkpoint reference against recorded history.
+
+        Returns the checkpoint cursor when the trigger event exists and the
+        cursor is inside the journal. Never returns event payloads; use the
+        explicit read API to fetch events.
+        """
+
+        validate(checkpoint, CHECKPOINT_SCHEMA)
+        trigger = checkpoint["trigger_event_id"]
+        if trigger not in self._digests:
+            raise ContractValidationError(f"unknown trigger event: {trigger}")
+        cursor = checkpoint["event_cursor"]
+        if cursor >= len(self._events):
+            raise ContractValidationError("checkpoint cursor is beyond journal end")
+        return cursor
 
     def events(self) -> tuple[dict[str, Any], ...]:
         """Return stored events in insertion order as detached copies."""

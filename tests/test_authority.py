@@ -17,6 +17,7 @@ from app_contracts.authority import (
     check_decision_usable,
     validate_approval,
 )
+from app_contracts.digests import sha256_digest
 from app_contracts.validator import ContractValidationError, validate
 
 
@@ -172,6 +173,28 @@ class AuthorityTests(unittest.TestCase):
                 leaked = str(raised.exception)
                 self.assertNotIn(self.chain["approval"]["approval_id"], leaked)
                 self.assertNotIn(self.chain["approval"]["staged_change_digest"], leaked)
+
+    def test_approved_intent_digest_invariant_to_key_order(self):
+        intent = self.chain["intent"]
+        reordered = {key: intent[key] for key in reversed(list(intent))}
+        self.assertEqual(sha256_digest(reordered), sha256_digest(intent))
+        validate_approval(
+            self.chain["approval"], self.chain["staged_change"], reordered,
+            policy_version="policy-1", now=NOW,
+        )
+
+    def test_semantic_intent_mutation_rejected_without_payload(self):
+        intent = dict(self.chain["intent"])
+        intent["repository_id"] = "github-installation/42/repository/9999"
+        with self.assertRaisesRegex(ContractValidationError, "mismatch") as raised:
+            validate_approval(
+                self.chain["approval"], self.chain["staged_change"], intent,
+                policy_version="policy-1", now=NOW,
+            )
+        message = str(raised.exception)
+        self.assertNotIn("9999", message)
+        self.assertNotIn(self.chain["approval"]["approval_id"], message)
+        self.assertNotIn(self.chain["approval"]["staged_change_digest"], message)
 
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)

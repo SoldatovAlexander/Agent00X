@@ -161,6 +161,39 @@ class BrokerTests(unittest.TestCase):
                     broker.open_github_publication_channel(grant, self.chain["actuator_request"])
         self.assertEqual(calls, [])
 
+    def test_expired_or_malformed_grant_never_reaches_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        valid_now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+        expired = [
+            datetime(2026, 9, 4, 12, 11, tzinfo=timezone.utc),
+            datetime(2026, 9, 4, 12, 12, tzinfo=timezone.utc),
+        ]
+        for moment in expired:
+            with self.subTest(now=moment.isoformat()):
+                with self.assertRaisesRegex(ContractValidationError, "^broker: credential grant expired$"):
+                    broker.open_github_publication_channel(
+                        self.chain["credential_use_grant"], self.chain["actuator_request"], now=moment,
+                    )
+        for bad_expiry in ("not-a-time", "2026-09-04T12:11:00", 123, None):
+            with self.subTest(expiry=bad_expiry):
+                grant = dict(self.chain["credential_use_grant"])
+                if bad_expiry is None:
+                    del grant["expires_at"]
+                else:
+                    grant["expires_at"] = bad_expiry
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^broker: credential grant expiry is invalid$"
+                ):
+                    broker.open_github_publication_channel(
+                        grant, self.chain["actuator_request"], now=valid_now,
+                    )
+        self.assertEqual(calls, [])
+        broker.open_github_publication_channel(
+            self.chain["credential_use_grant"], self.chain["actuator_request"], now=valid_now,
+        )
+        self.assertEqual(calls, ["factory"])
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

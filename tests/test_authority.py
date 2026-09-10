@@ -149,5 +149,96 @@ class AuthorityTests(unittest.TestCase):
             )
 
 
+class DecisionUseBoundary:
+    """Test-local mock boundary gated by the authority use-time check.
+
+    It mirrors the pattern production actuator/provider boundaries must
+    follow: verify the allow decision is still usable at the current instant
+    before recording any side effect. An expired, non-allow, or malformed
+    decision never reaches the mock side effect.
+    """
+
+    def __init__(self) -> None:
+        self.side_effects: list[str] = []
+
+    def publish(self, decision: dict, *, now: datetime) -> str:
+        check_decision_usable(decision, now=now)
+        self.side_effects.append("mock-receipt")
+        return "mock-receipt"
+
+
+class DecisionUseBoundaryTests(unittest.TestCase):
+    def _allow_decision(self) -> tuple[dict, dict]:
+        chain = load_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id="decision-use-001",
+            actuator_request=chain["actuator_request"],
+            approval=chain["approval"],
+            staged_change=chain["staged_change"],
+            intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        return chain, decision
+
+    def test_expired_decision_never_reaches_mock_boundary(self):
+        chain, decision = self._allow_decision()
+        expires_at = datetime.fromisoformat(decision["expires_at"].replace("Z", "+00:00"))
+        boundary = DecisionUseBoundary()
+        self.assertEqual(boundary.publish(decision, now=NOW), "mock-receipt")
+        self.assertEqual(
+            boundary.publish(decision, now=expires_at - timedelta(seconds=1)), "mock-receipt",
+        )
+        self.assertEqual(len(boundary.side_effects), 2)
+        for moment in (expires_at, expires_at + timedelta(seconds=1)):
+            with self.subTest(now=moment):
+                before = len(boundary.side_effects)
+                with self.assertRaisesRegex(ContractValidationError, "decision: expired") as raised:
+                    boundary.publish(decision, now=moment)
+                self.assertEqual(len(boundary.side_effects), before)
+                leaked = str(raised.exception)
+                self.assertNotIn(chain["approval"]["approval_id"], leaked)
+                self.assertNotIn(chain["approval"]["staged_change_digest"], leaked)
+
+    def test_deny_decision_never_reaches_mock_boundary(self):
+        chain = load_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        chain["actuator_request"]["repository_id"] = "github-installation/42/repository/9999"
+        decision = policy.decide(
+            decision_id="decision-use-002",
+            actuator_request=chain["actuator_request"],
+            approval=chain["approval"],
+            staged_change=chain["staged_change"],
+            intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        boundary = DecisionUseBoundary()
+        with self.assertRaisesRegex(ContractValidationError, "decision: not allow"):
+            boundary.publish(decision, now=NOW)
+        self.assertEqual(boundary.side_effects, [])
+
+    def test_malformed_expiry_is_invalid_without_side_effect(self):
+        _, decision = self._allow_decision()
+        boundary = DecisionUseBoundary()
+        for broken in ("missing", "none"):
+            with self.subTest(broken=broken):
+                mutated = json.loads(json.dumps(decision))
+                if broken == "missing":
+                    del mutated["expires_at"]
+                else:
+                    mutated["expires_at"] = None
+                with self.assertRaisesRegex(ContractValidationError, "decision: expiry is invalid"):
+                    boundary.publish(mutated, now=NOW)
+        self.assertEqual(boundary.side_effects, [])
+
+
 if __name__ == "__main__":
     unittest.main()

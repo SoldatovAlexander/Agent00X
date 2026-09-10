@@ -127,7 +127,7 @@ def check_decision_usable(decision: dict[str, Any], *, now: datetime) -> None:
     moment = _utc(now)
     try:
         expires_at = _parse_time(decision["expires_at"])
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
         raise ContractValidationError("decision: expiry is invalid") from exc
     if expires_at.tzinfo is None:
         raise ContractValidationError("decision: expiry is invalid")

@@ -139,6 +139,23 @@ class ObservationStore:
 
         return tuple(copy.deepcopy(item) for item in self._checkpoints)
 
+    def check_result_causality(self, result_event: dict[str, Any]) -> int:
+        """Validate that a result event references a recorded intent invocation.
+
+        Returns the intent cursor when another recorded event carries the same
+        ``invocation_id``. A missing or foreign reference is rejected without
+        returning any stored payload.
+        """
+
+        validate(result_event, EVENT_SCHEMA)
+        invocation_id = result_event.get("invocation_id")
+        if not invocation_id:
+            raise ContractValidationError("result has no invocation reference")
+        for position, stored in enumerate(self._events):
+            if stored.get("invocation_id") == invocation_id and stored["event_id"] != result_event["event_id"]:
+                return position
+        raise ContractValidationError(f"unknown invocation reference: {invocation_id}")
+
     def events(self) -> tuple[dict[str, Any], ...]:
         """Return stored events in insertion order as detached copies."""
 

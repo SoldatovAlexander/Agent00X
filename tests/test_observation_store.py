@@ -171,6 +171,40 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual(reread["trigger_event_id"], "event-store-demo-001")
 
 
+    def test_matching_intent_result_reference_is_accepted(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["invocation_id"] = "invocation-store-demo-001"
+        store.append(intent)
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-store-demo-001"
+        cursor = store.check_result_causality(result)
+        self.assertEqual(cursor, 0)
+        self.assertIsInstance(cursor, int)
+
+    def test_result_without_invocation_reference_is_rejected(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        with self.assertRaisesRegex(ContractValidationError, "no invocation reference"):
+            store.check_result_causality(result)
+
+    def test_result_with_foreign_invocation_is_rejected_without_payload(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["invocation_id"] = "invocation-store-demo-001"
+        intent["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(intent)
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-store-demo-999"
+        with self.assertRaisesRegex(ContractValidationError, "unknown invocation reference") as raised:
+            store.check_result_causality(result)
+        self.assertNotIn("Stored rationale", str(raised.exception))
+
+
 class FailingStore(ObservationStore):
     def append(self, event):
         raise ContractValidationError("injected store failure")

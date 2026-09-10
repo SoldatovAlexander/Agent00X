@@ -165,6 +165,25 @@ class PublicationRecoveryTests(unittest.TestCase):
             completed = journal.get(self.request["process_id"])
             self.assertEqual((completed.status, completed.pull_request_id), ("completed", 1))
 
+    def test_completion_from_unprepared_state_stores_nothing(self):
+        with PublicationJournal(self.database) as journal:
+            receipt = MockPullRequest(
+                7, self.request["repository_id"], self.request["branch"],
+                self.request["staged_change_digest"], self.request["idempotency_key"],
+            )
+            with self.assertRaises(KeyError):
+                journal.mark_completed("process-never-prepared-001", receipt)
+            with self.assertRaises(KeyError):
+                journal.get("process-never-prepared-001")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            journal.mark_completed(self.request["process_id"], receipt)
+            with self.assertRaisesRegex(ValueError, "not attempting"):
+                journal.mark_completed(self.request["process_id"], receipt)
+            record = journal.get(self.request["process_id"])
+            self.assertEqual((record.status, record.pull_request_id), ("completed", 7))
+
     def test_invalid_status_transitions_change_nothing(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

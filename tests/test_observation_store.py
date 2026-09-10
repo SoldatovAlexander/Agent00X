@@ -139,6 +139,37 @@ class ObservationStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "beyond journal end"):
             store.check_checkpoint(valid_checkpoint(cursor=5))
 
+    def test_identical_checkpoint_rerecord_creates_no_second_entry(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        first = store.record_checkpoint(valid_checkpoint())
+        second = store.record_checkpoint(copy.deepcopy(valid_checkpoint()))
+        self.assertEqual(first, second)
+        self.assertEqual(len(store.checkpoints()), 1)
+
+    def test_checkpoint_id_reuse_with_different_content_conflicts(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        store.record_checkpoint(valid_checkpoint())
+        altered = valid_checkpoint()
+        altered["restore_mode"] = "none"
+        with self.assertRaisesRegex(EventConflictError, "checkpoint id conflict"):
+            store.record_checkpoint(altered)
+        self.assertEqual(len(store.checkpoints()), 1)
+
+    def test_caller_and_readback_mutation_leave_stored_checkpoint(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        checkpoint = valid_checkpoint()
+        store.record_checkpoint(checkpoint)
+        checkpoint["restore_mode"] = "none"
+        snapshot = store.checkpoints()
+        snapshot[0]["restore_mode"] = "none"
+        snapshot[0]["trigger_event_id"] = "event-store-demo-999"
+        reread = store.checkpoints()[0]
+        self.assertEqual(reread["restore_mode"], "simulation")
+        self.assertEqual(reread["trigger_event_id"], "event-store-demo-001")
+
 
 class FailingStore(ObservationStore):
     def append(self, event):

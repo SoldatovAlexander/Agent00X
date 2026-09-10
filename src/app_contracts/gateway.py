@@ -80,10 +80,14 @@ def enforce(
 
     A failing audit sink never leaks envelope content and never upgrades the
     outcome: enforcement falls back to a degraded deny carrying only a
-    stable boundary classification.
+    stable boundary classification. An envelope that cannot even be
+    classified is denied the same way without ever reaching the sink.
     """
 
-    decision = classify(envelope, policy_available=policy_available)
+    try:
+        decision = classify(envelope, policy_available=policy_available)
+    except (KeyError, TypeError, AttributeError):
+        return GatewayDecision(GatewayPath.DEGRADED, False, ("malformed-envelope",))
     try:
         audit_sink.append_audit_event(
             envelope["correlation_id"],

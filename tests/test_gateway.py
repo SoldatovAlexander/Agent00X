@@ -136,6 +136,28 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn("agent-worker-001", dumped)
         self.assertNotIn("c" * 8, dumped)
 
+    def test_malformed_envelope_denied_with_zero_sink_calls(self):
+        calls = []
+
+        class CountingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                calls.append((process_id, kwargs))
+
+        malformed = [
+            {},
+            {"intent": None},
+            {"intent": {"operation": "workspace.read"}},
+            "not-a-mapping",
+            None,
+        ]
+        for envelope_value in malformed:
+            with self.subTest(envelope=type(envelope_value).__name__):
+                decision = enforce(envelope_value, policy_available=True, audit_sink=CountingSink())
+                self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                self.assertFalse(decision.allowed)
+                self.assertEqual(decision.reason_codes, ("malformed-envelope",))
+        self.assertEqual(calls, [])
+
     def test_enforcement_emits_sanitized_append_only_audit_event(self):
         with tempfile.TemporaryDirectory(prefix="app-gateway-test-") as directory:
             with SQLiteProcessStore(Path(directory) / "runtime.sqlite3") as store:

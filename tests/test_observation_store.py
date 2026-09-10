@@ -248,6 +248,27 @@ class ObservationStoreTests(unittest.TestCase):
             store.check_result_causality(dict(lonely_result))
 
 
+    def test_nested_caller_and_readback_mutation_leave_stored_event(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["invocation_id"] = "invocation-store-demo-001"
+        intent["safe_parameters"] = {"path": "calculator.py", "max_bytes": 4096}
+        store.append(intent)
+        intent["safe_parameters"]["path"] = "rewritten.py"
+        intent["safe_parameters"]["injected"] = True
+        snapshot = store.events()
+        snapshot[0]["safe_parameters"]["path"] = "rewritten.py"
+        snapshot[0]["safe_parameters"]["injected"] = True
+        reread = store.events()[0]
+        self.assertEqual(
+            reread["safe_parameters"], {"path": "calculator.py", "max_bytes": 4096}
+        )
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-store-demo-001"
+        self.assertEqual(store.check_result_causality(result), 0)
+
+
 class FailingStore(ObservationStore):
     def append(self, event):
         raise ContractValidationError("injected store failure")

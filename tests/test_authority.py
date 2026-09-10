@@ -242,6 +242,29 @@ class AuthorityTests(unittest.TestCase):
                     )
                 self.assertNotIn("approval-demo-001", str(raised.exception))
 
+    def test_malformed_decision_expiry_denied_without_value(self):
+        decision = self.policy.decide(
+            decision_id="decision-policy-006",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        for bad in (123, None, "not-a-time", "2026-09-04T12:12:00"):
+            with self.subTest(expiry=type(bad).__name__):
+                broken = dict(decision, expires_at=bad)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^decision: expiry is invalid$"
+                ) as raised:
+                    check_decision_usable(broken, now=NOW)
+                self.assertNotIn(str(bad), str(raised.exception))
+        missing = dict(decision)
+        del missing["expires_at"]
+        with self.assertRaisesRegex(ContractValidationError, "expiry is invalid"):
+            check_decision_usable(missing, now=NOW)
+        check_decision_usable(decision, now=NOW)
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

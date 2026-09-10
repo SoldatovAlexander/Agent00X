@@ -292,6 +292,30 @@ class RuntimeStoreTests(unittest.TestCase):
             self.assertEqual(readable["reason_codes"], ["internal-read-only"])
             self.assertEqual(readable["result"], "allowed")
 
+    def test_malformed_expected_version_rejects_without_mutation(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-015")
+            for bad in (True, False, 1.0, "0", None, -1):
+                with self.subTest(version=bad):
+                    with self.assertRaisesRegex(VersionConflict, "expected version"):
+                        store.advance(
+                            "process-durable-015",
+                            ProcessState.SPECIFIED,
+                            TransitionEvidence(contract_complete=True),
+                            expected_version=bad,
+                        )
+            record = store.get("process-durable-015")
+            self.assertEqual((record.state, record.version), (ProcessState.RECEIVED, 0))
+            self.assertEqual(len(store.events("process-durable-015")), 1)
+            advanced = store.advance(
+                "process-durable-015",
+                ProcessState.SPECIFIED,
+                TransitionEvidence(contract_complete=True),
+                expected_version=0,
+            )
+            self.assertEqual((advanced.state, advanced.version), (ProcessState.SPECIFIED, 1))
+            self.assertEqual(len(store.events("process-durable-015")), 2)
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

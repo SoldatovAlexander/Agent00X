@@ -134,6 +134,12 @@ class SQLiteProcessStore:
         now: datetime | None = None,
     ) -> ProcessRecord:
         current = self.get(process_id)
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 0
+        ):
+            raise VersionConflict("expected version is invalid")
         if current.version != expected_version:
             raise VersionConflict(f"expected version {expected_version}, found {current.version}")
         next_state = transition(current.state, target, evidence)

@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.runtime_store import SQLiteProcessStore, VersionConflict
 from app_contracts.state_machine import InvalidTransition, ProcessState, TransitionEvidence
+from app_contracts.validator import ContractValidationError
 
 
 class RuntimeStoreTests(unittest.TestCase):
@@ -125,6 +126,31 @@ class RuntimeStoreTests(unittest.TestCase):
             second_read = store.audit_events("process-durable-006")
             self.assertEqual(second_read[0]["reason_codes"], ["recorded", "slow-path"])
             self.assertEqual(second_read[0]["actor_id"], "agent-worker-001")
+
+    def test_malformed_reason_codes_rejected_without_audit_write(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-007")
+            for bad in (({"nested": "caller-value-001"},), (42,), (None,), (), ("x" * 129,)):
+                with self.subTest(codes=bad):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "reason code is invalid"
+                    ) as raised:
+                        store.append_audit_event(
+                            "process-durable-007", actor_id="agent-worker-001",
+                            event_type="gateway.request", input_digest="sha256:" + "c" * 64,
+                            result="denied", reason_codes=bad,
+                        )
+                    self.assertNotIn("caller-value-001", str(raised.exception))
+            self.assertEqual(store.audit_events("process-durable-007"), [])
+            store.append_audit_event(
+                "process-durable-007", actor_id="agent-worker-001",
+                event_type="gateway.request", input_digest="sha256:" + "c" * 64,
+                result="denied", reason_codes=["write-or-unknown-denied"],
+            )
+            self.assertEqual(
+                store.audit_events("process-durable-007")[0]["reason_codes"],
+                ["write-or-unknown-denied"],
+            )
 
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:

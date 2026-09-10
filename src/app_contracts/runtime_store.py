@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 
 from .state_machine import ProcessState, TransitionEvidence, transition
+from .validator import ContractValidationError
 
 
 class ProcessStoreError(RuntimeError):
@@ -185,6 +186,7 @@ class SQLiteProcessStore:
         reason_codes: tuple[str, ...],
         now: datetime | None = None,
     ) -> None:
+        _validate_reason_codes(reason_codes)
         self.get(process_id)
         with self._connection:
             self._connection.execute(
@@ -225,6 +227,23 @@ class SQLiteProcessStore:
 
     def __exit__(self, *_args: object) -> None:
         self.close()
+
+
+_MAX_REASON_CODE_LENGTH = 128
+
+
+def _validate_reason_codes(reason_codes: object) -> None:
+    """Fail closed on non-string, empty or oversized audit reason codes."""
+
+    if (
+        not isinstance(reason_codes, (list, tuple))
+        or not reason_codes
+        or any(
+            not isinstance(code, str) or not code or len(code) > _MAX_REASON_CODE_LENGTH
+            for code in reason_codes
+        )
+    ):
+        raise ContractValidationError("audit: reason code is invalid")
 
 
 def _timestamp(value: datetime | None) -> str:

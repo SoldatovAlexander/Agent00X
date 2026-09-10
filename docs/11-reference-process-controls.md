@@ -1,6 +1,7 @@
 # Контроли процесса PROC-001
 
-Статус: гипотеза для валидации  
+Статус: гипотеза для валидации; controls описывают требуемое поведение, а не
+реализованные гарантии. Фактический статус — в документе 27.
 Версия: 0.1
 
 ## Роли и ответственность
@@ -9,6 +10,8 @@
 |---|---|---|
 | Process Owner | Цель, область, принятие риска и финальное approval | Делегировать неограниченные права через текст |
 | Workflow Runtime | Состояние, переходы, таймеры, retry и журнал | Интерпретировать свободный текст как policy |
+| Observation Collector | Неизменяемые события и checkpoint до действия | Принимать бизнес-решения, выдавать права или раскрывать секреты |
+| Observer | Отчёт по разрешённой истории, пробелам и причинам | Управлять процессом, изменять историю или читать скрытые рассуждения |
 | Orchestrator | Декомпозиция, маршрутизация и сбор результатов | Читать секреты, применять критические изменения |
 | Worker | Подготовка ограниченного результата | Расширять scope, получать credential, обходить Gateway |
 | Verifier | Независимая проверка acceptance criteria | Применять результат или подтверждать от имени владельца |
@@ -60,6 +63,9 @@ received
 | BR-012 | Tainted content не может использоваться для authorization или capability expansion |
 | BR-013 | Secret operation принимает только зарегистрированный operation type и фиксированный destination class |
 | BR-014 | Потеря policy service запрещает write и secret operations |
+| BR-015 | Решение или вызов инструмента не применяется/не отправляется, пока не сохранены его checkpoint и event intention |
+| BR-016 | Наблюдатель отделяет факт, заявленное основание и интерпретацию; отсутствие основания явно отмечается |
+| BR-017 | Учебная ветка создаётся из checkpoint в simulation mode, не переносит старые grants/approval и не повторяет внешний side effect |
 
 ## Матрица автономности
 
@@ -88,6 +94,7 @@ received
 | TOOL-007 | `change.stage` | Нет | Workflow | verifier result, digest, policy |
 | TOOL-008 | `change.apply` | Нет | Action Gateway | approval, digest, state, idempotency |
 | TOOL-009 | `github.publish_pull_request` | Нет | GitHub Actuator | policy, approval, base SHA, scoped credential, idempotency |
+| TOOL-010 | `observation.report` | Нет | Observer | read scope, event refs, redaction, факт/основание/интерпретация |
 
 ## Типы структурированных ошибок
 
@@ -122,4 +129,5 @@ output_digest: sha256:...
 
 Payload, prompt, credential и чувствительные данные не записываются в audit по
 умолчанию. Для расследования используются ссылки на классифицированные
-артефакты с отдельным контролем доступа.
+артефакты с отдельным контролем доступа. Это компактная проекция audit, а не
+полный формат ObservationEvent/Checkpoint; последний определён в документе 28.

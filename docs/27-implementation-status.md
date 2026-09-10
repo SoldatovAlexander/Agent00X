@@ -1,199 +1,116 @@
-# Статус реализации MVP
+# Статус реализации и доказательств
 
-Статус документа: официальный baseline  
-Версия: 1.0  
-Дата фиксации: 2026-09-04  
-Стадия проекта: реализация и исполняемая валидация
+Статус: единственный оперативный статус проекта
 
-## 1. Итоговый статус
+Версия: 1.1
 
-Подготовка концептуального комплекта завершена. Проект перешёл к созданию MVP.
-Архитектура не считается окончательно доказанной: принятые решения проверяются
-исполняемыми контрактами, тестами и security experiments.
+Дата сверки: 2026-09-07
 
-```text
-Documentation baseline       DONE
-M0 Executable contracts      DONE
-M0.5 Authority contracts     DONE
-M1 Safe local preparation    IN PROGRESS
-M2 Controlled publication    IN PROGRESS
-M3 Adversarial validation    IN PROGRESS
-M4 Dual UX                   PLANNED
-```
+Этот документ отвечает на вопрос «что существует и что подтверждено сейчас».
+План работ находится в [документе 24](24-mvp-final-plan.md); замысел широкого
+продукта — в документах 00 и 23. При расхождении этот документ имеет приоритет
+для утверждений о реализации и проверках.
 
-## 2. Milestone status
+## 1. Итог
 
-| Milestone | Статус | Доказанный результат | Следующий gate |
-|---|---|---|---|
-| Documentation baseline | Выполнен | Видение, ADR, threat model, process model, бриф и план связаны | Изменять только по результатам реализации |
-| M0 Executable contracts | Выполнен | Schemas, fixtures, digest chain, state machine, invariants и mock boundary работают | Контракты используются в M1/M2 |
-| M0.5 Authority contracts | Выполнен | Identity, grants, delegation, trust и typed Authority Plane requests связаны в digest chain | Durable runtime и policy enforcement |
-| M1 Safe local preparation | В работе | Docker smoke test и GitHub Actions подтверждают network deny, read-only snapshot и writable ephemeral workspace | Escape/kernel-hardening tests |
-| M2 Controlled publication | В работе | Verified manifest создал реальный branch/commit и PR через scoped GitHub App | Использовать remote repository snapshot вместо fixture snapshot |
-| M3 Adversarial validation | В работе | Сквозные taint, policy outage, replay, crash, canary, threat corpus и Docker network/resource checks проходят | Real-boundary tests и escape/kernel-hardening |
-| M4 Dual UX | Не начат | Personal/Organization требования описаны | Общий runtime API и два представления |
+Проект находится на стадии исследовательского прототипа. Основная гипотеза:
+явное представление целей, данных, состояния, процедур и правил поможет агенту
+исполнять проработанную бизнес-функцию. Первый пример функции — `repository-change`.
 
-## 3. Реализованные артефакты
+Есть контрактная и sandbox-основа, детерминированный reference flow, mock boundary
+и отдельные GitHub App spikes. Полный агент, remote snapshot как вход Worker,
+наблюдатель, исторические отчёты, учебные ветки и сквозная защищённая публикация
+ещё не реализованы. Нельзя заявлять production-ready, отсутствие всех утечек
+секретов или доказанную неуязвимость Gateway.
 
-### Контракты
+## 2. Каноническая шкала доказательств
 
-В `schemas/` находятся шестнадцать Draft 2020-12 schemas:
+| Уровень | Значение |
+|---|---|
+| Реализовано и unit-tested | Код и автоматические тесты в этом репозитории; это не сквозное доказательство границы доверия |
+| Spike | Узкая демонстрация конкретной интеграции или свойства; она не распространяется на соседние компоненты |
+| Спроектировано | Решение принято в документах, но нет схем/кода/проверок либо они неполны |
+| Не проверено | Свойство не может считаться установленным |
 
-1. Process Contract;
-2. Canonical Envelope;
-3. Task Contract;
-4. Evidence Bundle;
-5. Verification Report;
-6. Staged Change;
-7. Approval;
-8. Publish Pull Request Intent;
-9. Policy Decision;
-10. Action Receipt;
-11. Identity;
-12. Capability Grant;
-13. Delegation Receipt;
-14. Trust Profile;
-15. Actuator Request;
-16. Credential Use Grant.
+## 3. Что реализовано
 
-Agent-facing schemas используют `additionalProperties: false`; поле credential
-не является частью допустимого контракта.
+| Область | Статус | Точная граница утверждения |
+|---|---|---|
+| Базовые контракты | Реализовано и unit-tested | 16 JSON Schema, fixtures, digest chain, subset validator и state machine |
+| Local reference preparation | Реализовано и unit-tested | Ephemeral workspace, ограниченные изменения, patch, allowlisted tests, evidence, verification и staged change на fixture snapshot |
+| Durable state и mock publication | Реализовано и unit-tested | SQLite transitions/audit и journal/reconciliation вокруг mock boundary |
+| Policy/Gateway/Broker контракты | Реализовано и unit-tested | Детерминированные классы и негативные сценарии; это не связанный production Authority Plane |
+| Docker profile | Частично проверено | Профиль и opt-in integration test существуют; обычный прогон не запускает Docker integration |
+| GitHub App | Spike | App создал тестовые branch/PR; это не доказывает полную авторизацию, atomic publication или recovery |
+| Наблюдатель и обучение | Спроектировано | ADR-029/030 и документ 28; нет схем, collector, отчётов или учебных веток |
+| LLM Worker и субагенты | Не реализовано | Reference flow детерминированный, не является исполнением функции моделью |
 
-### Исполняемое ядро
+## 4. Последняя локальная проверка
 
-- dependency-free validator поддерживаемого schema subset;
-- canonical JSON и SHA-256 digest;
-- cross-contract validation;
-- workflow state machine;
-- machine-readable invariant catalog;
-- mock GitHub boundary с идемпотентностью;
-- `SandboxBackend` abstraction;
-- development-only local process backend;
-- reference repository-change preparation pipeline.
-- durable SQLite process state, optimistic versioning и append-only transition events.
-- deterministic policy, repository/actuator allowlist и approval validation.
-- Gateway Fast/Slow/Degraded classifier и typed mock actuator integration.
-- Gateway enforcement, sanitized append-only audit и Slow Path requirement для publication.
-- durable publication journal; recovery по idempotency key или reconciliation_required.
-- Docker sandbox backend с default-deny network profile, без automatic pull/fallback.
-- Docker smoke test: network deny, read-only snapshot и writable ephemeral workspace.
-- GitHub Actions workflow запускает contract- и Docker integration-тесты на каждом push и pull request.
-- GitHub App preflight принимает только безопасные metadata и ссылку на private-key file с правами `0600`; trusted Broker подписывает RS256 JWT и запрашивает scoped short-lived token без передачи его worker.
-- Trusted GitHub PR channel разрешает только связанный installation/repository и `agent/process-*` branch, формируя фиксированный `POST /pulls` payload без произвольного endpoint или credential поля.
-- Перед созданием PR trusted channel выполняет reconciliation по idempotency marker и возвращает уже созданный PR без второго external side effect.
-- Локальная preflight-команда проверяет GitHub App metadata без сетевого вызова и без чтения key content; локальные `.env.github-app`, `.github-app/`, `*.pem` и `*.key` исключены из Git.
-- GitHub installation-token request передаёт GitHub только короткое имя allowlisted repository, как требует API; full `owner/repository` остаётся для endpoint binding и audit context.
-- Live spike на `testdev` подтвердил GitHub App installation `159119281`: scoped token создал fixture branch и PR [Agent00X-sandbox#1](https://github.com/SoldatovAlexander/Agent00X-sandbox/pull/1). Token и key content не сохранялись в repository, output или audit.
-- Второй live spike на `testdev` связал verified `Staged Change` с GitHub Contents API: manifest создал commit `645ccc6bd4e8cfed4fdab434f15cdeff22d834ee` и [Agent00X-sandbox#2](https://github.com/SoldatovAlexander/Agent00X-sandbox/pull/2). В этом spike использован изолированный fixture snapshot; remote snapshot ещё не является входом verifier.
-
-### Reference preparation pipeline
-
-```text
-authorized fixture snapshot
-  -> isolated temporary copy
-  -> declared path changes
-  -> unified patch
-  -> allowlisted tests
-  -> Evidence Bundle
-  -> Verification Report
-  -> immutable Staged Change
-```
-
-При path traversal, неизменном payload или провале тестов staged change не
-создаётся. Исходный fixture snapshot не изменяется.
-
-## 4. Результаты проверки
+Команда:
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Зафиксированный результат: **71 из 71 платформенных тестов проходят** при `RUN_DOCKER_SANDBOX_TESTS=1`.
-Дополнительно проходит один тест fixture repository.
+Результат сверки 2026-09-07: **83 теста, 82 прошли, 1 пропущен**. Пропущен
+opt-in Docker integration test; его запуск требует `RUN_DOCKER_SANDBOX_TESTS=1`,
+доступный Docker daemon и образ. Этот результат подтверждает только указанные
+тестами свойства кода на текущей машине.
 
-Проверены schema validation, отсутствие credential-поля, зарегистрированная
-operation, связи process/repository/task/evidence/verification/approval/receipt,
-канонические digests, content-bound idempotency, сужение делегирования,
-привязка credential-use к typed actuator request, durable workflow transitions,
-защита от stale writer, append-only audit, approval expiry/version/destination,
-policy unavailable, mock
-publication replay, Gateway path classification, typed actuator boundary,
-enforced Slow Path, sanitized append-only audit, command allowlist, минимальный environment, разделение
-snapshot/workspace, path traversal и запрет staging после failed tests.
-Recovery после mock side effect проверяет сбой до вызова, сбой после успешного
-внешнего действия и неизвестный исход без слепого повтора.
-Сквозные adversarial tests проверяют taint, недоступность policy и replay.
-Broker interface открывает только одноразовый opaque channel, связанный с digest
-typed actuator request; значение credential не присутствует в контракте.
-Canary scan доказывает отсутствие test credential во всех контролируемых
-agent-facing и persisted surfaces; искусственные утечки в evidence/audit ловятся.
-Threat corpus исполняет ожидаемые результаты Gateway для taint, внешнего
-протокола, policy outage, privilege transition и read-only path.
-Docker smoke test выполнен на Docker Desktop 28.3.3 с образом `python:3.12-alpine`.
-Network deny, read-only snapshot и isolated workspace подтверждены; устойчивость
-к container escape и полноценная kernel isolation ещё не доказаны.
-Тот же профиль успешно прошёл на чистом GitHub runner. Контейнер запускается от
-непривилегированного UID/GID владельца workspace, поэтому writable workspace
-проверяется одинаково локально и в CI.
-Интеграционный тест дополнительно подтверждает deny для DNS и TCP-egress,
-нулевые effective capabilities, фактические CPU/RAM/PID limits из Docker inspect
-и реальное блокирование создания процессов сверх PID limit.
+Проверки покрывают схемы, digests, состояние, sandbox lifecycle, fixtures,
+negative contract paths, mock publication recovery, часть Gateway/policy/Broker,
+canary scanner и threat corpus. Canary scanner ищет контрольное значение в
+переданных ему поверхностях; он не доказывает отсутствие секрета в реальных
+process list, crash dump, системной телеметрии или всех логах.
 
-## 5. Что ещё не доказано
+## 5. Исторические GitHub App spikes
 
-- kernel/process isolation от враждебного кода;
-- запрет прямого network egress и обхода Gateway;
-- настоящий policy decision и capability verification;
-- cryptographic identity/delegation chain;
-- применение реального short-lived GitHub credential;
-- отсутствие секрета в crash dump и системной телеметрии;
-- получение и verification remote repository snapshot до подготовки staged change;
-- durable recovery во время side effect;
-- Fast/Slow/Degraded Gateway routing;
-- LLM Worker, Model Router и параллельный Local Agent Host;
-- Personal и Organization UX.
+На allowlisted репозитории `Agent00X-sandbox` были созданы тестовые branch/PR,
+включая PR #1 и #2. Второй spike использовал fixture snapshot, а не snapshot
+фактического удалённого репозитория. Эти результаты подтверждают ограниченную
+возможность GitHub App получить installation token и выполнить конкретный путь
+GitHub API. Они не подтверждают, что опубликованные файлы, approval, policy,
+manifest, Broker, journal и recovery образуют единую безопасную цепочку.
 
-## 6. Известные ограничения среды
+## 6. Известные нарушения и открытые границы
 
-### Docker
+1. `build_publish_manifest` сопоставляет workspace с вновь переданным mapping,
+   но не фиксирует его как единственное проверенное содержимое. Локальный
+   негативный сценарий принял подменённый после проверки файл.
+2. `DeterministicPolicy.decide` проверяет approval относительно `staged_change`,
+   но возвращает digest из `actuator_request`. Локальный негативный сценарий
+   получил `allow` для иного digest.
+3. GitHub publication path не является атомарной транзакцией и нуждается в
+   корректной обработке обновления существующих файлов, частичных сбоев и
+   reconciliation.
+4. Local process backend — development fallback, а Docker smoke/profile не
+   доказывают защиту от враждебного кода или полного обхода Gateway.
+5. Наблюдение «на любой момент» возможно только в пределах записанной и
+   разрешённой к хранению истории; незаписанное содержание нельзя восстановить.
 
-Docker Desktop 28.3.3 доступен. `DockerSandboxBackend` протестирован с образом
-`python:3.12-alpine`: default-deny network, read-only snapshot и writable
-ephemeral workspace подтверждены. `LocalProcessSandboxBackend` сохраняется как
-development fallback и не заявляет network/kernel isolation.
+До устранения пунктов 1–3 нельзя считать выполненными gate approval integrity,
+сквозную публикацию и её recovery. До проверок пунктов 4–5 нельзя обещать
+непробиваемую изоляцию или полный исторический отчёт.
 
-### Node.js
+## 7. Текущие этапы
 
-Системный Node.js не запускается из-за отсутствующей версии Homebrew-библиотеки
-`llhttp`. Python MVP от Node.js не зависит.
+| Этап из плана 1.1 | Статус | Ближайший проверяемый результат |
+|---|---|---|
+| R0: наблюдение и память | Концепция готова | JSON Schema, валидаторы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary |
+| R1: целостность и фиксация действий | Не начат | Устранить два известных нарушения и сохранять checkpoint до действия |
+| R2: сквозной исполнитель | Не начат | Один LLM Worker с remote snapshot и controlled publication |
+| R3: исторический Observer | Не начат | Отчёты по сохранённой истории, причинности и пробелам |
+| R4: учебная ветка | Не начат | Simulation branch без переноса старых прав и external writes |
+| R5: эксперимент | Не начат | Сравнение полной и упрощённой организации данных по заранее заданному набору задач |
 
-### Repository state
+Исторические M0/M0.5/M1/M2/M3/M4 больше не являются шкалой текущего плана.
+Они обозначают происхождение имеющихся компонентов: базовые контракты и часть
+local preparation существуют; M2/M3 не завершены; M4 отложен.
 
-Рабочая директория является Git-репозиторием на ветке `main`; remote
-`origin` настроен на GitHub. CI подтверждён: workflow `MVP verification`
-выполняет 71 платформенный тест, включая Docker integration profile.
+## 8. Правило изменения статуса
 
-## 7. Блокеры и ограничения
-
-| ID | Тип | Состояние | Влияние |
-|---|---|---|---|
-| ENV-002 | Среда | Node.js повреждён | Не блокирует Python MVP |
-| MVP-001 | Частично снят | Docker backend и smoke isolation доказаны | Escape/kernel-hardening tests не пройдены |
-| MVP-002 | Частично снят | Recovery/reconciliation доказан на mock boundary | Real external publication recovery не доказан |
-| MVP-003 | Работа | Нет integrated Gateway enforcement и real Broker/actuator | M2 не завершён |
-| MVP-004 | Частично снят | Broker interface и grant binding работают на mock boundary | Real GitHub App credential flow не доказан |
-
-Ни одно ограничение не требует возвращения к общей подготовке документов.
-
-## 8. Следующий исполняемый инкремент
-
-1. GitHub App Broker и ограниченный real actuator spike — требует GitHub App и allowlisted test repository;
-2. container escape/process-limit tests и расширенный network-bypass corpus;
-3. расширить canary scan на реальный Broker и системную телеметрию после их появления.
-
-## 9. Правило обновления статуса
-
-Milestone меняет статус только при наличии исполняемого результата,
-автоматических позитивных и негативных тестов, списка снятых и оставшихся
-блокеров и явно зафиксированных свойств, которые ещё не доказаны. Число
-документов, строк кода или happy-path демонстрация не означают завершения.
+Этап меняет статус только при наличии кода, позитивных и негативных тестов,
+воспроизводимой команды запуска, списка оставшихся ограничений и ссылки на
+соответствующую гипотезу/ADR. Happy-path демонстрация, число документов или
+одна успешная внешняя операция не превращаются в доказательство соседних свойств.

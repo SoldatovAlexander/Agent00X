@@ -1,6 +1,7 @@
 # Identity, capabilities и mandates
 
-Статус: архитектурное направление принято  
+Статус: целевое направление; криптографическая identity/delegation chain не
+реализована и не подтверждена.
 Версия: 0.1
 
 ## Identity Fabric
@@ -105,4 +106,3 @@ Identity, grants, delegation receipts, trust profiles и mandates имеют с�
 - dormant profile не хранит активный grant;
 - секрет не является доказательством полномочия агента;
 - fail-open запрещён для write, secret, transaction и MHS operations.
-

@@ -26,6 +26,22 @@ def check_interval(summary: dict[str, Any]) -> None:
         raise ContractValidationError("summary: period_end is before period_start")
 
 
+def check_sources(summary: dict[str, Any]) -> None:
+    """Reject a MemorySummary that lists the same source reference twice.
+
+    A duplicated reference misrepresents the source set, so it is a deny
+    condition. The error carries no summary content.
+    """
+
+    try:
+        refs = summary["source_refs"]
+        unique = isinstance(refs, list) and len(set(refs)) == len(refs)
+    except (KeyError, TypeError) as exc:
+        raise ContractValidationError("summary: source refs are invalid") from exc
+    if not unique:
+        raise ContractValidationError("summary: duplicate source reference")
+
+
 def _parse_time(value: str) -> datetime:
     moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if moment.tzinfo is None:

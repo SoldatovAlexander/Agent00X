@@ -15,6 +15,8 @@ from .validator import ContractValidationError
 def check_version(correction: dict[str, Any]) -> None:
     """Reject a correction with an invalid version or a self reference."""
 
+    if not isinstance(correction, dict):
+        raise ContractValidationError("correction: version is invalid")
     version = correction.get("version")
     if isinstance(version, bool) or not isinstance(version, int) or version < 1:
         raise ContractValidationError("correction: version is invalid")

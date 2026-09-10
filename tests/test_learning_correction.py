@@ -29,6 +29,14 @@ class LearningCorrectionVersionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractValidationError, "version is invalid"):
                     check_version(correction)
 
+    def test_non_mapping_correction_denied_without_payload(self):
+        for bad in (None, [], "correction", 42):
+            with self.subTest(correction=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^correction: version is invalid$"
+                ):
+                    check_version(bad)
+
     def test_valid_correction_passes_unmutated(self):
         correction = valid_correction()
         correction["supersedes"] = "correction-observer-demo-000"

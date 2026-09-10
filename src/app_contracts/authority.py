@@ -111,6 +111,27 @@ class DeterministicPolicy:
         }
 
 
+def check_decision_usable(decision: dict[str, Any], *, now: datetime) -> None:
+    """Fail closed when an allow decision is used at or past its expiry.
+
+    Only the decision lifetime is inspected; the message carries no approval,
+    digest or payload contents. Actuator boundaries must call this at use
+    time because a fresh decision cannot enforce its own TTL.
+    """
+
+    moment = _utc(now)
+    try:
+        expires_at = _parse_time(decision["expires_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ContractValidationError("decision: expiry is invalid") from exc
+    if expires_at.tzinfo is None:
+        raise ContractValidationError("decision: expiry is invalid")
+    if decision.get("effect") != "allow":
+        raise ContractValidationError("decision: not allow")
+    if expires_at <= moment:
+        raise ContractValidationError("decision: expired")
+
+
 def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 

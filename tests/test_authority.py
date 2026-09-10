@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
@@ -14,9 +14,10 @@ from app_contracts.authority import (
     DeterministicPolicy,
     PolicyConfig,
     PolicyUnavailable,
+    check_decision_usable,
     validate_approval,
 )
-from app_contracts.validator import validate
+from app_contracts.validator import ContractValidationError, validate
 
 
 NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
@@ -99,6 +100,26 @@ class AuthorityTests(unittest.TestCase):
         self.assertNotEqual(decision["staged_change_digest"], forged)
         schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
         validate(decision, schema)
+
+    def test_allow_decision_expiry_boundary(self):
+        decision = self.policy.decide(
+            decision_id="decision-policy-005",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        expires_at = datetime.fromisoformat(decision["expires_at"].replace("Z", "+00:00"))
+        check_decision_usable(decision, now=NOW)
+        check_decision_usable(decision, now=expires_at - timedelta(seconds=1))
+        for moment in (expires_at, expires_at + timedelta(seconds=1)):
+            with self.subTest(now=moment):
+                with self.assertRaisesRegex(ContractValidationError, "decision: expired") as raised:
+                    check_decision_usable(decision, now=moment)
+                leaked = str(raised.exception)
+                self.assertNotIn(self.chain["approval"]["approval_id"], leaked)
+                self.assertNotIn(self.chain["approval"]["staged_change_digest"], leaked)
 
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)

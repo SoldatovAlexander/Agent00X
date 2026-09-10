@@ -205,6 +205,23 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertNotIn("Stored rationale", str(raised.exception))
 
 
+    def test_duplicate_intent_invocation_is_ambiguous_without_leak(self):
+        store = ObservationStore()
+        for number in ("001", "002"):
+            intent = valid_event(f"event-store-demo-{number}", 0)
+            intent["invocation_id"] = "invocation-store-demo-001"
+            intent["rationale"] = "Stored rationale must never leak through rejection."
+            store.append(intent)
+        result = valid_event("event-store-demo-003", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-store-demo-001"
+        with self.assertRaisesRegex(
+            ContractValidationError, "ambiguous invocation reference"
+        ) as raised:
+            store.check_result_causality(result)
+        self.assertNotIn("Stored rationale", str(raised.exception))
+        self.assertNotIn("invocation-store-demo-001", str(raised.exception))
+
     def test_result_to_result_reference_is_denied_without_payload(self):
         store = ObservationStore()
         earlier_result = valid_event("event-store-demo-001", 0)

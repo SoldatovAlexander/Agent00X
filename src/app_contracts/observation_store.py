@@ -159,13 +159,18 @@ class ObservationStore:
         invocation_id = result_event.get("invocation_id")
         if not invocation_id:
             raise ContractValidationError("result has no invocation reference")
+        candidates: list[int] = []
         for position, stored in enumerate(self._events):
             if stored.get("invocation_id") != invocation_id or stored["event_id"] == result_event["event_id"]:
                 continue
             if stored.get("event_type") in _RESULT_EVENT_TYPES:
                 raise ContractValidationError("invocation reference is not an intent")
-            return position
-        raise ContractValidationError(f"unknown invocation reference: {invocation_id}")
+            candidates.append(position)
+        if not candidates:
+            raise ContractValidationError(f"unknown invocation reference: {invocation_id}")
+        if len(candidates) > 1:
+            raise ContractValidationError("ambiguous invocation reference")
+        return candidates[0]
 
     def events(self) -> tuple[dict[str, Any], ...]:
         """Return stored events in insertion order as detached copies."""

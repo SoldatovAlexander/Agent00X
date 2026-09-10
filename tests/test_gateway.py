@@ -115,6 +115,27 @@ class GatewayTests(unittest.TestCase):
                 self.assertNotIn(hostile_operation, dumped)
                 self.assertNotIn("a2a", dumped.replace("gateway.request", ""))
 
+    def test_hostile_sink_failure_contained_without_envelope_leak(self):
+        import json
+
+        class HostileSink:
+            def append_audit_event(self, process_id, **kwargs):
+                raise RuntimeError(f"sink boom: {json.dumps(kwargs, default=str)}")
+
+        request = envelope("repository.read")
+        request.update({
+            "correlation_id": "process-gateway-003",
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "payload": {"content_digest": "sha256:" + "c" * 64},
+        })
+        decision = enforce(request, policy_available=True, audit_sink=HostileSink())
+        self.assertEqual(decision.path, GatewayPath.DEGRADED)
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason_codes, ("audit-sink-unavailable",))
+        dumped = json.dumps(decision.reason_codes)
+        self.assertNotIn("agent-worker-001", dumped)
+        self.assertNotIn("c" * 8, dumped)
+
     def test_enforcement_emits_sanitized_append_only_audit_event(self):
         with tempfile.TemporaryDirectory(prefix="app-gateway-test-") as directory:
             with SQLiteProcessStore(Path(directory) / "runtime.sqlite3") as store:

@@ -76,16 +76,24 @@ def enforce(
     audit_sink: GatewayAuditSink,
     now: datetime | None = None,
 ) -> GatewayDecision:
-    """Classify a request and record a minimal, non-payload audit event."""
+    """Classify a request and record a minimal, non-payload audit event.
+
+    A failing audit sink never leaks envelope content and never upgrades the
+    outcome: enforcement falls back to a degraded deny carrying only a
+    stable boundary classification.
+    """
 
     decision = classify(envelope, policy_available=policy_available)
-    audit_sink.append_audit_event(
-        envelope["correlation_id"],
-        actor_id=envelope["source"]["principal_id"],
-        event_type="gateway.request",
-        input_digest=envelope["payload"]["content_digest"],
-        result="allowed" if decision.allowed else "denied",
-        reason_codes=decision.reason_codes,
-        now=now,
-    )
+    try:
+        audit_sink.append_audit_event(
+            envelope["correlation_id"],
+            actor_id=envelope["source"]["principal_id"],
+            event_type="gateway.request",
+            input_digest=envelope["payload"]["content_digest"],
+            result="allowed" if decision.allowed else "denied",
+            reason_codes=decision.reason_codes,
+            now=now,
+        )
+    except Exception:
+        return GatewayDecision(GatewayPath.DEGRADED, False, ("audit-sink-unavailable",))
     return decision

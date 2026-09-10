@@ -179,6 +179,30 @@ class RepositoryProcessTests(unittest.TestCase):
     def test_normal_nested_relative_path_stays_accepted(self):
         self.assertEqual(_safe_relative_path("pkg/mod.py").as_posix(), "pkg/mod.py")
 
+    def test_empty_and_noop_changes_build_nothing(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        for changes in ({}, {"calculator.py": original}):
+            with self.subTest(changes=sorted(changes)):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaises(ContractValidationError):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes=changes,
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                self.assertEqual(
+                    (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+                )
+                self.assertEqual(
+                    sorted(path.name for path in sandbox.workspace.iterdir()),
+                    ["calculator.py", "test_calculator.py"],
+                )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

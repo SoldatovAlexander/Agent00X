@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+import sys
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from app_contracts.observation_store import EventConflictError, ObservationStore
+from app_contracts.validator import ContractValidationError
+
+
+def valid_event(event_id: str = "event-store-demo-001", sequence: int = 0) -> dict:
+    return {
+        "schema_version": 1,
+        "event_id": event_id,
+        "event_type": "tool_requested",
+        "process_id": "process-store-demo",
+        "run_id": "run-store-demo-001",
+        "branch_id": "branch-main",
+        "task_id": "task-store-demo",
+        "agent_id": "agent-worker-001",
+        "sequence": sequence,
+        "occurred_at": "2026-09-07T12:00:00Z",
+        "recorded_at": "2026-09-07T12:00:01Z",
+        "classification": "internal",
+        "redaction_status": "complete",
+    }
+
+
+class ObservationStoreTests(unittest.TestCase):
+    def test_accepts_only_schema_valid_events(self):
+        store = ObservationStore()
+        cursor = store.append(valid_event())
+        self.assertEqual(cursor, 0)
+        self.assertEqual(len(store), 1)
+        broken = valid_event(event_id="event-store-demo-002")
+        broken["event_type"] = "model_dreamed"
+        with self.assertRaises(ContractValidationError):
+            store.append(broken)
+        self.assertEqual(len(store), 1)
+
+    def test_duplicate_id_with_same_content_is_idempotent(self):
+        store = ObservationStore()
+        first = store.append(valid_event())
+        second = store.append(copy.deepcopy(valid_event()))
+        self.assertEqual(first, second)
+        self.assertEqual(len(store), 1)
+        self.assertEqual(len(store.events()), 1)
+
+    def test_duplicate_id_with_different_content_is_rejected(self):
+        store = ObservationStore()
+        store.append(valid_event())
+        altered = valid_event()
+        altered["sequence"] = 99
+        with self.assertRaisesRegex(EventConflictError, "event id conflict"):
+            store.append(altered)
+        self.assertEqual(len(store), 1)
+
+    def test_reads_return_insertion_order_without_mutable_state(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        store.append(valid_event("event-store-demo-002", 1))
+        snapshot = store.events()
+        self.assertEqual([event["event_id"] for event in snapshot], ["event-store-demo-001", "event-store-demo-002"])
+        snapshot[0]["sequence"] = 999
+        self.assertEqual(store.events()[0]["sequence"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

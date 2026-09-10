@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 import sys
@@ -10,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.runtime_store import SQLiteProcessStore, VersionConflict
+from app_contracts.runtime_store import ProcessNotFound, SQLiteProcessStore, VersionConflict
 from app_contracts.state_machine import InvalidTransition, ProcessState, TransitionEvidence
 from app_contracts.validator import ContractValidationError
 
@@ -174,6 +175,36 @@ class RuntimeStoreTests(unittest.TestCase):
                     result="denied", reason_codes="not-a-sequence",
                 )
             self.assertEqual(len(store.audit_events("process-durable-008")), 1)
+
+    def test_naive_timestamps_rejected_before_any_write(self):
+        naive = datetime(2026, 9, 4, 12, 0)
+        with SQLiteProcessStore(self.database) as store:
+            with self.assertRaisesRegex(ContractValidationError, "timezone-aware") as raised:
+                store.create("process-durable-009", now=naive)
+            self.assertNotIn("2026-09-04", str(raised.exception))
+            with self.assertRaises(ProcessNotFound):
+                store.get("process-durable-009")
+            store.create("process-durable-009")
+            with self.assertRaises(ContractValidationError):
+                store.advance(
+                    "process-durable-009", ProcessState.SPECIFIED,
+                    TransitionEvidence(contract_complete=True), expected_version=0, now=naive,
+                )
+            with self.assertRaises(ContractValidationError):
+                store.append_audit_event(
+                    "process-durable-009", actor_id="agent-worker-001",
+                    event_type="gateway.request", input_digest="sha256:" + "e" * 64,
+                    result="denied", reason_codes=("write-or-unknown-denied",), now=naive,
+                )
+            self.assertEqual(store.get("process-durable-009").version, 0)
+            self.assertEqual(len(store.events("process-durable-009")), 1)
+            self.assertEqual(store.audit_events("process-durable-009"), [])
+
+    def test_aware_non_utc_timestamp_is_accepted(self):
+        tz = timezone(timedelta(hours=3))
+        with SQLiteProcessStore(self.database) as store:
+            record = store.create("process-durable-010", now=datetime(2026, 9, 4, 12, 0, tzinfo=tz))
+            self.assertTrue(record.updated_at.endswith("Z"))
 
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:

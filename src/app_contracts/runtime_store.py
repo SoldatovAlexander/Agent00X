@@ -248,4 +248,6 @@ def _validate_reason_codes(reason_codes: object) -> None:
 
 def _timestamp(value: datetime | None) -> str:
     moment = value or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        raise ContractValidationError("runtime: timestamp must be timezone-aware")
     return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

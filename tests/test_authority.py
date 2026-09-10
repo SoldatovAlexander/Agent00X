@@ -101,6 +101,22 @@ class AuthorityTests(unittest.TestCase):
         schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
         validate(decision, schema)
 
+    def test_policy_denies_request_intent_branch_mismatch(self):
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+        self.chain["actuator_request"]["branch_namespace"] = "agent/process-evil-001"
+        self.chain["actuator_request"]["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        decision = self.policy.decide(
+            decision_id="decision-policy-006",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        self.assertEqual(decision["reason_codes"], ["request-intent-mismatch"])
+        schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
+        validate(decision, schema)
+
     def test_allow_decision_expiry_boundary(self):
         decision = self.policy.decide(
             decision_id="decision-policy-005",

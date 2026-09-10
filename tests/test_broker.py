@@ -44,6 +44,7 @@ class BrokerTests(unittest.TestCase):
             policy_decision=self.decision,
             approval_valid=True,
             gateway_decision=self.gateway,
+            intent=self.chain["intent"],
         )
 
     def test_brokered_actuator_publishes_without_exposing_credential(self):
@@ -74,6 +75,7 @@ class BrokerTests(unittest.TestCase):
                 policy_decision=self.decision,
                 approval_valid=True,
                 gateway_decision=self.gateway,
+                intent=self.chain["intent"],
             )
 
         with self.assertRaisesRegex(RuntimeError, "injected provider failure"):
@@ -87,6 +89,33 @@ class BrokerTests(unittest.TestCase):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):
             self._publish()
+
+    def test_brokered_coordinated_branch_key_grant_swap_is_rejected(self):
+        import copy
+
+        from app_contracts.digests import sha256_digest
+
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+        evil_request = copy.deepcopy(self.chain["actuator_request"])
+        evil_request["branch_namespace"] = "agent/process-evil-001"
+        evil_request["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        evil_grant = copy.deepcopy(self.chain["credential_use_grant"])
+        evil_grant["credential_grant_id"] = "credential-grant-evil-001"
+        evil_grant["request_digest"] = sha256_digest(evil_request)
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        with self.assertRaisesRegex(ContractValidationError, "approved intent"):
+            actuator.publish_pull_request(
+                actuator_request=evil_request,
+                credential_grant=evil_grant,
+                policy_decision=self.decision,
+                approval_valid=True,
+                gateway_decision=self.gateway,
+                intent=self.chain["intent"],
+            )
+        self.assertIsNone(endpoint.find_by_idempotency_key(evil_request["idempotency_key"]))
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
 
 
 if __name__ == "__main__":

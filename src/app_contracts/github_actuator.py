@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from .actuator import publish_authorized_request
 from .broker import CredentialBroker
 from .gateway import GatewayDecision
@@ -20,11 +22,15 @@ class BrokeredGitHubActuator:
         policy_decision: dict[str, Any],
         approval_valid: bool,
         gateway_decision: GatewayDecision,
+        intent: dict[str, Any],
     ) -> MockPullRequest:
         # The broker validates grant/request binding before any provider call.
         channel = self._broker.open_github_publication_channel(credential_grant, actuator_request)
         # The channel is intentionally opaque. It alone performs the provider operation.
+        # The approved intent is forwarded so a post-allow branch/key swap is
+        # rejected at the actuator boundary instead of reaching the provider.
         return publish_authorized_request(
             channel, actuator_request, policy_decision,
             approval_valid=approval_valid, gateway_decision=gateway_decision,
+            intent=intent,
         )

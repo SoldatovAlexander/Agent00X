@@ -72,11 +72,11 @@ class AdversarialFlowTests(unittest.TestCase):
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
         first = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision,
-            approval_valid=True, gateway_decision=gateway,
+            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"],
         )
         second = publish_authorized_request(
             endpoint, self.chain["actuator_request"], decision,
-            approval_valid=True, gateway_decision=gateway,
+            approval_valid=True, gateway_decision=gateway, intent=self.chain["intent"],
         )
         self.assertEqual(first, second)
         self.assertEqual(first.pull_request_id, 1)
@@ -127,11 +127,31 @@ class AdversarialFlowTests(unittest.TestCase):
         )
         request = json.loads(json.dumps(self.chain["actuator_request"]))
         request["branch_namespace"] = "agent/process-evil-001"
-        with self.assertRaisesRegex(ContractValidationError, "idempotency key does not match"):
+        with self.assertRaisesRegex(ContractValidationError, "approved intent branch_namespace mismatch"):
             publish_authorized_request(
+                endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
+                intent=self.chain["intent"],
+            )
+        self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
+
+    def test_coordinated_swap_without_intent_is_rejected_before_mock_boundary(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        endpoint = MockGitHubEndpoint()
+        decision = self.policy.decide(
+            decision_id="decision-demo-005",
+            actuator_request=self.chain["actuator_request"], approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"], intent=self.chain["intent"], now=NOW,
+        )
+        digest = self.chain["actuator_request"]["staged_change_digest"]
+        request = json.loads(json.dumps(self.chain["actuator_request"]))
+        request["branch_namespace"] = "agent/process-evil-001"
+        request["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        with self.assertRaises(TypeError):
+            publish_authorized_request(  # type: ignore[call-arg]
                 endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
 
     def test_matching_bound_request_reaches_mock_boundary(self):
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))

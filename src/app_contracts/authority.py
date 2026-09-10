@@ -83,6 +83,11 @@ class DeterministicPolicy:
             effect, reasons = "deny", ["actuator-not-allowlisted"]
         elif actuator_request.get("staged_change_digest") != verified_digest:
             effect, reasons = "deny", ["request-digest-mismatch"]
+        elif (
+            actuator_request.get("branch_namespace") != intent.get("branch_namespace")
+            or actuator_request.get("idempotency_key") != intent.get("idempotency_key")
+        ):
+            effect, reasons = "deny", ["request-intent-mismatch"]
         else:
             try:
                 validate_approval(

@@ -243,6 +243,7 @@ class RealActuatorExpiryTests(unittest.TestCase):
                 result = publish_authorized_request(
                     endpoint, chain["actuator_request"], decision, approval_valid=True,
                     gateway_decision=gateway, intent=chain["intent"], now=moment,
+                    approval=chain["approval"],
                 )
                 self.assertEqual(result.pull_request_id, 1)
                 self.assertIsNotNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
@@ -253,6 +254,7 @@ class RealActuatorExpiryTests(unittest.TestCase):
                     publish_authorized_request(
                         endpoint, chain["actuator_request"], decision, approval_valid=True,
                         gateway_decision=gateway, intent=chain["intent"], now=moment,
+                        approval=chain["approval"],
                     )
                 self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
                 leaked = str(raised.exception)
@@ -280,6 +282,7 @@ class RealActuatorExpiryTests(unittest.TestCase):
                 gateway_decision=gateway,
                 intent=chain["intent"],
                 now=expires_at + timedelta(seconds=1),
+                approval=chain["approval"],
             )
         self.assertEqual(broker.opened_grants, [])
         self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))

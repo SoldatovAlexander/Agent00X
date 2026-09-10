@@ -10,6 +10,7 @@ from .authority import check_decision_usable, check_intent_approved
 from .broker import CredentialBroker
 from .gateway import GatewayDecision
 from .mock_github import MockPullRequest
+from .validator import ContractValidationError
 
 
 class BrokeredGitHubActuator:
@@ -28,16 +29,20 @@ class BrokeredGitHubActuator:
         now: datetime,
         approval: dict[str, Any] | None = None,
     ) -> MockPullRequest:
+        # The approval is mandatory: a call without it is refused before the
+        # broker opens its provider channel, so an approval-less request
+        # never reaches the broker/provider boundary.
+        if approval is None:
+            raise ContractValidationError("actuator: approval is required")
         # The allow decision must still be usable at the explicit use time.
         # This gate runs before the broker opens its provider channel, so an
         # expired decision never reaches the broker/provider boundary.
         check_decision_usable(policy_decision, now=now)
-        # When the approval is supplied, the presented intent must equal the
-        # full canonical approved intent before any provider channel opens,
-        # so a coordinated post-approval swap of request, intent, or grant
-        # never reaches the broker/provider boundary.
-        if approval is not None:
-            check_intent_approved(intent, approval)
+        # The presented intent must equal the full canonical approved intent
+        # before any provider channel opens, so a coordinated post-approval
+        # swap of request, intent, or grant never reaches the broker/provider
+        # boundary.
+        check_intent_approved(intent, approval)
         # The broker validates grant/request binding before any provider call.
         channel = self._broker.open_github_publication_channel(credential_grant, actuator_request)
         # The channel is intentionally opaque. It alone performs the provider operation.

@@ -175,7 +175,7 @@ class AdversarialFlowTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             publish_authorized_request(  # type: ignore[call-arg]
                 endpoint, request, decision, approval_valid=True, gateway_decision=gateway,
-                now=NOW,
+                now=NOW, approval=self.chain["approval"],
             )
         self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
         self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))

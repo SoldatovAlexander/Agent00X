@@ -252,6 +252,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "branch_namespace": actuator_request["branch_namespace"],
                 "idempotency_key": actuator_request["idempotency_key"],
             }
+            approval = {"approved_intent_digest": sha256_digest(intent)}
             now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
             policy_decision = {"effect": "allow", "operation": "publish_pull_request", "repository_id": actuator_request["repository_id"], "staged_change_digest": actuator_request["staged_change_digest"], "expires_at": "2026-09-04T12:12:00Z"}
             result = BrokeredGitHubActuator(broker).publish_pull_request(
@@ -262,6 +263,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
                 intent=intent,
                 now=now,
+                approval=approval,
             )
             self.assertEqual(result.pull_request_id, 8)
             self.assertEqual(minted_grants, ["credential-grant-demo-001"])
@@ -274,6 +276,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                     approval_valid=True, gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
                     intent=intent,
                     now=now,
+                    approval=approval,
                 )
 
 

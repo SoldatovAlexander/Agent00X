@@ -71,6 +71,19 @@ class ActuatorTests(unittest.TestCase):
                 intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
             )
 
+    def test_missing_approval_is_refused_before_mock_boundary(self):
+        endpoint = MockGitHubEndpoint()
+        with self.assertRaisesRegex(ContractValidationError, "approval is required") as raised:
+            publish_authorized_request(
+                endpoint, self.chain["actuator_request"], self.decision, approval_valid=True,
+                gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
+                intent=self.chain["intent"], now=NOW, approval=None,
+            )
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+        leaked = str(raised.exception)
+        self.assertNotIn(self.chain["approval"]["approval_id"], leaked)
+        self.assertNotIn(self.chain["intent"]["idempotency_key"], leaked)
+
 
 if __name__ == "__main__":
     unittest.main()

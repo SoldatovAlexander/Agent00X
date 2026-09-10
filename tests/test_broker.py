@@ -193,6 +193,27 @@ class BrokerTests(unittest.TestCase):
         self.assertNotIn(evil_intent["branch_namespace"], leaked)
         self.assertNotIn(evil_grant["request_digest"], leaked)
 
+    def test_brokered_missing_approval_is_refused_before_channel(self):
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        with self.assertRaisesRegex(ContractValidationError, "approval is required") as raised:
+            actuator.publish_pull_request(
+                actuator_request=self.chain["actuator_request"],
+                credential_grant=self.chain["credential_use_grant"],
+                policy_decision=self.decision,
+                approval_valid=True,
+                gateway_decision=self.gateway,
+                intent=self.chain["intent"],
+                now=NOW,
+                approval=None,
+            )
+        self.assertEqual(broker.opened_grants, [])
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+        leaked = str(raised.exception)
+        self.assertNotIn(self.chain["approval"]["approval_id"], leaked)
+        self.assertNotIn(self.chain["intent"]["idempotency_key"], leaked)
+
 
 if __name__ == "__main__":
     unittest.main()

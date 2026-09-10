@@ -26,8 +26,9 @@ def publish_authorized_request(
 
     The allow decision must still be usable at the explicit timezone-aware
     ``now``: an expired (or non-allow) decision is refused before any other
-    check and never reaches the mock boundary. When the ``approval`` is
-    supplied, the presented intent must equal the full canonical approved
+    check and never reaches the mock boundary. The ``approval`` is mandatory:
+    a call without it is refused before any other check and never reaches the
+    mock boundary. The presented intent must equal the full canonical approved
     intent by digest, so a coordinated post-approval swap of request, intent,
     or grant is rejected here instead of reaching the mock boundary. The
     request must then match the decision on operation, repository and staged
@@ -37,9 +38,10 @@ def publish_authorized_request(
     brokered path, which forwards its approval, intent, and use time.
     """
 
+    if approval is None:
+        raise ContractValidationError("actuator: approval is required")
     check_decision_usable(policy_decision, now=now)
-    if approval is not None:
-        check_intent_approved(intent, approval)
+    check_intent_approved(intent, approval)
     if not gateway_decision.allowed or gateway_decision.path is not GatewayPath.SLOW:
         raise ContractValidationError("actuator: gateway has not authorized slow path")
     if policy_decision["effect"] != "allow":

@@ -70,6 +70,44 @@ class RuntimeStoreTests(unittest.TestCase):
                     expected_version=0,
                 )
 
+    def test_stale_writer_leaves_no_partial_state_or_audit(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-005")
+            store.append_audit_event(
+                "process-durable-005", actor_id="agent-worker-001", event_type="decision_proposed",
+                input_digest="sha256:" + "a" * 64, result="recorded", reason_codes=("recorded",),
+            )
+            store.advance(
+                "process-durable-005",
+                ProcessState.SPECIFIED,
+                TransitionEvidence(contract_complete=True),
+                expected_version=0,
+            )
+            events_before = store.events("process-durable-005")
+            audit_before = store.audit_events("process-durable-005")
+            with self.assertRaises(VersionConflict):
+                store.advance(
+                    "process-durable-005",
+                    ProcessState.AUTHORIZED,
+                    TransitionEvidence(policy_allowed=True),
+                    expected_version=0,
+                )
+            record = store.get("process-durable-005")
+            self.assertEqual((record.state, record.version), (ProcessState.SPECIFIED, 1))
+            self.assertEqual(store.events("process-durable-005"), events_before)
+            self.assertEqual(store.audit_events("process-durable-005"), audit_before)
+            advanced = store.advance(
+                "process-durable-005",
+                ProcessState.AUTHORIZED,
+                TransitionEvidence(policy_allowed=True),
+                expected_version=1,
+            )
+            self.assertEqual((advanced.state, advanced.version), (ProcessState.AUTHORIZED, 2))
+            self.assertEqual(
+                [event["sequence"] for event in store.events("process-durable-005")], [0, 1, 2]
+            )
+            self.assertEqual(store.audit_events("process-durable-005"), audit_before)
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

@@ -17,6 +17,7 @@ from app_contracts.publication import (
     execute_publication,
     recover_publication,
 )
+from app_contracts.validator import ContractValidationError
 
 
 class PublicationRecoveryTests(unittest.TestCase):
@@ -116,6 +117,32 @@ class PublicationRecoveryTests(unittest.TestCase):
             leaked = str(first.exception)
             self.assertNotIn(self.request["idempotency_key"], leaked)
             self.assertNotIn(self.request["staged_change_digest"], leaked)
+
+    def test_malformed_request_denied_before_state_or_side_effect(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            broken = dict(self.request)
+            del broken["branch"]
+            broken["staged_change_digest"] = "caller-secret-001"
+            with self.assertRaisesRegex(
+                ContractValidationError, "^publication: request is malformed$"
+            ) as raised:
+                execute_publication(journal, self.endpoint, broken)
+            self.assertNotIn("caller-secret-001", str(raised.exception))
+            self.assertEqual(journal.get(self.request["process_id"]).status, "prepared")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
+    def test_valid_request_published_exactly_once(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            first = execute_publication(journal, self.endpoint, dict(self.request))
+            self.assertEqual(first.pull_request_id, 1)
+            with self.assertRaisesRegex(ValueError, "not prepared"):
+                execute_publication(journal, self.endpoint, dict(self.request))
+            self.assertEqual(
+                self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]).pull_request_id,
+                1,
+            )
 
     def test_crash_before_external_call_remains_explicitly_retryable(self):
         with PublicationJournal(self.database) as journal:

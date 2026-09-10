@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 
 from .mock_github import MockGitHubEndpoint, MockPullRequest
+from .validator import ContractValidationError
 
 
 class PublicationRecoveryRequired(RuntimeError):
@@ -119,14 +120,20 @@ def execute_publication(
     *,
     crash_after_external_effect: bool = False,
 ) -> MockPullRequest:
-    record = journal.get(request["process_id"])
-    if record.status != "prepared":
-        raise ValueError("publication is not prepared")
-    journal.mark_attempting(record.process_id)
     boundary_fields = {
         "operation", "repository_id", "branch", "staged_change_digest",
         "idempotency_key", "policy_effect", "approval_valid",
     }
+    if (
+        not isinstance(request, dict)
+        or "process_id" not in request
+        or any(field not in request for field in boundary_fields)
+    ):
+        raise ContractValidationError("publication: request is malformed")
+    record = journal.get(request["process_id"])
+    if record.status != "prepared":
+        raise ValueError("publication is not prepared")
+    journal.mark_attempting(record.process_id)
     result = endpoint.publish_pull_request({field: request[field] for field in boundary_fields})
     if crash_after_external_effect:
         raise SimulatedCrash("crash after external effect before local receipt")

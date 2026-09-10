@@ -23,6 +23,7 @@ class PublicationRecord:
     process_id: str
     idempotency_key: str
     request_digest: str
+    repository_id: str
     status: str
     pull_request_id: int | None
 
@@ -39,12 +40,15 @@ class PublicationJournal:
                     process_id TEXT PRIMARY KEY,
                     idempotency_key TEXT NOT NULL UNIQUE,
                     request_digest TEXT NOT NULL,
+                    repository_id TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('prepared', 'attempting', 'completed', 'reconciliation_required')),
                     pull_request_id INTEGER
                 )"""
             )
 
-    def prepare(self, process_id: str, *, idempotency_key: str, request_digest: str) -> PublicationRecord:
+    def prepare(
+        self, process_id: str, *, idempotency_key: str, request_digest: str, repository_id: str,
+    ) -> PublicationRecord:
         try:
             existing = self.get(process_id)
         except KeyError:
@@ -53,15 +57,16 @@ class PublicationJournal:
             if (
                 existing.idempotency_key == idempotency_key
                 and existing.request_digest == request_digest
+                and existing.repository_id == repository_id
             ):
                 return existing
             raise ValueError("publication payload conflict")
         try:
             with self._connection:
                 self._connection.execute(
-                    """INSERT INTO publication_attempts(process_id, idempotency_key, request_digest, status)
-                       VALUES (?, ?, ?, 'prepared')""",
-                    (process_id, idempotency_key, request_digest),
+                    """INSERT INTO publication_attempts(process_id, idempotency_key, request_digest, repository_id, status)
+                       VALUES (?, ?, ?, ?, 'prepared')""",
+                    (process_id, idempotency_key, request_digest, repository_id),
                 )
         except sqlite3.IntegrityError as exc:
             raise ValueError("publication payload conflict") from exc
@@ -69,7 +74,7 @@ class PublicationJournal:
 
     def get(self, process_id: str) -> PublicationRecord:
         row = self._connection.execute(
-            """SELECT process_id, idempotency_key, request_digest, status, pull_request_id
+            """SELECT process_id, idempotency_key, request_digest, repository_id, status, pull_request_id
                FROM publication_attempts WHERE process_id = ?""",
             (process_id,),
         ).fetchone()
@@ -81,6 +86,20 @@ class PublicationJournal:
         self._set_status(process_id, "prepared", "attempting")
 
     def mark_completed(self, process_id: str, pull_request: MockPullRequest) -> None:
+        record = self.get(process_id)
+        if record.status != "attempting":
+            raise ValueError("publication is not attempting")
+        branch, digest = pull_request.branch, pull_request.staged_change_digest
+        expected_key = (
+            f"publish/{branch.removeprefix('agent/')}/{digest}"
+            if isinstance(branch, str) and isinstance(digest, str)
+            else None
+        )
+        if (
+            expected_key != record.idempotency_key
+            or pull_request.repository_id != record.repository_id
+        ):
+            raise ValueError("publication receipt mismatch")
         with self._connection:
             updated = self._connection.execute(
                 """UPDATE publication_attempts SET status = 'completed', pull_request_id = ?

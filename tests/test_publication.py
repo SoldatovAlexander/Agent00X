@@ -44,6 +44,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.request["process_id"],
             idempotency_key=self.request["idempotency_key"],
             request_digest="sha256:" + "b" * 64,
+            repository_id=self.request["repository_id"],
         )
 
     def test_conflict_errors_carry_no_injected_values(self):
@@ -52,12 +53,14 @@ class PublicationRecoveryTests(unittest.TestCase):
                 "process-evil-caller-secret-001",
                 idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
                 request_digest="sha256:" + "e" * 64,
+                repository_id="github-installation/42/repository/1001",
             )
             with self.assertRaisesRegex(ValueError, "^publication payload conflict$") as first:
                 journal.prepare(
                     "process-evil-caller-secret-001",
                     idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
                     request_digest="sha256:" + "f" * 64,
+                    repository_id="github-installation/42/repository/1001",
                 )
             self.assertNotIn("caller-secret", str(first.exception))
             with self.assertRaisesRegex(ValueError, "^publication payload conflict$") as second:
@@ -65,6 +68,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                     "process-other-003",
                     idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
                     request_digest="sha256:" + "e" * 64,
+                    repository_id="github-installation/42/repository/1001",
                 )
             self.assertNotIn("caller-secret", str(second.exception))
 
@@ -75,6 +79,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                 self.request["process_id"],
                 idempotency_key=self.request["idempotency_key"],
                 request_digest="sha256:" + "b" * 64,
+                repository_id=self.request["repository_id"],
             )
             self.assertEqual(replayed.status, "prepared")
             self.assertEqual(replayed.request_digest, "sha256:" + "b" * 64)
@@ -87,11 +92,36 @@ class PublicationRecoveryTests(unittest.TestCase):
                     self.request["process_id"],
                     idempotency_key=self.request["idempotency_key"],
                     request_digest="sha256:" + "c" * 64,
+                    repository_id=self.request["repository_id"],
                 )
             record = journal.get(self.request["process_id"])
             self.assertEqual(record.request_digest, "sha256:" + "b" * 64)
             self.assertEqual(record.status, "prepared")
             self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
+    def test_foreign_receipt_cannot_complete_attempt(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            foreign_key = MockPullRequest(
+                9, self.request["repository_id"], self.request["branch"],
+                "sha256:" + "0" * 64, self.request["idempotency_key"],
+            )
+            foreign_repo = MockPullRequest(
+                9, "github-installation/42/repository/caller-secret-003",
+                self.request["branch"], self.request["staged_change_digest"],
+                self.request["idempotency_key"],
+            )
+            for forged in (foreign_key, foreign_repo):
+                with self.subTest(receipt=forged.pull_request_id):
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication receipt mismatch$"
+                    ) as raised:
+                        journal.mark_completed(self.request["process_id"], forged)
+                    self.assertNotIn("caller-secret-003", str(raised.exception))
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertIsNone(record.pull_request_id)
 
     def test_invalid_status_transitions_change_nothing(self):
         with PublicationJournal(self.database) as journal:

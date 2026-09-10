@@ -74,12 +74,15 @@ class DeterministicPolicy:
 
         reasons: list[str] = []
         effect = "allow"
+        verified_digest = sha256_digest(staged_change)
         if actuator_request["operation"] != "publish_pull_request":
             effect, reasons = "deny", ["operation-not-registered"]
         elif actuator_request["repository_id"] not in self._config.allowed_repositories:
             effect, reasons = "deny", ["repository-not-allowlisted"]
         elif actuator_request["actuator_id"] not in self._config.allowed_actuators:
             effect, reasons = "deny", ["actuator-not-allowlisted"]
+        elif actuator_request.get("staged_change_digest") != verified_digest:
+            effect, reasons = "deny", ["request-digest-mismatch"]
         else:
             try:
                 validate_approval(
@@ -101,7 +104,7 @@ class DeterministicPolicy:
             "principal_id": actuator_request["actuator_id"],
             "operation": actuator_request["operation"],
             "repository_id": actuator_request["repository_id"],
-            "staged_change_digest": actuator_request["staged_change_digest"],
+            "staged_change_digest": verified_digest,
             "policy_version": self._config.version,
             "evaluated_at": _format_time(moment),
             "expires_at": _format_time(expires_at),

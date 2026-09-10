@@ -82,6 +82,24 @@ class AuthorityTests(unittest.TestCase):
         self.assertEqual(decision["effect"], "deny")
         self.assertEqual(decision["reason_codes"], ["repository-not-allowlisted"])
 
+    def test_policy_denies_swapped_request_digest(self):
+        forged = "sha256:" + "0" * 64
+        self.assertNotEqual(forged, self.chain["approval"]["staged_change_digest"])
+        self.chain["actuator_request"]["staged_change_digest"] = forged
+        decision = self.policy.decide(
+            decision_id="decision-policy-004",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        self.assertEqual(decision["reason_codes"], ["request-digest-mismatch"])
+        self.assertEqual(decision["staged_change_digest"], self.chain["approval"]["staged_change_digest"])
+        self.assertNotEqual(decision["staged_change_digest"], forged)
+        schema = json.loads((ROOT / "schemas" / "policy-decision.schema.json").read_text())
+        validate(decision, schema)
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

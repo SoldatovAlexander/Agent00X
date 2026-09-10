@@ -13,6 +13,26 @@ from app_contracts.gateway import GatewayPath, classify
 from app_contracts.validator import ContractValidationError, validate
 
 
+GATEWAY_FIELDS = (
+    "operation", "port", "protocol", "tainted", "policy_available",
+    "expected_path", "expected_allowed",
+)
+OBSERVER_FIELDS = ("contract", "key", "injected", "expected")
+
+
+def check_case_structure(case: dict, index: int) -> None:
+    label = case.get("id") or f"index {index}"
+    case_id = case.get("id")
+    if not isinstance(case_id, str) or not case_id:
+        raise ValueError(f"threat case {label}: missing id")
+    is_gateway = all(field in case for field in GATEWAY_FIELDS)
+    is_observer = all(field in case for field in OBSERVER_FIELDS)
+    if not (is_gateway or is_observer):
+        raise ValueError(f"threat case {case_id}: missing category/expected outcome fields")
+    if is_observer and case["expected"] not in ("deny", "allow"):
+        raise ValueError(f"threat case {case_id}: unknown expected outcome")
+
+
 class ThreatCorpusTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -48,6 +68,31 @@ class ThreatCorpusTests(unittest.TestCase):
                 with self.assertRaises(ContractValidationError) as raised:
                     validate(event, schema)
                 self.assertNotIn(case["injected"], str(raised.exception))
+
+    def test_corpus_cases_are_structurally_complete(self):
+        for index, case in enumerate(self.corpus["cases"]):
+            with self.subTest(case=case.get("id") or index):
+                check_case_structure(case, index)
+
+    def test_incomplete_case_records_fail_loudly(self):
+        base = dict(self.corpus["cases"][0])
+        broken_cases = []
+        missing_id = dict(base)
+        del missing_id["id"]
+        broken_cases.append(missing_id)
+        missing_outcome = dict(base)
+        del missing_outcome["expected_path"]
+        del missing_outcome["expected_allowed"]
+        broken_cases.append(missing_outcome)
+        missing_category = {"id": "THREAT-999", "name": "shapeless case"}
+        broken_cases.append(missing_category)
+        for index, broken in enumerate(broken_cases):
+            with self.subTest(case=index):
+                with self.assertRaises(ValueError) as raised:
+                    check_case_structure(broken, index)
+                message = str(raised.exception)
+                self.assertNotIn("synthetic-secret-001", message)
+                self.assertNotIn("ignore previous instructions", message)
 
     def test_contract_injection_case_rejects_credential_field(self):
         intent = json.loads((ROOT / "fixtures" / "valid" / "mvp-chain.json").read_text())["intent"]

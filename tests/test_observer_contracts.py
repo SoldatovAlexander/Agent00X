@@ -177,5 +177,64 @@ class CheckpointContractTests(unittest.TestCase):
         self.assertTrue(checkpoint["state_ref"].startswith("artifact://"))
 
 
+def load_correction_schema() -> dict:
+    with (ROOT / "schemas" / "learning-correction.schema.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def valid_correction() -> dict:
+    return {
+        "schema_version": 1,
+        "correction_id": "correction-observer-demo-001",
+        "version": 1,
+        "checkpoint_id": "checkpoint-observer-demo-001",
+        "target_event_id": "event-observer-demo-001",
+        "author_id": "human-reviewer-001",
+        "created_at": "2026-09-07T13:00:00Z",
+        "error_description": "Agent published a file changed after verification without re-check.",
+        "explanation": "The manifest gate requires a fresh verification before publication.",
+        "expected_action": "Re-run verification and request a new approval before publishing.",
+        "applicability": "Applies when workspace content differs from the verified prepared contents.",
+        "evidence_refs": ["artifact://evidence/observer-demo-001"],
+        "review_status": "proposed",
+    }
+
+
+class LearningCorrectionContractTests(unittest.TestCase):
+    def test_valid_correction_conforms_to_schema(self):
+        validate(valid_correction(), load_correction_schema())
+
+    def test_unknown_field_is_rejected(self):
+        correction = valid_correction()
+        correction["unexpected_field"] = "not-allowed"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields"):
+            validate(correction, load_correction_schema())
+
+    def test_invalid_review_status_is_rejected(self):
+        correction = valid_correction()
+        correction["review_status"] = "auto_applied"
+        with self.assertRaisesRegex(ContractValidationError, "not in enum"):
+            validate(correction, load_correction_schema())
+
+    def test_missing_checkpoint_reference_is_rejected(self):
+        correction = valid_correction()
+        del correction["checkpoint_id"]
+        with self.assertRaisesRegex(ContractValidationError, "missing fields"):
+            validate(correction, load_correction_schema())
+
+    def test_secret_like_field_is_rejected(self):
+        correction = valid_correction()
+        correction["token"] = "must-not-exist"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields"):
+            validate(correction, load_correction_schema())
+
+    def test_correction_is_not_a_capability_or_policy_mutation(self):
+        correction = valid_correction()
+        validate(correction, load_correction_schema())
+        payload = json.dumps(correction)
+        for forbidden in ("capability", "credential", "token", "policy"):
+            self.assertNotIn(forbidden, payload)
+
+
 if __name__ == "__main__":
     unittest.main()

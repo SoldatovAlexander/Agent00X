@@ -40,14 +40,14 @@ def run_gated_dispatch(
     intent_event: dict[str, Any],
     dispatch,
 ):
-    """Validate the checkpoint and record the intent event before dispatch.
+    """Record the checkpoint and the intent event before dispatch.
 
     The ``dispatch`` callable runs only after both writes succeed. Any store
     failure raises PreDispatchError without starting the side effect.
     """
 
     try:
-        store.check_checkpoint(checkpoint)
+        store.record_checkpoint(checkpoint)
         cursor = store.append(intent_event)
     except (ContractValidationError, EventConflictError) as exc:
         raise PreDispatchError(f"pre-dispatch gate refused: {exc}") from exc
@@ -60,6 +60,8 @@ class ObservationStore:
     def __init__(self) -> None:
         self._events: list[dict[str, Any]] = []
         self._digests: dict[str, str] = {}
+        self._checkpoints: list[dict[str, Any]] = []
+        self._checkpoint_digests: dict[str, str] = {}
 
     def append(self, event: dict[str, Any]) -> int:
         """Validate and append an event, returning its insertion cursor.
@@ -98,6 +100,32 @@ class ObservationStore:
             raise ContractValidationError("checkpoint cursor is beyond journal end")
         return cursor
 
+    def record_checkpoint(self, checkpoint: dict[str, Any]) -> int:
+        """Validate and persist a checkpoint, returning its insertion index.
+
+        Re-recording the same ``checkpoint_id`` with identical content is
+        idempotent and returns the original index without creating a second
+        record. Reusing a ``checkpoint_id`` with different content raises
+        EventConflictError.
+        """
+
+        self.check_checkpoint(checkpoint)
+        digest = sha256_digest(checkpoint)
+        checkpoint_id = checkpoint["checkpoint_id"]
+        known = self._checkpoint_digests.get(checkpoint_id)
+        if known is not None:
+            if known == digest:
+                return self._checkpoint_position(checkpoint_id)
+            raise EventConflictError(f"checkpoint id conflict: {checkpoint_id}")
+        self._checkpoints.append(copy.deepcopy(checkpoint))
+        self._checkpoint_digests[checkpoint_id] = digest
+        return len(self._checkpoints) - 1
+
+    def checkpoints(self) -> tuple[dict[str, Any], ...]:
+        """Return stored checkpoints in insertion order as detached copies."""
+
+        return tuple(copy.deepcopy(item) for item in self._checkpoints)
+
     def events(self) -> tuple[dict[str, Any], ...]:
         """Return stored events in insertion order as detached copies."""
 
@@ -111,3 +139,9 @@ class ObservationStore:
             if stored["event_id"] == event_id:
                 return position
         raise KeyError(event_id)  # pragma: no cover - index always consistent
+
+    def _checkpoint_position(self, checkpoint_id: str) -> int:
+        for position, stored in enumerate(self._checkpoints):
+            if stored["checkpoint_id"] == checkpoint_id:
+                return position
+        raise KeyError(checkpoint_id)  # pragma: no cover - index always consistent

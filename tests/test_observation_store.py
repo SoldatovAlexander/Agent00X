@@ -118,14 +118,20 @@ class FailingStore(ObservationStore):
         raise ContractValidationError("injected store failure")
 
 
+class FailingCheckpointStore(ObservationStore):
+    def record_checkpoint(self, checkpoint):
+        raise ContractValidationError("injected checkpoint failure")
+
+
 class PreDispatchGateTests(unittest.TestCase):
     def test_gate_records_checkpoint_and_intent_before_dispatch(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))
+        checkpoint = valid_checkpoint()
         calls: list[str] = []
         cursor, outcome = run_gated_dispatch(
             store,
-            checkpoint=valid_checkpoint(),
+            checkpoint=checkpoint,
             intent_event=valid_event("event-store-demo-002", 1),
             dispatch=lambda: calls.append("dispatched") or "mock-receipt",
         )
@@ -136,6 +142,10 @@ class PreDispatchGateTests(unittest.TestCase):
             [event["event_id"] for event in store.events()],
             ["event-store-demo-001", "event-store-demo-002"],
         )
+        stored_checkpoints = store.checkpoints()
+        self.assertEqual(len(stored_checkpoints), 1)
+        self.assertEqual(stored_checkpoints[0]["checkpoint_id"], checkpoint["checkpoint_id"])
+        self.assertEqual(stored_checkpoints[0]["trigger_event_id"], "event-store-demo-001")
 
     def test_injected_store_failure_blocks_dispatch(self):
         store = FailingStore()
@@ -163,6 +173,25 @@ class PreDispatchGateTests(unittest.TestCase):
             )
         self.assertEqual(calls, [])
         self.assertEqual(len(store), 1)
+        self.assertEqual(len(store.checkpoints()), 0)
+
+    def test_injected_checkpoint_failure_blocks_dispatch_without_intent_write(self):
+        store = FailingCheckpointStore()
+        ObservationStore.append(store, valid_event("event-store-demo-001", 0))
+        calls: list[str] = []
+        with self.assertRaisesRegex(PreDispatchError, "pre-dispatch gate refused"):
+            run_gated_dispatch(
+                store,
+                checkpoint=valid_checkpoint(),
+                intent_event=valid_event("event-store-demo-002", 1),
+                dispatch=lambda: calls.append("dispatched"),
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            [event["event_id"] for event in store.events()],
+            ["event-store-demo-001"],
+        )
+        self.assertEqual(len(store.checkpoints()), 0)
 
 
 if __name__ == "__main__":

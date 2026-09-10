@@ -56,6 +56,31 @@ class CanaryCredentialTests(unittest.TestCase):
         self.assertNotIn("open(", source)
         self.assertNotIn(".env", source)
 
+    def test_cyclic_surface_is_reported_without_recursion_or_leak(self):
+        cyclic_mapping: dict = {}
+        cyclic_mapping["self"] = cyclic_mapping
+        cyclic_list: list = []
+        cyclic_list.append(cyclic_list)
+        surfaces = {"agent-context": cyclic_mapping, "stdout": cyclic_list}
+        self.assertEqual(
+            find_canary_surfaces(self.canary, surfaces), ["agent-context", "stdout"]
+        )
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, surfaces)
+        self.assertIn("agent-context", str(raised.exception))
+        self.assertNotIn(self.canary, str(raised.exception))
+
+    def test_canary_in_reachable_cyclic_surface_is_not_printed(self):
+        holder: dict = {"note": self.canary}
+        holder["self"] = holder
+        surfaces = dict(self.clean_surfaces)
+        surfaces["evidence"] = holder
+        self.assertEqual(find_canary_surfaces(self.canary, surfaces), ["evidence"])
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, surfaces)
+        self.assertIn("evidence", str(raised.exception))
+        self.assertNotIn(self.canary, str(raised.exception))
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

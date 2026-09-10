@@ -546,5 +546,75 @@ class MalformedReconciliationTests(unittest.TestCase):
         self.assertIsNone(channel.reconcile_pull_request(branch=request["branch"], idempotency_key=key))
 
 
+class ContentPathEncodingTests(unittest.TestCase):
+    def _recording_channel(self, calls):
+        from app_contracts.github_app import GitHubAppPublicationChannel
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+        return GitHubAppPublicationChannel(
+            GitHubAppBrokerConfig.from_environment(environment),
+            _InstallationToken("opaque", "future"),
+            post_json=lambda url, headers, payload: calls.append(("POST", url, payload)) or {"ref": payload["ref"]},
+            get_json=lambda _url, _headers: None,
+            put_json=lambda url, headers, payload: calls.append(("PUT", url, payload)) or {"commit": {"sha": "f" * 40}},
+        )
+
+    def _staged_change(self):
+        return {
+            "repository_id": "github-installation/456/repository/1001",
+            "base_commit": "a" * 40,
+            "patch_digest": "sha256:" + "b" * 64,
+        }
+
+    def test_special_characters_encode_as_single_content_resource(self):
+        import base64
+        from app_contracts.digests import sha256_bytes
+        calls = []
+        channel = self._recording_channel(calls)
+        content = "special path content\n"
+        special = "my dir/file #1.txt"
+        sha = channel.publish_verified_files(
+            branch="agent/process-demo-001",
+            staged_change=self._staged_change(),
+            files=[PublishableFile(special, content, sha256_bytes(content.encode()))],
+        )
+        self.assertEqual(sha, "f" * 40)
+        puts = [call for call in calls if call[0] == "PUT"]
+        self.assertEqual(len(puts), 1)
+        _, url, payload = puts[0]
+        self.assertEqual(
+            url,
+            "https://api.github.com/repos/example/agent00x-sandbox/contents/my%20dir/file%20%231.txt",
+        )
+        self.assertEqual(payload["branch"], "agent/process-demo-001")
+        self.assertEqual(base64.b64decode(payload["content"]).decode("utf-8"), content)
+
+    def test_traversal_and_absolute_paths_stay_forbidden(self):
+        from app_contracts.digests import sha256_bytes
+        for unsafe in ("a/../b.txt", "/abs/file.txt", "../escape.txt"):
+            with self.subTest(path=unsafe):
+                calls = []
+                channel = self._recording_channel(calls)
+                content = "x\n"
+                forged = PublishableFile(unsafe, content, sha256_bytes(content.encode()))
+                with self.assertRaisesRegex(ContractValidationError, "manifest path is unsafe"):
+                    channel.publish_verified_files(
+                        branch="agent/process-demo-001",
+                        staged_change=self._staged_change(),
+                        files=[forged],
+                    )
+                self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,6 +43,8 @@ def check_sources(summary: dict[str, Any]) -> None:
 
 
 def _parse_time(value: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("period boundary must be a string")
     moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if moment.tzinfo is None:
         raise ValueError("period boundary must be timezone-aware")

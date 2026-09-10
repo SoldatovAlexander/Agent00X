@@ -32,6 +32,17 @@ class MemorySummaryIntervalTests(unittest.TestCase):
         check_interval(summary)
         self.assertEqual(summary, before)
 
+    def test_non_string_boundary_denied_without_source_leak(self):
+        for bad in (123, None, ["2026-03-01T00:00:00Z"]):
+            with self.subTest(boundary=type(bad).__name__):
+                summary = valid_summary()
+                summary["period_start"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^summary: period boundary is invalid$"
+                ) as raised:
+                    check_interval(summary)
+                self.assertNotIn("Three tool calls", str(raised.exception))
+
     def test_invalid_boundary_is_rejected(self):
         summary = valid_summary()
         summary["period_start"] = "March 2026"

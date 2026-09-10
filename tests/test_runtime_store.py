@@ -108,6 +108,24 @@ class RuntimeStoreTests(unittest.TestCase):
             )
             self.assertEqual(store.audit_events("process-durable-005"), audit_before)
 
+    def test_caller_mutation_does_not_alter_stored_audit_event(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-006")
+            reason_codes = ["recorded", "slow-path"]
+            store.append_audit_event(
+                "process-durable-006", actor_id="agent-worker-001", event_type="decision_proposed",
+                input_digest="sha256:" + "b" * 64, result="recorded", reason_codes=reason_codes,
+            )
+            reason_codes.append("forged-after-write")
+            reason_codes[0] = "rewritten"
+            first_read = store.audit_events("process-durable-006")
+            self.assertEqual(first_read[0]["reason_codes"], ["recorded", "slow-path"])
+            first_read[0]["reason_codes"].append("forged-after-read")
+            first_read[0]["actor_id"] = "rewritten"
+            second_read = store.audit_events("process-durable-006")
+            self.assertEqual(second_read[0]["reason_codes"], ["recorded", "slow-path"])
+            self.assertEqual(second_read[0]["actor_id"], "agent-worker-001")
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

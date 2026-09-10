@@ -40,6 +40,15 @@ def publish_authorized_request(
 
     if approval is None:
         raise ContractValidationError("actuator: approval is required")
+    if not isinstance(actuator_request, dict):
+        raise ContractValidationError("actuator: request is malformed")
+    for field in (
+        "actuator_id", "operation", "repository_id",
+        "branch_namespace", "staged_change_digest", "idempotency_key",
+    ):
+        value = actuator_request.get(field)
+        if not isinstance(value, str) or not value:
+            raise ContractValidationError("actuator: request identity is invalid")
     check_decision_usable(policy_decision, now=now)
     check_intent_approved(intent, approval)
     if not gateway_decision.allowed or gateway_decision.path is not GatewayPath.SLOW:

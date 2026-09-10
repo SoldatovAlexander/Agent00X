@@ -63,6 +63,29 @@ class ActuatorTests(unittest.TestCase):
                 intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
             )
 
+    def test_malformed_request_identity_denied_before_publish(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        malformed = [
+            ("non-mapping", "not-a-mapping"),
+            ("missing-branch", {k: v for k, v in self.chain["actuator_request"].items() if k != "branch_namespace"}),
+            ("empty-operation", dict(self.chain["actuator_request"], operation="")),
+            ("non-string-repo", dict(self.chain["actuator_request"], repository_id=42)),
+            ("none-digest", dict(self.chain["actuator_request"], staged_change_digest=None)),
+        ]
+        for label, request in malformed:
+            with self.subTest(case=label):
+                endpoint = MockGitHubEndpoint()
+                with self.assertRaises(ContractValidationError) as raised:
+                    publish_authorized_request(
+                        endpoint, request, self.decision, approval_valid=True,
+                        gateway_decision=gateway, intent=self.chain["intent"],
+                        now=NOW, approval=self.chain["approval"],
+                    )
+                self.assertIsNone(
+                    endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
+                )
+                self.assertNotIn("caller-secret", str(raised.exception))
+
     def test_fast_path_cannot_reach_actuator(self):
         with self.assertRaisesRegex(ContractValidationError, "gateway has not authorized"):
             publish_authorized_request(

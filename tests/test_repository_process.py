@@ -302,6 +302,16 @@ class RepositoryProcessTests(unittest.TestCase):
                     ["calculator.py", "test_calculator.py"],
                 )
 
+    def test_manifest_request_duplicate_spellings_are_denied(self):
+        sandbox, result = self.prepare()
+        with self.assertRaisesRegex(ContractValidationError, "duplicate paths"):
+            build_publish_manifest(
+                sandbox, result,
+                {"calculator.py": self.new_calculator, "calculator.py/": self.new_calculator},
+            )
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
+        self.assertEqual([item.path for item in manifest], ["calculator.py"])
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

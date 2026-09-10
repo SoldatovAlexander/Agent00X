@@ -180,7 +180,10 @@ def build_publish_manifest(sandbox: LocalProcessSandbox, prepared: PreparedChang
         raise ContractValidationError("publish manifest is empty")
     if not changes:
         raise ContractValidationError("publish manifest is empty")
-    requested = {_safe_relative_path(name).as_posix() for name in changes}
+    requested_list = [_safe_relative_path(name).as_posix() for name in changes]
+    if len(set(requested_list)) != len(changes):
+        raise ContractValidationError("publish manifest request has duplicate paths")
+    requested = set(requested_list)
     if requested != set(verified):
         raise ContractValidationError("publish manifest request does not match verified prepared contents")
     manifest: list[PublishableFile] = []

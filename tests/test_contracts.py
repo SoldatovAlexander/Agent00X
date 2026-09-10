@@ -328,6 +328,38 @@ class SchemaIdTests(unittest.TestCase):
                 self.assertNotIn("caller-secret-001", str(raised.exception))
         validate({"a": "x"}, schema)
 
+    def test_nested_unknown_field_rejected_without_value(self):
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "outer": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"known": {"type": "string"}},
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"known": {"type": "string"}},
+                    },
+                },
+            },
+        }
+        validate({"outer": {"known": "a"}, "items": [{"known": "b"}]}, schema)
+        with self.assertRaisesRegex(
+            ContractValidationError, "^\\$\\.outer: unknown fields \\['injected'\\]$"
+        ) as raised:
+            validate({"outer": {"known": "a", "injected": "caller-secret-001"}}, schema)
+        self.assertNotIn("caller-secret-001", str(raised.exception))
+        with self.assertRaisesRegex(
+            ContractValidationError, "^\\$\\.items\\[0\\]: unknown fields \\['injected'\\]$"
+        ) as items_raised:
+            validate({"items": [{"known": "b", "injected": "caller-secret-002"}]}, schema)
+        self.assertNotIn("caller-secret-002", str(items_raised.exception))
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

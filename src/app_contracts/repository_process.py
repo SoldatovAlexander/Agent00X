@@ -50,7 +50,17 @@ def prepare_change(
     source_digests: list[str] = []
     verified_pairs: list[tuple[str, str]] = []
 
+    normalized: list[tuple[str, str, str]] = []
+    seen_paths: set[str] = set()
     for relative_name, new_content in sorted(changes.items()):
+        posix = _safe_relative_path(relative_name).as_posix()
+        if posix in seen_paths:
+            raise ContractValidationError(f"duplicate workspace path: {relative_name}")
+        seen_paths.add(posix)
+        normalized.append((posix, relative_name, new_content))
+
+    planned: list[tuple[str, str, str]] = []
+    for posix, relative_name, new_content in normalized:
         relative = _safe_relative_path(relative_name)
         snapshot_file = _contained_file(sandbox.snapshot, relative)
         workspace_file = _contained_file(sandbox.workspace, relative)
@@ -62,16 +72,20 @@ def prepare_change(
         old_content = snapshot_file.read_text(encoding="utf-8")
         if old_content == new_content:
             raise ContractValidationError(f"proposed content is unchanged: {relative_name}")
+        planned.append((posix, old_content, new_content))
+
+    for posix, old_content, new_content in planned:
+        workspace_file = _contained_file(sandbox.workspace, _safe_relative_path(posix))
         workspace_file.write_text(new_content, encoding="utf-8")
-        changed_paths.append(relative.as_posix())
-        verified_pairs.append((relative.as_posix(), new_content))
+        changed_paths.append(posix)
+        verified_pairs.append((posix, new_content))
         source_digests.append(sha256_bytes(old_content.encode("utf-8")))
         patch_parts.extend(
             difflib.unified_diff(
                 old_content.splitlines(keepends=True),
                 new_content.splitlines(keepends=True),
-                fromfile=f"a/{relative.as_posix()}",
-                tofile=f"b/{relative.as_posix()}",
+                fromfile=f"a/{posix}",
+                tofile=f"b/{posix}",
             )
         )
 

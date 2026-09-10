@@ -203,6 +203,46 @@ class RepositoryProcessTests(unittest.TestCase):
                     ["calculator.py", "test_calculator.py"],
                 )
 
+    def test_conflicting_duplicate_path_leaves_workspace_unchanged(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        with self.assertRaisesRegex(ContractValidationError, "duplicate workspace path"):
+            prepare_change(
+                sandbox,
+                process_id="process-m1-demo",
+                task_id="task-m1-demo",
+                repository_id="github-installation/42/repository/1001",
+                base_commit="a" * 40,
+                changes={"calculator.py": self.new_calculator, "calculator.py/": self.new_calculator},
+                test_command=["python3", "-m", "unittest", "-v"],
+            )
+        self.assertEqual(
+            (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+        )
+
+    def test_late_failing_entry_leaves_workspace_unchanged(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        with self.assertRaisesRegex(ContractValidationError, "source file is unavailable"):
+            prepare_change(
+                sandbox,
+                process_id="process-m1-demo",
+                task_id="task-m1-demo",
+                repository_id="github-installation/42/repository/1001",
+                base_commit="a" * 40,
+                changes={"calculator.py": self.new_calculator, "pkg/": "evil"},
+                test_command=["python3", "-m", "unittest", "-v"],
+            )
+        self.assertEqual(
+            (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+        )
+        self.assertEqual(
+            sorted(path.name for path in sandbox.workspace.iterdir()),
+            ["calculator.py", "test_calculator.py"],
+        )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

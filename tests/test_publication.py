@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.mock_github import MockGitHubEndpoint
+from app_contracts.mock_github import MockGitHubEndpoint, MockPullRequest
 from app_contracts.publication import (
     PublicationJournal,
     PublicationRecoveryRequired,
@@ -69,6 +69,31 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.request_digest, "sha256:" + "b" * 64)
             self.assertEqual(record.status, "prepared")
             self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
+    def test_invalid_status_transitions_change_nothing(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            before = journal.get(self.request["process_id"])
+            with self.assertRaises(ValueError) as first:
+                journal.mark_completed(
+                    self.request["process_id"],
+                    MockPullRequest(
+                        9, self.request["repository_id"], self.request["branch"],
+                        self.request["staged_change_digest"], self.request["idempotency_key"],
+                    ),
+                )
+            self.assertIn("not attempting", str(first.exception))
+            with self.assertRaises(ValueError):
+                journal.mark_reconciliation_required(self.request["process_id"])
+            self.assertEqual(journal.get(self.request["process_id"]), before)
+            journal.mark_attempting(self.request["process_id"])
+            mid = journal.get(self.request["process_id"])
+            with self.assertRaises(ValueError):
+                journal.mark_attempting(self.request["process_id"])
+            self.assertEqual(journal.get(self.request["process_id"]), mid)
+            leaked = str(first.exception)
+            self.assertNotIn(self.request["idempotency_key"], leaked)
+            self.assertNotIn(self.request["staged_change_digest"], leaked)
 
     def test_crash_before_external_call_remains_explicitly_retryable(self):
         with PublicationJournal(self.database) as journal:

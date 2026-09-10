@@ -299,5 +299,38 @@ class MemorySummaryContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, payload)
 
 
+R0_SCHEMA_CATALOG = {
+    "ObservationEvent": "observation-event.schema.json",
+    "Checkpoint": "checkpoint.schema.json",
+    "LearningCorrection": "learning-correction.schema.json",
+    "MemorySummary": "memory-summary.schema.json",
+}
+
+
+class R0SchemaCatalogTests(unittest.TestCase):
+    def test_all_r0_schema_files_exist_and_parse(self):
+        self.assertEqual(
+            set(R0_SCHEMA_CATALOG),
+            {"ObservationEvent", "Checkpoint", "LearningCorrection", "MemorySummary"},
+        )
+        for title, filename in R0_SCHEMA_CATALOG.items():
+            with self.subTest(schema=title):
+                with (ROOT / "schemas" / filename).open(encoding="utf-8") as handle:
+                    schema = json.load(handle)
+                self.assertEqual(schema["title"], title)
+                self.assertFalse(schema.get("additionalProperties", True))
+
+    def test_catalog_fixtures_conform_to_their_schemas(self):
+        cases = (
+            (valid_event(), load_schema()),
+            (valid_checkpoint(), load_checkpoint_schema()),
+            (valid_correction(), load_correction_schema()),
+            (valid_summary(), load_summary_schema()),
+        )
+        for fixture, schema in cases:
+            with self.subTest(title=schema["title"]):
+                validate(fixture, schema)
+
+
 if __name__ == "__main__":
     unittest.main()

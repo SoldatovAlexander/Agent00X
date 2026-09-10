@@ -2450,8 +2450,15 @@ Commit: ALLOWED
 commit и отдельный evidence. При первой ошибке, неясном контракте или выходе за
 scope — остановиться; не переходить к следующей карточке. Никаких внешних систем.
 
+Результат Control Plane:
+- ACCEPTED 2026-09-11: EXP-092—EXP-099 и EXP-101—EXP-111 проверены по
+  разрешённым путям; `git diff --check` чист, независимый штатный suite —
+  285 tests OK, 1 skipped. Внешних действий и push не было.
+- EXP-100 переведена в `REVIEW`: требуется обязательная expiry-проверка на
+  boundary открытия канала.
+
 ## EXP-092 — causal precedence priority regression
-Статус: READY
+Статус: CLOSED
 Цель: закрепить приоритет denial для позднего allowlisted intent над чужими non-intent событиями.
 Гипотеза: mixed history не превращает future intent в валидную причину.
 Зависит от: EXP-091
@@ -2471,7 +2478,7 @@ scope — остановиться; не переходить к следующ�
 Commit: ALLOWED
 
 ## EXP-093 — checkpoint cursor type boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed checkpoint cursor fails closed before journal comparison.
 Гипотеза: bool, float and non-integer cursor values cannot alias valid cursors.
 Зависит от: EXP-092
@@ -2491,7 +2498,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-094 — checkpoint trigger identity regression
-Статус: READY
+Статус: CLOSED
 Цель: checkpoint trigger ID comparison cannot be confused by malformed identifier types.
 Гипотеза: only schema-valid trigger references reach journal lookup.
 Зависит от: EXP-093
@@ -2511,7 +2518,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-095 — pre-dispatch atomic refusal regression
-Статус: READY
+Статус: CLOSED
 Цель: dispatch is never invoked when either pre-dispatch journal write fails.
 Гипотеза: failure of checkpoint or intent recording has no side effect.
 Зависит от: EXP-094
@@ -2531,7 +2538,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-096 — approval identifier type boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed approval identifiers are rejected as contract errors, not raw lookup failures.
 Гипотеза: invalid identity fields cannot enter authorization comparison.
 Зависит от: EXP-095
@@ -2551,7 +2558,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-097 — decision expiry parsing regression
-Статус: READY
+Статус: CLOSED
 Цель: malformed decision expiry fails closed as ContractValidationError.
 Гипотеза: expiry parsing never exposes raw parser exception at an actuator boundary.
 Зависит от: EXP-096
@@ -2571,7 +2578,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-098 — policy TTL configuration boundary
-Статус: READY
+Статус: CLOSED
 Цель: non-positive policy decision TTL cannot create immediately invalid allow decisions.
 Гипотеза: invalid policy configuration is rejected deterministically.
 Зависит от: EXP-097
@@ -2591,16 +2598,19 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-099 — credential grant identifier boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed credential grant binding cannot open a publication channel.
 Гипотеза: broker validates grant identity before channel factory access.
 Зависит от: EXP-098
 Среда исполнения: local
 Внешняя цель: none
-Вне scope: real credentials, GitHub App, Docker, testdev, GitHub.
+Вне scope: real credentials, Docker, testdev, GitHub.
 Разрешённые пути:
 - src/app_contracts/broker.py
+- src/app_contracts/github_app.py
+- src/app_contracts/github_actuator.py
 - tests/test_broker.py
+- tests/test_github_app.py
 Критерии приёмки:
 - malformed grant/request binding is denied and channel factory call count stays zero;
 - valid grant path remains green.
@@ -2611,7 +2621,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-100 — credential grant expiry regression
-Статус: READY
+Статус: REVIEW
 Цель: invalid or expired credential grant cannot be used to obtain a publication channel.
 Гипотеза: broker enforces grant lifetime before external channel access.
 Зависит от: EXP-099
@@ -2622,7 +2632,7 @@ Commit: ALLOWED
 - src/app_contracts/broker.py
 - tests/test_broker.py
 Критерии приёмки:
-- malformed and expired grant deny without channel creation or secret exposure;
+- malformed and expired grant deny without channel creation or secret exposure on every broker opening path;
 - valid unexpired grant path remains green.
 Проверки:
 - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
@@ -2630,8 +2640,15 @@ Commit: ALLOWED
 - none
 Commit: ALLOWED
 
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-11: `3731e5b` проверен, но expiry проверяется
+  только при необязательном аргументе `now`; production broker paths могут
+  открыть канал без проверки срока. Исправить в разрешённом scope так, чтобы
+  expiry был обязательной границей до channel factory; без реального GitHub,
+  secret или push.
+
 ## EXP-101 — actuator request identity regression
-Статус: READY
+Статус: CLOSED
 Цель: malformed actuator request identity is denied before publish invocation.
 Гипотеза: request contract boundary prevents raw errors and channel side effects.
 Зависит от: EXP-100
@@ -2651,7 +2668,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-102 — publication process ID boundary
-Статус: READY
+Статус: CLOSED
 Цель: invalid publication process ID cannot create or mutate journal state.
 Гипотеза: journal rejects malformed identity before SQLite persistence.
 Зависит от: EXP-101
@@ -2671,7 +2688,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-103 — publication state transition regression
-Статус: READY
+Статус: CLOSED
 Цель: journal cannot mark completion from an unprepared or wrong state.
 Гипотеза: receipt insertion remains bound to the expected transition.
 Зависит от: EXP-102
@@ -2691,7 +2708,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-104 — runtime audit reason-code boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed audit reason codes cannot be persisted or masquerade as valid audit evidence.
 Гипотеза: runtime store validates shape and scalar type before insert.
 Зависит от: EXP-103
@@ -2711,7 +2728,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-105 — runtime optimistic-version boundary
-Статус: READY
+Статус: CLOSED
 Цель: bool and malformed expected versions cannot alias an integer record version.
 Гипотеза: version conflict protection remains type-safe.
 Зависит от: EXP-104
@@ -2731,7 +2748,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-106 — repository manifest duplicate-path regression
-Статус: READY
+Статус: CLOSED
 Цель: manifest cannot contain duplicate canonical target paths.
 Гипотеза: two input spellings cannot create ambiguous publication content.
 Зависит от: EXP-105
@@ -2751,7 +2768,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-107 — repository content type boundary
-Статус: READY
+Статус: CLOSED
 Цель: non-text publishable file content is rejected before hashing or manifest creation.
 Гипотеза: manifest digest has one explicit content representation.
 Зависит от: EXP-106
@@ -2771,7 +2788,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-108 — secret scan nested serialization regression
-Статус: READY
+Статус: CLOSED
 Цель: canary detection covers nested mapping/list surfaces without leaking the canary in errors.
 Гипотеза: recursive diagnostic serialization cannot hide nested credential material.
 Зависит от: EXP-107
@@ -2791,7 +2808,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-109 — state transition evidence type regression
-Статус: READY
+Статус: CLOSED
 Цель: malformed transition evidence cannot authorize a state change.
 Гипотеза: transition enforces evidence contract before evaluating target state.
 Зависит от: EXP-108
@@ -2811,7 +2828,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-110 — memory summary interval timezone regression
-Статус: READY
+Статус: CLOSED
 Цель: naive or malformed summary timestamps fail closed.
 Гипотеза: summary interval ordering compares only timezone-aware parsed timestamps.
 Зависит от: EXP-109
@@ -2831,7 +2848,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-111 — learning correction version type boundary
-Статус: READY
+Статус: CLOSED
 Цель: correction version cannot be aliased by bool, float or invalid scalar types.
 Гипотеза: version gate accepts only the supported explicit integer version.
 Зависит от: EXP-110

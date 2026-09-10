@@ -239,6 +239,33 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertNotIn("Stored rationale", str(raised.exception))
         self.assertNotIn("invocation-store-demo-001", str(raised.exception))
 
+    def test_non_intent_predecessor_cannot_legalize_result(self):
+        store = ObservationStore()
+        bystander = valid_event("event-store-demo-001", 0)
+        bystander["event_type"] = "agent_started"
+        bystander["invocation_id"] = "invocation-store-demo-001"
+        bystander["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(bystander)
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-store-demo-001"
+        with self.assertRaisesRegex(
+            ContractValidationError, "invocation reference is not an intent"
+        ) as raised:
+            store.check_result_causality(result)
+        self.assertNotIn("Stored rationale", str(raised.exception))
+
+    def test_decision_proposed_predecessor_is_accepted(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["event_type"] = "decision_proposed"
+        intent["invocation_id"] = "invocation-store-demo-001"
+        store.append(intent)
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-store-demo-001"
+        self.assertEqual(store.check_result_causality(result), 0)
+
     def test_result_to_result_reference_is_denied_without_payload(self):
         store = ObservationStore()
         earlier_result = valid_event("event-store-demo-001", 0)

@@ -92,6 +92,8 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
             raise ContractValidationError(f"{path}: value is not in enum")
 
     if isinstance(instance, dict):
+        if any(not isinstance(name, str) for name in instance):
+            raise ContractValidationError(f"{path}: object keys must be strings")
         required = schema.get("required", [])
         missing = [name for name in required if name not in instance]
         if missing:

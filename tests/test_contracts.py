@@ -316,6 +316,18 @@ class SchemaIdTests(unittest.TestCase):
         self.assertGreaterEqual(len(entries), 20)
         check_schema_ids(entries)
 
+    def test_exotic_object_keys_denied_without_repr(self):
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+        for bad in ({1: "x"}, {(1, 2): "y"}, {None: "z"}, {True: "w"},
+                    {("caller-secret-001",): "v"}):
+            with self.subTest(keys=list(bad)):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^\\$: object keys must be strings$"
+                ) as raised:
+                    validate(bad, schema)
+                self.assertNotIn("caller-secret-001", str(raised.exception))
+        validate({"a": "x"}, schema)
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

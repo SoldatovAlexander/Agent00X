@@ -56,6 +56,12 @@ def validate_approval(
 
     moment = _utc(now)
     staged_digest = sha256_digest(staged_change)
+    for field in ("process_id", "repository_id", "operation", "approval_id"):
+        if field not in approval or field not in intent:
+            raise ContractValidationError(f"approval: {field} is missing")
+    for mapping, field in ((approval, "policy_version"), (approval, "expires_at"), (intent, "expires_at")):
+        if field not in mapping:
+            raise ContractValidationError(f"approval: {field} is missing")
     required_matches = ("process_id", "repository_id", "operation")
     for field in required_matches:
         if approval[field] != intent[field]:

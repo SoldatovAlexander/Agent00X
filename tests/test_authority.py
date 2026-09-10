@@ -223,6 +223,25 @@ class AuthorityTests(unittest.TestCase):
             policy_version="policy-1", now=NOW,
         )
 
+    def test_missing_approval_identifier_denied_as_contract_error(self):
+        for holder, field in (
+            ("approval", "process_id"), ("intent", "repository_id"),
+            ("approval", "approval_id"), ("intent", "approval_id"),
+            ("approval", "policy_version"), ("approval", "expires_at"),
+        ):
+            with self.subTest(holder=holder, field=field):
+                approval = dict(self.chain["approval"])
+                intent = dict(self.chain["intent"])
+                del (approval if holder == "approval" else intent)[field]
+                with self.assertRaisesRegex(
+                    ContractValidationError, f"approval: {field} is missing"
+                ) as raised:
+                    validate_approval(
+                        approval, self.chain["staged_change"], intent,
+                        policy_version="policy-1", now=NOW,
+                    )
+                self.assertNotIn("approval-demo-001", str(raised.exception))
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

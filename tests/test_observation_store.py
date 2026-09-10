@@ -139,6 +139,20 @@ class ObservationStoreTests(unittest.TestCase):
                 self.assertNotIn("event-store-demo-001", str(raised.exception))
         self.assertEqual(store.check_checkpoint(valid_checkpoint(cursor=0)), 0)
 
+    def test_malformed_trigger_identity_denied_without_payload(self):
+        store = ObservationStore()
+        stored = valid_event("event-store-demo-001", 0)
+        stored["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(stored)
+        for bad in (123, None, True, ["event-store-demo-001"], "", "EVENT-STORE-DEMO-001"):
+            with self.subTest(trigger=type(bad).__name__):
+                checkpoint = valid_checkpoint()
+                checkpoint["trigger_event_id"] = bad
+                with self.assertRaises(ContractValidationError) as raised:
+                    store.check_checkpoint(checkpoint)
+                self.assertNotIn("Stored rationale", str(raised.exception))
+        self.assertEqual(store.check_checkpoint(valid_checkpoint()), 0)
+
     def test_missing_trigger_event_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

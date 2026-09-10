@@ -44,6 +44,8 @@ def prepare_change(
 
     if not changes:
         raise ContractValidationError("change proposal is empty")
+    if not isinstance(changes, dict):
+        raise ContractValidationError("change proposal is malformed")
     timestamp = now or datetime.now(timezone.utc)
     changed_paths: list[str] = []
     patch_parts: list[str] = []
@@ -62,6 +64,8 @@ def prepare_change(
     planned: list[tuple[str, str, str]] = []
     for posix, relative_name, new_content in normalized:
         relative = _safe_relative_path(relative_name)
+        if not isinstance(new_content, str):
+            raise ContractValidationError(f"proposed content is not text: {relative_name}")
         snapshot_file = _contained_file(sandbox.snapshot, relative)
         workspace_file = _contained_file(sandbox.workspace, relative)
         if not snapshot_file.is_file() or snapshot_file.is_symlink():

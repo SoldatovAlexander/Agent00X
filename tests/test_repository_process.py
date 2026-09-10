@@ -274,6 +274,34 @@ class RepositoryProcessTests(unittest.TestCase):
                     ["calculator.py", "test_calculator.py"],
                 )
 
+    def test_non_string_content_rejected_before_any_write(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        bad_values = [b"bytes-content", None, 123, ["nested"]]
+        for bad in bad_values:
+            with self.subTest(kind=type(bad).__name__):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "proposed content is not text"
+                ) as raised:
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={"calculator.py": self.new_calculator, "test_calculator.py": bad},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                self.assertNotIn(str(bad)[:20], str(raised.exception))
+                self.assertEqual(
+                    (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+                )
+                self.assertEqual(
+                    sorted(path.name for path in sandbox.workspace.iterdir()),
+                    ["calculator.py", "test_calculator.py"],
+                )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

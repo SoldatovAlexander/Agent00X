@@ -331,6 +331,24 @@ class R0SchemaCatalogTests(unittest.TestCase):
             with self.subTest(title=schema["title"]):
                 validate(fixture, schema)
 
+    def test_r0_catalog_is_exact_allowlist_without_drift(self):
+        declared_files = set(R0_SCHEMA_CATALOG.values())
+        r0_basenames = {filename.removesuffix(".schema.json") for filename in declared_files}
+        discovered = {
+            path.name
+            for path in (ROOT / "schemas").glob("*.schema.json")
+            if any(
+                path.name == f"{base}.schema.json" or path.name.startswith(f"{base}-")
+                for base in r0_basenames
+            )
+        }
+        self.assertEqual(
+            discovered,
+            declared_files,
+            f"R0 catalog drift: discovered R0-named files {sorted(discovered)} "
+            f"differ from the approved catalog {sorted(declared_files)}",
+        )
+
 
 class CausalReferenceTests(unittest.TestCase):
     def test_event_with_id_references_stays_valid(self):

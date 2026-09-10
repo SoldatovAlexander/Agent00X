@@ -95,6 +95,63 @@ class RepositoryProcessTests(unittest.TestCase):
         self.assertEqual(manifest[0].content, self.new_calculator)
         self.assertEqual(manifest[0].content_digest, sha256_bytes(self.new_calculator.encode("utf-8")))
 
+    def prepare_many(self):
+        new_tests = (
+            "import unittest\n\n"
+            "from calculator import add, subtract\n\n\n"
+            "class CalculatorTests(unittest.TestCase):\n"
+            "    def test_add(self):\n"
+            "        self.assertEqual(add(2, 3), 5)\n\n"
+            "    def test_subtract(self):\n"
+            "        self.assertEqual(subtract(5, 3), 2)\n\n\n"
+            'if __name__ == "__main__":\n'
+            "    unittest.main()\n"
+        )
+        changes = {"calculator.py": self.new_calculator, "test_calculator.py": new_tests}
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        result = prepare_change(
+            sandbox,
+            process_id="process-m1-demo",
+            task_id="task-m1-demo",
+            repository_id="github-installation/42/repository/1001",
+            base_commit="a" * 40,
+            changes=dict(reversed(list(changes.items()))),
+            test_command=["python3", "-m", "unittest", "-v"],
+            now=datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+        )
+        return sandbox, result, changes
+
+    def test_publish_manifest_multi_file_is_deterministic_by_path_order(self):
+        sandbox, result, changes = self.prepare_many()
+        first = build_publish_manifest(sandbox, result, changes)
+        second = build_publish_manifest(
+            sandbox, result, dict(reversed(list(changes.items())))
+        )
+        self.assertEqual([item.path for item in first], ["calculator.py", "test_calculator.py"])
+        self.assertEqual(first, second)
+        expected = {
+            name: sha256_bytes(content.encode("utf-8")) for name, content in changes.items()
+        }
+        for item in first:
+            self.assertEqual(item.content_digest, expected[item.path])
+
+    def test_publish_manifest_multi_file_rejects_missing_or_extra_path(self):
+        sandbox, result, changes = self.prepare_many()
+        partial = {"calculator.py": changes["calculator.py"]}
+        with self.assertRaisesRegex(ContractValidationError, "does not match verified"):
+            build_publish_manifest(sandbox, result, partial)
+        extra = dict(changes)
+        extra["extra.py"] = "unverified"
+        with self.assertRaisesRegex(ContractValidationError, "does not match verified"):
+            build_publish_manifest(sandbox, result, extra)
+
+    def test_publish_manifest_rejects_single_file_tamper(self):
+        sandbox, result, changes = self.prepare_many()
+        (sandbox.workspace / "test_calculator.py").write_text("tampered", encoding="utf-8")
+        with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
+            build_publish_manifest(sandbox, result, changes)
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

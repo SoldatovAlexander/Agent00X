@@ -263,6 +263,35 @@ class RuntimeStoreTests(unittest.TestCase):
             with self.assertRaises(ProcessNotFound):
                 store.events("process-unknown-999")
 
+    def test_malformed_reason_batches_leave_history_untouched(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-014")
+            store.append_audit_event(
+                "process-durable-014", actor_id="agent-worker-001",
+                event_type="gateway.request", input_digest="sha256:" + "a" * 64,
+                result="allowed", reason_codes=("internal-read-only",),
+            )
+            baseline = store.audit_events("process-durable-014")
+            malformed = (
+                (["nested"],),
+                ({"code": "denied"},),
+                (b"bytes",),
+                (True,),
+                ("ok", 42),
+            )
+            for codes in malformed:
+                with self.subTest(codes=type(codes[0]).__name__):
+                    with self.assertRaises(ContractValidationError):
+                        store.append_audit_event(
+                            "process-durable-014", actor_id="agent-worker-001",
+                            event_type="gateway.request", input_digest="sha256:" + "b" * 64,
+                            result="denied", reason_codes=codes,
+                        )
+            self.assertEqual(store.audit_events("process-durable-014"), baseline)
+            readable = store.audit_events("process-durable-014")[0]
+            self.assertEqual(readable["reason_codes"], ["internal-read-only"])
+            self.assertEqual(readable["result"], "allowed")
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

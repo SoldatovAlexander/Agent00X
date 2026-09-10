@@ -127,6 +127,18 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertNotIn("event-store-demo-001", str(raised.exception))
         self.assertEqual(store.check_checkpoint(valid_checkpoint("event-store-demo-002", 1)), 1)
 
+    def test_non_integer_cursor_rejected_before_journal_comparison(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        for bad in (True, 1.5, "1", None, [0]):
+            with self.subTest(cursor=type(bad).__name__):
+                checkpoint = valid_checkpoint(cursor=0)
+                checkpoint["event_cursor"] = bad
+                with self.assertRaises(ContractValidationError) as raised:
+                    store.check_checkpoint(checkpoint)
+                self.assertNotIn("event-store-demo-001", str(raised.exception))
+        self.assertEqual(store.check_checkpoint(valid_checkpoint(cursor=0)), 0)
+
     def test_missing_trigger_event_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

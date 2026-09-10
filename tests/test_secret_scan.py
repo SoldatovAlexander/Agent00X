@@ -81,6 +81,28 @@ class CanaryCredentialTests(unittest.TestCase):
         self.assertIn("evidence", str(raised.exception))
         self.assertNotIn(self.canary, str(raised.exception))
 
+    def test_repeated_sentinel_yields_one_stable_finding_without_value(self):
+        surfaces = {
+            "agent-context": {
+                "history": [
+                    {"output": self.canary},
+                    {"nested": {"deep": [self.canary, self.canary]}},
+                ],
+            },
+            "stdout": f"first {self.canary} then {self.canary} again",
+        }
+        first = find_canary_surfaces(self.canary, surfaces)
+        second = find_canary_surfaces(self.canary, surfaces)
+        self.assertEqual(first, ["agent-context", "stdout"])
+        self.assertEqual(second, first)
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, surfaces)
+        self.assertEqual(
+            str(raised.exception),
+            "credential canary found in surfaces: agent-context, stdout",
+        )
+        self.assertNotIn(self.canary, str(raised.exception))
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

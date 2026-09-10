@@ -450,6 +450,44 @@ class PreDispatchGateTests(unittest.TestCase):
         self.assertEqual(len(store), 1)
         self.assertEqual(len(store.checkpoints()), 0)
 
+    def test_checkpoint_conflict_blocks_dispatch(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        store.record_checkpoint(valid_checkpoint())
+        altered = valid_checkpoint()
+        altered["restore_mode"] = "none"
+        calls: list[str] = []
+        with self.assertRaisesRegex(PreDispatchError, "pre-dispatch gate refused"):
+            run_gated_dispatch(
+                store,
+                checkpoint=altered,
+                intent_event=valid_event("event-store-demo-002", 1),
+                dispatch=lambda: calls.append("dispatched"),
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(len(store.checkpoints()), 1)
+
+    def test_intent_conflict_blocks_dispatch_without_intent_write(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        stored_intent = valid_event("event-store-demo-002", 1)
+        store.append(stored_intent)
+        altered_intent = valid_event("event-store-demo-002", 1)
+        altered_intent["sequence"] = 99
+        calls: list[str] = []
+        with self.assertRaisesRegex(PreDispatchError, "pre-dispatch gate refused"):
+            run_gated_dispatch(
+                store,
+                checkpoint=valid_checkpoint(),
+                intent_event=altered_intent,
+                dispatch=lambda: calls.append("dispatched"),
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            [event["event_id"] for event in store.events()],
+            ["event-store-demo-001", "event-store-demo-002"],
+        )
+
     def test_injected_checkpoint_failure_blocks_dispatch_without_intent_write(self):
         store = FailingCheckpointStore()
         ObservationStore.append(store, valid_event("event-store-demo-001", 0))

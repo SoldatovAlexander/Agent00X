@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.validator import ContractValidationError, validate, validate_schema
 from app_contracts.chain import validate_chain
-from app_contracts.digests import sha256_digest
+from app_contracts.digests import canonical_json, sha256_digest
 
 
 SCHEMAS = {
@@ -228,6 +228,31 @@ class SchemaStructureTests(unittest.TestCase):
         for schema_file in sorted((ROOT / "schemas").glob("*.schema.json")):
             with self.subTest(schema=schema_file.name):
                 validate_schema(load_json(schema_file))
+
+
+class CanonicalDigestTests(unittest.TestCase):
+    def test_digest_ignores_mapping_key_order(self):
+        first = {"process_id": "process-demo-001", "nested": {"b": 2, "a": 1}}
+        second = {"nested": {"a": 1, "b": 2}, "process_id": "process-demo-001"}
+        self.assertEqual(sha256_digest(first), sha256_digest(second))
+        self.assertTrue(sha256_digest(first).startswith("sha256:"))
+
+    def test_digest_supports_unicode_without_escapes(self):
+        payload = {"text": "привет 🌐"}
+        encoded = canonical_json(payload)
+        self.assertIn("🌐".encode("utf-8"), encoded)
+        self.assertNotIn(b"\\u", encoded)
+        self.assertEqual(sha256_digest(payload), sha256_digest(dict(payload)))
+
+    def test_nan_and_infinity_have_no_digest(self):
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=bad):
+                with self.assertRaises(ValueError):
+                    canonical_json({"value": bad})
+                with self.assertRaises(ValueError):
+                    sha256_digest({"value": bad})
+                with self.assertRaises(ValueError):
+                    sha256_digest(bad)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/memory-summary.schema.json",
+  "title": "MemorySummary",
+  "description": "Minimal R0 contract for a versioned memory summary from document 30. A separate artifact that never replaces sources or process state and holds no approvals, capabilities, credentials or tokens.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "summary_id", "summary_kind", "period_start", "period_end", "scope", "source_refs", "source_digest", "content", "omissions", "redaction_status", "completeness", "summarizer_build_id", "created_at", "retention_until", "retention_status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "summary_id": {"type": "string", "pattern": "^summary-[a-z0-9-]+$"},
+    "summary_kind": {"enum": ["monthly", "yearly", "topic"]},
+    "period_start": {"type": "string", "format": "date-time"},
+    "period_end": {"type": "string", "format": "date-time"},
+    "scope": {"type": "string", "minLength": 1, "maxLength": 500},
+    "source_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256}},
+    "source_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "content": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "significant_event_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^event-[a-z0-9-]+$"}},
+    "omissions": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "redaction_status": {"enum": ["complete", "redacted"]},
+    "completeness": {"enum": ["complete", "partial"]},
+    "summarizer_build_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "created_at": {"type": "string", "format": "date-time"},
+    "retention_until": {"type": "string", "format": "date-time"},
+    "retention_status": {"enum": ["active", "archived", "deleted"]}
+  }
+}

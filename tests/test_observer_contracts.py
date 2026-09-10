@@ -236,5 +236,68 @@ class LearningCorrectionContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, payload)
 
 
+def load_summary_schema() -> dict:
+    with (ROOT / "schemas" / "memory-summary.schema.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def valid_summary() -> dict:
+    return {
+        "schema_version": 1,
+        "summary_id": "summary-observer-demo-2026-03",
+        "summary_kind": "monthly",
+        "period_start": "2026-03-01T00:00:00Z",
+        "period_end": "2026-04-01T00:00:00Z",
+        "scope": "repository-change function of process-observer-demo",
+        "source_refs": ["artifact://events/observer-demo-2026-03"],
+        "source_digest": "sha256:" + "a" * 64,
+        "content": "Three tool calls completed; one verification failed and was re-run.",
+        "significant_event_refs": ["event-observer-demo-001"],
+        "omissions": "Raw tool outputs archived; only digests kept in this summary.",
+        "redaction_status": "redacted",
+        "completeness": "partial",
+        "summarizer_build_id": "build-summarizer-v1",
+        "created_at": "2026-04-01T00:00:00Z",
+        "retention_until": "2027-04-01T00:00:00Z",
+        "retention_status": "active",
+    }
+
+
+class MemorySummaryContractTests(unittest.TestCase):
+    def test_valid_summary_conforms_to_schema(self):
+        validate(valid_summary(), load_summary_schema())
+
+    def test_unknown_field_is_rejected(self):
+        summary = valid_summary()
+        summary["unexpected_field"] = "not-allowed"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields"):
+            validate(summary, load_summary_schema())
+
+    def test_invalid_kind_is_rejected(self):
+        summary = valid_summary()
+        summary["summary_kind"] = "eternal"
+        with self.assertRaisesRegex(ContractValidationError, "not in enum"):
+            validate(summary, load_summary_schema())
+
+    def test_invalid_period_is_rejected(self):
+        summary = valid_summary()
+        summary["period_start"] = "March 2026"
+        with self.assertRaisesRegex(ContractValidationError, "invalid date-time"):
+            validate(summary, load_summary_schema())
+
+    def test_secret_like_field_is_rejected(self):
+        summary = valid_summary()
+        summary["credential"] = "must-not-exist"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields"):
+            validate(summary, load_summary_schema())
+
+    def test_summary_holds_no_approval_capability_or_process_state(self):
+        summary = valid_summary()
+        validate(summary, load_summary_schema())
+        payload = json.dumps(summary)
+        for forbidden in ("approval", "capability", "credential", "token", "process_state"):
+            self.assertNotIn(forbidden, payload)
+
+
 if __name__ == "__main__":
     unittest.main()

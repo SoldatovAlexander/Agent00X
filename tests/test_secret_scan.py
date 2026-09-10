@@ -121,6 +121,17 @@ class CanaryCredentialTests(unittest.TestCase):
         self.assertNotIn("synthetic-repr-002", message)
         self.assertNotIn(self.canary, message)
 
+    def test_non_string_surface_key_is_rejected_without_repr(self):
+        for hostile in (123, ("agent", "context"), frozenset({"agent-context"})):
+            with self.subTest(key=type(hostile).__name__):
+                with self.assertRaises(ValueError) as raised:
+                    find_canary_surfaces(self.canary, {hostile: self.canary})
+                message = str(raised.exception)
+                self.assertEqual(message, "surface name must be a string")
+                self.assertNotIn(self.canary, message)
+        with self.assertRaises(ValueError):
+            assert_canary_absent(self.canary, {123: "clean"})
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

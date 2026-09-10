@@ -93,8 +93,14 @@ class ObservationStore:
 
         validate(checkpoint, CHECKPOINT_SCHEMA)
         trigger = checkpoint["trigger_event_id"]
-        if trigger not in self._digests:
+        trigger_event = next(
+            (stored for stored in self._events if stored["event_id"] == trigger), None
+        )
+        if trigger_event is None:
             raise ContractValidationError(f"unknown trigger event: {trigger}")
+        for field in ("process_id", "run_id", "branch_id"):
+            if trigger_event[field] != checkpoint[field]:
+                raise ContractValidationError(f"checkpoint trigger {field} mismatch")
         cursor = checkpoint["event_cursor"]
         if cursor >= len(self._events):
             raise ContractValidationError("checkpoint cursor is beyond journal end")

@@ -93,7 +93,23 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual(store.events()[0]["sequence"], 0)
 
 
-    def test_valid_checkpoint_reference_is_accepted_without_payload(self):
+    def test_cross_context_trigger_is_rejected_without_payload(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        cases = (
+            ("process_id", "process-other-001"),
+            ("run_id", "run-other-002"),
+            ("branch_id", "branch-experiment"),
+        )
+        for field, foreign in cases:
+            with self.subTest(field=field):
+                checkpoint = valid_checkpoint()
+                checkpoint[field] = foreign
+                with self.assertRaisesRegex(ContractValidationError, f"trigger {field} mismatch") as raised:
+                    store.check_checkpoint(checkpoint)
+                self.assertNotIn("event-store-demo-001", str(raised.exception))
+
+    def test_matching_identity_checkpoint_stays_accepted(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))
         result = store.check_checkpoint(valid_checkpoint())

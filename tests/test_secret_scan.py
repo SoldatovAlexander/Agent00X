@@ -132,6 +132,27 @@ class CanaryCredentialTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assert_canary_absent(self.canary, {123: "clean"})
 
+    def test_deeply_nested_canary_detected_without_value_leak(self):
+        surfaces = {
+            "agent-context": {
+                "turns": [
+                    {"role": "tool", "output": {"files": [{"note": "clean"}]}},
+                    {"role": "tool", "output": {"files": [{"note": self.canary}]}},
+                ]
+            },
+            "stdout": {"lines": ["ok", {"nested": ["ok", {"deep": "ok"}]}]},
+        }
+        self.assertEqual(find_canary_surfaces(self.canary, surfaces), ["agent-context"])
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, surfaces)
+        self.assertEqual(
+            str(raised.exception), "credential canary found in surfaces: agent-context"
+        )
+        self.assertNotIn(self.canary, str(raised.exception))
+        clean = {"stdout": {"lines": ["ok", {"nested": ["ok", {"deep": "ok"}]}]}}
+        self.assertEqual(find_canary_surfaces(self.canary, clean), [])
+        assert_canary_absent(self.canary, clean)
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

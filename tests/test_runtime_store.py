@@ -152,6 +152,29 @@ class RuntimeStoreTests(unittest.TestCase):
                 ["write-or-unknown-denied"],
             )
 
+    def test_tuple_reason_codes_are_stored_detached(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-008")
+            store.append_audit_event(
+                "process-durable-008", actor_id="agent-worker-001",
+                event_type="gateway.request", input_digest="sha256:" + "d" * 64,
+                result="allowed", reason_codes=("internal-read-only",),
+            )
+            first_read = store.audit_events("process-durable-008")
+            self.assertEqual(first_read[0]["reason_codes"], ["internal-read-only"])
+            first_read[0]["reason_codes"].append("forged-after-read")
+            self.assertEqual(
+                store.audit_events("process-durable-008")[0]["reason_codes"],
+                ["internal-read-only"],
+            )
+            with self.assertRaises(ContractValidationError):
+                store.append_audit_event(
+                    "process-durable-008", actor_id="agent-worker-001",
+                    event_type="gateway.request", input_digest="sha256:" + "d" * 64,
+                    result="denied", reason_codes="not-a-sequence",
+                )
+            self.assertEqual(len(store.audit_events("process-durable-008")), 1)
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

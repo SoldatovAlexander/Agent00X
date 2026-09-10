@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 from typing import Any, Mapping, Sequence
+from urllib.error import HTTPError
 from urllib.parse import quote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
@@ -173,6 +174,13 @@ def _get_json(url: str, headers: Mapping[str, str]) -> object:
     try:
         with urlopen(request, timeout=10) as response:  # noqa: S310 -- endpoint is validated in config.
             return json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        if error.code == 404:
+            # A confirmed 404 is the only production signal for an absent
+            # resource. It maps to FileNotFoundError so read-only
+            # reconciliation can distinguish absent from unknown.
+            raise FileNotFoundError(f"GitHub resource not found: {url}") from error
+        raise GitHubAppBrokerError("GitHub pull-request reconciliation failed") from error
     except Exception as error:
         raise GitHubAppBrokerError("GitHub pull-request reconciliation failed") from error
 
@@ -212,10 +220,11 @@ class GitHubAppPublicationChannel:
     def reconcile_branch(self, branch: str) -> bool | None:
         """Read-only check whether the scoped branch already exists.
 
-        Returns True when the branch exists, False when it is absent, and
-        None when the outcome is unknown (transport failure). A None result
-        must be resolved before any retry; it never implies permission to
-        repeat a side effect blindly.
+        Returns True when the branch exists, False only on a confirmed
+        absent signal (HTTP 404 surfaced as FileNotFoundError), and None
+        when the outcome is unknown (transport failure, ``None`` payload,
+        or any malformed shape). A None result must be resolved before any
+        retry; it never implies permission to repeat a side effect blindly.
         """
 
         if not isinstance(branch, str) or not branch.startswith("agent/process-"):
@@ -225,10 +234,12 @@ class GitHubAppPublicationChannel:
             response = self._get_json(url, self._headers())
         except FileNotFoundError:
             return False
+        except HTTPError as error:
+            if error.code == 404:
+                return False
+            return None
         except Exception:
             return None
-        if response is None:
-            return False
         if isinstance(response, dict) and response.get("ref") == f"refs/heads/{branch}":
             return True
         return None

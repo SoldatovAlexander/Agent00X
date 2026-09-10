@@ -132,7 +132,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             channel = GitHubAppPublicationChannel(
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
                 post_json=lambda url, headers, payload: posts.append((url, payload)) or {"ref": payload["ref"]},
-                get_json=lambda _url, _headers: None,
+                get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
                 put_json=lambda url, headers, payload: puts.append((url, payload)) or {"commit": {"sha": "d" * 40}},
             )
             sha = channel.publish_verified_files(
@@ -311,7 +311,7 @@ class GitHubReconciliationTests(unittest.TestCase):
         refs_posts = []
         channel = self._channel((
             lambda url, headers, payload: refs_posts.append(payload) or {"ref": payload["ref"]},
-            lambda _url, _headers: None,
+            lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
             lambda _url, _headers, _payload: (_ for _ in ()).throw(RuntimeError("injected failure after branch")),
         ))
         with self.assertRaisesRegex(RuntimeError, "injected failure after branch"):
@@ -406,7 +406,7 @@ class ManifestDigestTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: None,
+            get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
             put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
         )
 
@@ -490,7 +490,7 @@ class MalformedReconciliationTests(unittest.TestCase):
 
     def test_malformed_branch_payload_causes_unknown_not_side_effect(self):
         from app_contracts.github_app import GitHubAppBrokerError
-        for malformed in ("ok", 42, [], {"unexpected": "shape"}, [{"ref": "refs/heads/agent/process-demo-001"}]):
+        for malformed in (None, "ok", 42, [], {"unexpected": "shape"}, [{"ref": "refs/heads/agent/process-demo-001"}]):
             with self.subTest(payload=malformed):
                 calls = []
                 channel = self._branch_channel(calls, malformed)
@@ -503,15 +503,109 @@ class MalformedReconciliationTests(unittest.TestCase):
                     )
                 self.assertEqual(calls, [])
 
+    def _absent_branch_channel(self, calls):
+        from app_contracts.github_app import GitHubAppPublicationChannel
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+        return GitHubAppPublicationChannel(
+            GitHubAppBrokerConfig.from_environment(environment),
+            _InstallationToken("opaque", "future"),
+            post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
+            get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
+            put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
+        )
+
     def test_absent_branch_is_distinct_from_malformed(self):
         calls = []
-        channel = self._branch_channel(calls, None)
+        channel = self._absent_branch_channel(calls)
         self.assertFalse(channel.reconcile_branch("agent/process-demo-001"))
         sha = channel.publish_verified_files(
             branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
         )
         self.assertEqual(sha, "f" * 40)
         self.assertEqual([method for method, _ in calls], ["POST", "PUT"])
+
+    def test_confirmed_http_404_is_absent_while_other_errors_stay_unknown(self):
+        from urllib.error import HTTPError
+
+        from app_contracts.github_app import GitHubAppBrokerError, GitHubAppPublicationChannel
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+
+        def channel_with(get_json, calls):
+            return GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(environment),
+                _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
+                get_json=get_json,
+                put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
+            )
+
+        calls_404: list = []
+        channel_404 = channel_with(
+            lambda _url, _headers: (_ for _ in ()).throw(
+                HTTPError("https://api.github.com/x", 404, "Not Found", {}, None)
+            ),
+            calls_404,
+        )
+        self.assertFalse(channel_404.reconcile_branch("agent/process-demo-001"))
+        sha = channel_404.publish_verified_files(
+            branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+        )
+        self.assertEqual(sha, "f" * 40)
+
+        calls_500: list = []
+        channel_500 = channel_with(
+            lambda _url, _headers: (_ for _ in ()).throw(
+                HTTPError("https://api.github.com/x", 500, "Server Error", {}, None)
+            ),
+            calls_500,
+        )
+        self.assertIsNone(channel_500.reconcile_branch("agent/process-demo-001"))
+        with self.assertRaisesRegex(GitHubAppBrokerError, "outcome unknown"):
+            channel_500.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(calls_500, [])
+
+    def test_production_get_json_maps_confirmed_404_to_absent(self):
+        from unittest.mock import patch
+        from urllib.error import HTTPError
+
+        from app_contracts import github_app
+
+        def raise_404(*_args, **_kwargs):
+            raise HTTPError("https://api.github.com/x", 404, "Not Found", {}, None)
+
+        def raise_500(*_args, **_kwargs):
+            raise HTTPError("https://api.github.com/x", 500, "Server Error", {}, None)
+
+        with patch.object(github_app, "urlopen", side_effect=raise_404):
+            with self.assertRaises(FileNotFoundError):
+                github_app._get_json("https://api.github.com/x", {})
+        with patch.object(github_app, "urlopen", side_effect=raise_500):
+            with self.assertRaisesRegex(GitHubAppBrokerError, "reconciliation failed"):
+                github_app._get_json("https://api.github.com/x", {})
 
     def test_malformed_pr_entry_blocks_post(self):
         from app_contracts.github_app import GitHubAppBrokerError, GitHubAppPublicationChannel
@@ -571,7 +665,7 @@ class ContentPathEncodingTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url, payload)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: None,
+            get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
             put_json=lambda url, headers, payload: calls.append(("PUT", url, payload)) or {"commit": {"sha": "f" * 40}},
         )
 

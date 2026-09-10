@@ -294,6 +294,27 @@ class ObservationStoreTests(unittest.TestCase):
                     self.assertNotIn("Stored rationale", str(raised.exception))
                     self.assertNotIn("invocation-store-demo-001", str(raised.exception))
 
+    def test_later_intent_denial_takes_priority_over_non_intent(self):
+        store = ObservationStore()
+        bystander = valid_event("event-store-demo-000", 0)
+        bystander["event_type"] = "agent_started"
+        bystander["invocation_id"] = "invocation-store-demo-001"
+        bystander["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(bystander)
+        early_result = valid_event("event-store-demo-001", 1)
+        early_result["event_type"] = "tool_completed"
+        early_result["invocation_id"] = "invocation-store-demo-001"
+        store.append(early_result)
+        late_intent = valid_event("event-store-demo-002", 2)
+        late_intent["invocation_id"] = "invocation-store-demo-001"
+        store.append(late_intent)
+        with self.assertRaisesRegex(
+            ContractValidationError, "invocation reference is not preceding"
+        ) as raised:
+            store.check_result_causality(dict(early_result))
+        self.assertNotIn("Stored rationale", str(raised.exception))
+        self.assertNotIn("invocation-store-demo-001", str(raised.exception))
+
     def test_result_to_result_reference_is_denied_without_payload(self):
         store = ObservationStore()
         earlier_result = valid_event("event-store-demo-001", 0)

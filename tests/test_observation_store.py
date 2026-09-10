@@ -116,6 +116,17 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIsInstance(result, int)
 
+    def test_cursor_of_another_record_is_rejected_without_payload(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        store.append(valid_event("event-store-demo-002", 1))
+        with self.assertRaisesRegex(
+            ContractValidationError, "cursor does not match trigger position"
+        ) as raised:
+            store.check_checkpoint(valid_checkpoint(trigger_event_id="event-store-demo-001", cursor=1))
+        self.assertNotIn("event-store-demo-001", str(raised.exception))
+        self.assertEqual(store.check_checkpoint(valid_checkpoint("event-store-demo-002", 1)), 1)
+
     def test_missing_trigger_event_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

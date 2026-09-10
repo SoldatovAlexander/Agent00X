@@ -93,10 +93,15 @@ class ObservationStore:
 
         validate(checkpoint, CHECKPOINT_SCHEMA)
         trigger = checkpoint["trigger_event_id"]
-        trigger_event = next(
-            (stored for stored in self._events if stored["event_id"] == trigger), None
-        )
-        if trigger_event is None:
+        trigger_position: int | None = None
+        for position, stored in enumerate(self._events):
+            if stored["event_id"] == trigger:
+                trigger_event = stored
+                trigger_position = position
+                break
+        else:
+            trigger_event = None
+        if trigger_event is None or trigger_position is None:
             raise ContractValidationError(f"unknown trigger event: {trigger}")
         for field in ("process_id", "run_id", "branch_id"):
             if trigger_event[field] != checkpoint[field]:
@@ -104,6 +109,8 @@ class ObservationStore:
         cursor = checkpoint["event_cursor"]
         if cursor >= len(self._events):
             raise ContractValidationError("checkpoint cursor is beyond journal end")
+        if cursor != trigger_position:
+            raise ContractValidationError("checkpoint cursor does not match trigger position")
         return cursor
 
     def record_checkpoint(self, checkpoint: dict[str, Any]) -> int:

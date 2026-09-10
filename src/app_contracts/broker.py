@@ -21,9 +21,23 @@ class CredentialBroker(Protocol):
     ) -> GitHubPublicationChannel: ...
 
 
+_REQUIRED_GRANT_FIELDS = (
+    "credential_grant_id",
+    "actuator_id",
+    "repository_id",
+    "operation",
+    "request_digest",
+    "single_use",
+)
+
+
 def validate_credential_use_grant(credential_grant: dict[str, Any], actuator_request: dict[str, Any]) -> None:
     """Ensure a single-use broker channel is scoped to exactly one request."""
 
+    if not isinstance(credential_grant, dict) or any(
+        field not in credential_grant for field in _REQUIRED_GRANT_FIELDS
+    ):
+        raise ContractValidationError("broker: credential grant is malformed")
     if credential_grant["actuator_id"] != actuator_request["actuator_id"]:
         raise ContractValidationError("broker: actuator identity mismatch")
     if credential_grant["repository_id"] != actuator_request["repository_id"]:

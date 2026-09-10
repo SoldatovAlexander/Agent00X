@@ -90,6 +90,20 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(calls, ["factory"])
         self.assertNotIn("token", json.dumps(self.chain["credential_use_grant"]))
 
+    def test_malformed_grant_never_reaches_channel_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        for missing in ("credential_grant_id", "actuator_id", "repository_id", "operation", "request_digest", "single_use"):
+            with self.subTest(missing=missing):
+                grant = dict(self.chain["credential_use_grant"])
+                del grant[missing]
+                with self.assertRaisesRegex(ContractValidationError, "grant is malformed") as raised:
+                    broker.open_github_publication_channel(grant, self.chain["actuator_request"])
+                self.assertNotIn("token", str(raised.exception))
+        with self.assertRaisesRegex(ContractValidationError, "grant is malformed"):
+            broker.open_github_publication_channel("not-a-grant", self.chain["actuator_request"])
+        self.assertEqual(calls, [])
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

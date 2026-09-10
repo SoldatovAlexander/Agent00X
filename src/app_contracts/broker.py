@@ -45,6 +45,11 @@ def validate_credential_use_grant(credential_grant: dict[str, Any], actuator_req
         field not in actuator_request for field in _REQUIRED_REQUEST_FIELDS
     ):
         raise ContractValidationError("broker: actuator request is malformed")
+    for field in ("actuator_id", "repository_id", "operation"):
+        for mapping in (credential_grant, actuator_request):
+            value = mapping[field]
+            if not isinstance(value, str) or not value:
+                raise ContractValidationError("broker: binding value is invalid")
     if credential_grant["actuator_id"] != actuator_request["actuator_id"]:
         raise ContractValidationError("broker: actuator identity mismatch")
     if credential_grant["repository_id"] != actuator_request["repository_id"]:

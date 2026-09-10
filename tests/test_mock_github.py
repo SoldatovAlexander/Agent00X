@@ -56,6 +56,28 @@ class MockGitHubTests(unittest.TestCase):
             self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]), first
         )
 
+    def test_cross_repository_replay_returns_no_receipt_and_no_side_effect(self):
+        original = self.endpoint.publish_pull_request(self.request)
+        foreign = dict(self.request, repository_id="github-installation/42/repository/9999")
+        with self.assertRaisesRegex(ContractValidationError, "idempotency conflict"):
+            self.endpoint.publish_pull_request(foreign)
+        self.assertIsNone(
+            self.endpoint.find_by_idempotency_key(
+                self.request["idempotency_key"],
+                repository_id="github-installation/42/repository/9999",
+            )
+        )
+        self.assertEqual(
+            self.endpoint.find_by_idempotency_key(
+                self.request["idempotency_key"],
+                repository_id=self.request["repository_id"],
+            ),
+            original,
+        )
+        replayed = self.endpoint.publish_pull_request(dict(self.request))
+        self.assertEqual(replayed, original)
+        self.assertEqual(replayed.pull_request_id, 1)
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

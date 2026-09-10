@@ -62,7 +62,16 @@ class MockGitHubEndpoint:
         self._by_idempotency_key[result.idempotency_key] = result
         return result
 
-    def find_by_idempotency_key(self, idempotency_key: str) -> MockPullRequest | None:
-        """Reconciliation query; it has no side effect."""
+    def find_by_idempotency_key(
+        self, idempotency_key: str, *, repository_id: str | None = None,
+    ) -> MockPullRequest | None:
+        """Reconciliation query; it has no side effect.
 
-        return self._by_idempotency_key.get(idempotency_key)
+        When ``repository_id`` is given, a receipt bound to another
+        repository is never returned.
+        """
+
+        found = self._by_idempotency_key.get(idempotency_key)
+        if found is not None and repository_id is not None and found.repository_id != repository_id:
+            return None
+        return found

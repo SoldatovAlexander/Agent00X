@@ -255,5 +255,39 @@ class CanonicalDigestTests(unittest.TestCase):
                     sha256_digest(bad)
 
 
+def check_schema_ids(entries: dict[str, str]) -> None:
+    seen: dict[str, str] = {}
+    for filename in sorted(entries):
+        schema_id = entries[filename]
+        if schema_id in seen:
+            raise ValueError(f"duplicate $id {schema_id!r} in {seen[schema_id]} and {filename}")
+        seen[schema_id] = filename
+    for filename in sorted(entries):
+        schema_id = entries[filename]
+        expected = f"https://agent-process.local/schemas/{filename}"
+        if not schema_id or schema_id != expected:
+            raise ValueError(f"schema {filename} has non-canonical $id: {schema_id!r}")
+
+
+class SchemaIdTests(unittest.TestCase):
+    def test_project_schema_ids_are_unique_and_canonical(self):
+        entries = {path.name: load_json(path)["$id"] for path in sorted((ROOT / "schemas").glob("*.schema.json"))}
+        self.assertGreaterEqual(len(entries), 20)
+        check_schema_ids(entries)
+
+    def test_duplicate_schema_id_is_detected(self):
+        with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
+            check_schema_ids({
+                "a.schema.json": "https://agent-process.local/schemas/a.schema.json",
+                "b.schema.json": "https://agent-process.local/schemas/a.schema.json",
+            })
+
+    def test_malformed_schema_id_is_detected(self):
+        for bad in ("", "https://example.com/schemas/a.schema.json", "a.schema.json"):
+            with self.subTest(schema_id=bad):
+                with self.assertRaisesRegex(ValueError, "non-canonical \\$id"):
+                    check_schema_ids({"a.schema.json": bad})
+
+
 if __name__ == "__main__":
     unittest.main()

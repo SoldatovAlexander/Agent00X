@@ -40,6 +40,22 @@ class MockGitHubTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "shape mismatch"):
             self.endpoint.publish_pull_request(request)
 
+    def test_idempotency_key_cannot_mask_different_side_effect(self):
+        first = self.endpoint.publish_pull_request(self.request)
+        cases = (
+            ("branch", "agent/process-evil-001", "idempotency key mismatch"),
+            ("staged_change_digest", "sha256:" + "b" * 64, "idempotency key mismatch"),
+            ("repository_id", "github-installation/42/repository/9999", "idempotency conflict"),
+        )
+        for field, value, reason in cases:
+            with self.subTest(field=field):
+                masked = dict(self.request, **{field: value})
+                with self.assertRaisesRegex(ContractValidationError, reason):
+                    self.endpoint.publish_pull_request(masked)
+        self.assertEqual(
+            self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]), first
+        )
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

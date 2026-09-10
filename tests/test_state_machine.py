@@ -51,6 +51,23 @@ class StateMachineTests(unittest.TestCase):
         with self.assertRaisesRegex(InvalidTransition, "terminal state"):
             transition(ProcessState.COMPLETED, ProcessState.EXECUTING, TransitionEvidence())
 
+    def test_no_terminal_state_can_reopen(self):
+        full_evidence = TransitionEvidence(
+            contract_complete=True, policy_allowed=True, artifact_digest=True,
+            verification_passed=True, staged_digest=True, approval_valid=True,
+            receipt_present=True, postcondition_verified=True,
+        )
+        terminals = (ProcessState.COMPLETED, ProcessState.REJECTED, ProcessState.FAILED, ProcessState.CANCELLED)
+        targets = (ProcessState.RECEIVED, ProcessState.EXECUTING, ProcessState.APPLYING, ProcessState.COMPLETED)
+        for terminal in terminals:
+            for target in targets:
+                for evidence in (TransitionEvidence(), full_evidence):
+                    with self.subTest(current=terminal, target=target):
+                        with self.assertRaisesRegex(InvalidTransition, "terminal state") as raised:
+                            transition(terminal, target, evidence)
+                        self.assertNotIn("payload", str(raised.exception))
+                        self.assertIn(str(terminal), str(raised.exception))
+
     def test_unknown_shortcut_is_rejected(self):
         with self.assertRaisesRegex(InvalidTransition, "is not allowed"):
             transition(ProcessState.RECEIVED, ProcessState.APPLYING, TransitionEvidence())

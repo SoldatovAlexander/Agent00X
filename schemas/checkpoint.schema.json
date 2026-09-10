@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/checkpoint.schema.json",
+  "title": "Checkpoint",
+  "description": "Minimal R0 contract for a pre-action checkpoint from document 28. Holds versioned references only; never credentials, approval values or secret contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "checkpoint_id", "kind", "process_id", "run_id", "branch_id", "agent_id", "trigger_event_id", "event_cursor", "state_ref", "completeness", "restore_mode", "created_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "checkpoint_id": {"type": "string", "pattern": "^checkpoint-[a-z0-9-]+$"},
+    "kind": {"enum": ["decision", "tool_call"]},
+    "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
+    "run_id": {"type": "string", "pattern": "^run-[a-z0-9-]+$"},
+    "branch_id": {"type": "string", "pattern": "^branch-[a-z0-9-]+$"},
+    "agent_id": {"type": "string", "pattern": "^(agent|service)-[a-z0-9-]+$"},
+    "trigger_event_id": {"type": "string", "pattern": "^event-[a-z0-9-]+$"},
+    "parent_checkpoint_id": {"type": "string", "pattern": "^checkpoint-[a-z0-9-]+$"},
+    "event_cursor": {"type": "integer", "minimum": 0},
+    "state_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256},
+    "context_manifest_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256},
+    "workspace_manifest_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256},
+    "configuration_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256}},
+    "authority_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256}},
+    "pending_action_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256},
+    "in_flight_invocation_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^invocation-[a-z0-9-]+$"}},
+    "external_effect_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256}},
+    "restore_mode": {"enum": ["simulation", "supervised", "none"]},
+    "completeness": {"enum": ["complete", "partial"]},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -112,5 +112,70 @@ class ObservationEventContractTests(unittest.TestCase):
         self.assertEqual(copy.deepcopy(event)["agent_id"], "service-collector-001")
 
 
+def load_checkpoint_schema() -> dict:
+    with (ROOT / "schemas" / "checkpoint.schema.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def valid_checkpoint() -> dict:
+    return {
+        "schema_version": 1,
+        "checkpoint_id": "checkpoint-observer-demo-001",
+        "kind": "tool_call",
+        "process_id": "process-observer-demo",
+        "run_id": "run-observer-demo-001",
+        "branch_id": "branch-main",
+        "agent_id": "agent-worker-001",
+        "trigger_event_id": "event-observer-demo-001",
+        "event_cursor": 7,
+        "state_ref": "artifact://states/observer-demo-007",
+        "context_manifest_ref": "artifact://manifests/observer-demo-context",
+        "workspace_manifest_ref": "artifact://manifests/observer-demo-workspace",
+        "configuration_refs": ["artifact://configs/reference-worker-v1"],
+        "authority_refs": ["artifact://grants/observer-demo"],
+        "pending_action_ref": "artifact://actions/observer-demo-001",
+        "restore_mode": "simulation",
+        "completeness": "complete",
+        "created_at": "2026-09-07T12:00:01Z",
+    }
+
+
+class CheckpointContractTests(unittest.TestCase):
+    def test_valid_checkpoint_conforms_to_schema(self):
+        validate(valid_checkpoint(), load_checkpoint_schema())
+
+    def test_unknown_field_is_rejected(self):
+        checkpoint = valid_checkpoint()
+        checkpoint["credential"] = "must-not-exist"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields"):
+            validate(checkpoint, load_checkpoint_schema())
+
+    def test_invalid_kind_is_rejected(self):
+        checkpoint = valid_checkpoint()
+        checkpoint["kind"] = "teleport"
+        with self.assertRaisesRegex(ContractValidationError, "not in enum"):
+            validate(checkpoint, load_checkpoint_schema())
+
+    def test_invalid_checkpoint_id_is_rejected(self):
+        checkpoint = valid_checkpoint()
+        checkpoint["checkpoint_id"] = "not-a-checkpoint-id"
+        with self.assertRaisesRegex(ContractValidationError, "pattern mismatch"):
+            validate(checkpoint, load_checkpoint_schema())
+
+    def test_invalid_timestamp_is_rejected(self):
+        checkpoint = valid_checkpoint()
+        checkpoint["created_at"] = "not-a-time"
+        with self.assertRaisesRegex(ContractValidationError, "invalid date-time"):
+            validate(checkpoint, load_checkpoint_schema())
+
+    def test_checkpoint_holds_references_not_secrets(self):
+        checkpoint = valid_checkpoint()
+        validate(checkpoint, load_checkpoint_schema())
+        payload = json.dumps(checkpoint)
+        for forbidden in ("credential", "approval", "token", "secret", "BEGIN PRIVATE KEY"):
+            self.assertNotIn(forbidden, payload)
+        self.assertTrue(checkpoint["state_ref"].startswith("artifact://"))
+
+
 if __name__ == "__main__":
     unittest.main()

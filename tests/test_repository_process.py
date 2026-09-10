@@ -243,6 +243,37 @@ class RepositoryProcessTests(unittest.TestCase):
             ["calculator.py", "test_calculator.py"],
         )
 
+    def test_equivalent_unsafe_paths_denied_without_host_leak_or_mutation(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        variants = (
+            "./calculator.py", "pkg//calculator.py", "dir\\calculator.py",
+            "../escape.py", "a/./b.py", "a/b/", "/abs.py", "a/b/.",
+        )
+        for unsafe in variants:
+            with self.subTest(path=unsafe):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaises(ContractValidationError) as raised:
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={unsafe: "evil"},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                message = str(raised.exception)
+                self.assertNotIn(str(sandbox.workspace), message)
+                self.assertNotIn(str(sandbox.snapshot), message)
+                self.assertEqual(
+                    (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+                )
+                self.assertEqual(
+                    sorted(path.name for path in sandbox.workspace.iterdir()),
+                    ["calculator.py", "test_calculator.py"],
+                )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

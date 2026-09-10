@@ -265,6 +265,31 @@ class AuthorityTests(unittest.TestCase):
             check_decision_usable(missing, now=NOW)
         check_decision_usable(decision, now=NOW)
 
+    def test_invalid_ttl_rejected_without_decision(self):
+        for bad in (0, -5, "300", True, None, 1.5):
+            with self.subTest(ttl=bad):
+                with self.assertRaisesRegex(ValueError, "decision TTL must be a positive integer"):
+                    PolicyConfig(
+                        version="policy-1",
+                        allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+                        allowed_actuators=frozenset({"actuator-github-001"}),
+                        decision_ttl_seconds=bad,
+                    )
+        config = PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+            decision_ttl_seconds=300,
+        )
+        decision = DeterministicPolicy(config).decide(
+            decision_id="decision-policy-007",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

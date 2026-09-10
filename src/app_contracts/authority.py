@@ -21,6 +21,11 @@ class PolicyConfig:
     allowed_actuators: frozenset[str]
     decision_ttl_seconds: int = 300
 
+    def __post_init__(self) -> None:
+        ttl = self.decision_ttl_seconds
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
+            raise ValueError("policy: decision TTL must be a positive integer")
+
 
 def _require_digest(value: Any, message: str) -> str:
     if not isinstance(value, str) or not value:

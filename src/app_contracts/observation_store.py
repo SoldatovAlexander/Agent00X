@@ -184,7 +184,7 @@ class ObservationStore:
             raise ContractValidationError("invocation reference is not preceding")
         if saw_non_intent:
             raise ContractValidationError("invocation reference is not an intent")
-        raise ContractValidationError(f"unknown invocation reference: {invocation_id}")
+        raise ContractValidationError("unknown invocation reference")
 
     def events(self) -> tuple[dict[str, Any], ...]:
         """Return stored events in insertion order as detached copies."""

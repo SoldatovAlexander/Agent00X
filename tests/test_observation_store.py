@@ -246,6 +246,26 @@ class ObservationStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "no invocation reference"):
             store.check_result_causality(result)
 
+    def test_unknown_invocation_error_carries_no_identifier(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["invocation_id"] = "invocation-store-demo-001"
+        intent["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(intent)
+        result = valid_event("event-store-demo-002", 1)
+        result["event_type"] = "tool_completed"
+        result["invocation_id"] = "invocation-caller-secret-001"
+        with self.assertRaisesRegex(
+            ContractValidationError, "^unknown invocation reference$"
+        ) as raised:
+            store.check_result_causality(result)
+        self.assertNotIn("caller-secret-001", str(raised.exception))
+        self.assertNotIn("Stored rationale", str(raised.exception))
+        matching = valid_event("event-store-demo-003", 2)
+        matching["event_type"] = "tool_completed"
+        matching["invocation_id"] = "invocation-store-demo-001"
+        self.assertEqual(store.check_result_causality(matching), 0)
+
     def test_result_with_foreign_invocation_is_rejected_without_payload(self):
         store = ObservationStore()
         intent = valid_event("event-store-demo-001", 0)

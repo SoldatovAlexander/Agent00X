@@ -766,7 +766,7 @@ Commit: ALLOWED
 
 ## EXP-013 — adversarial binding policy decision к actuator boundary
 
-Статус: REVIEW
+Статус: CLOSED
 Цель: доказать тестом, что подмена request после allow decision не достигает mock actuator.
 Гипотеза: actuator сверяет allow decision с точным request перед side effect.
 Зависит от: EXP-003
@@ -807,6 +807,11 @@ Commit: ALLOWED
   staged digest всё ещё может пройти policy и boundary. Не принимать до выбора и
   реализации approval-bound intent representation (например, digest полного
   approved intent либо branch/key в approval contract) с end-to-end regression.
+- ACCEPTED 2026-09-11: независимое review подтверждает remediation `27670e9`:
+  approval содержит digest полного canonical intent, а policy и brokered actuator
+  проверяют его до provider channel. Regression покрывает согласованную подмену
+  request + intent + grant (включая branch/idempotency key) и подтверждает zero
+  provider calls; matching request по-прежнему достигает mock boundary.
 
 ## EXP-014 — multi-file regression для verified manifest
 

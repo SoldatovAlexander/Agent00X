@@ -161,6 +161,24 @@ class BrokerTests(unittest.TestCase):
                     broker.open_github_publication_channel(grant, self.chain["actuator_request"], now=NOW)
         self.assertEqual(calls, [])
 
+    def test_malformed_clock_denied_before_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        for bad_now in (None, "2026-09-04T12:07:00Z", 123, datetime(2026, 9, 4, 12, 7)):
+            with self.subTest(now=type(bad_now).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^broker: grant expiry check requires aware time$"
+                ):
+                    broker.open_github_publication_channel(
+                        self.chain["credential_use_grant"], self.chain["actuator_request"],
+                        now=bad_now,
+                    )
+        self.assertEqual(calls, [])
+        broker.open_github_publication_channel(
+            self.chain["credential_use_grant"], self.chain["actuator_request"], now=NOW,
+        )
+        self.assertEqual(calls, ["factory"])
+
     def test_expired_or_malformed_grant_never_reaches_factory(self):
         calls = []
         broker = InMemoryCredentialBroker(lambda: calls.append("factory"))

@@ -51,6 +51,8 @@ def validate_credential_use_grant(
     always enforced, so no channel opens for a malformed or expired grant.
     """
 
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise ContractValidationError("broker: grant expiry check requires aware time")
     if not isinstance(credential_grant, dict) or any(
         field not in credential_grant for field in _REQUIRED_GRANT_FIELDS
     ):
@@ -79,8 +81,6 @@ def validate_credential_use_grant(
         raise ContractValidationError("broker: request digest mismatch")
     if credential_grant["single_use"] is not True:
         raise ContractValidationError("broker: credential grant must be single-use")
-    if now.tzinfo is None:
-        raise ContractValidationError("broker: grant expiry check requires aware time")
     raw_expiry = credential_grant.get("expires_at")
     if not isinstance(raw_expiry, str):
         raise ContractValidationError("broker: credential grant expiry is invalid")

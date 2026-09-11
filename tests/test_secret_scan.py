@@ -153,6 +153,17 @@ class CanaryCredentialTests(unittest.TestCase):
         self.assertEqual(find_canary_surfaces(self.canary, clean), [])
         assert_canary_absent(self.canary, clean)
 
+    def test_malformed_surface_root_rejected_without_representation(self):
+        for bad in (None, ["agent-context"], "surfaces", 42, {("k", "v")}):
+            with self.subTest(surfaces=type(bad).__name__):
+                with self.assertRaises(ValueError) as raised:
+                    find_canary_surfaces(self.canary, bad)
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError))
+                self.assertNotIn(self.canary, str(raised.exception))
+                with self.assertRaises(ValueError):
+                    assert_canary_absent(self.canary, bad)
+        self.assertEqual(find_canary_surfaces(self.canary, self.clean_surfaces), [])
+
     def test_invalid_canary_rejected_deterministically(self):
         for bad in ("", None, 123, ["canary"]):
             with self.subTest(canary=type(bad).__name__):

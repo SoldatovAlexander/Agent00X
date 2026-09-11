@@ -190,6 +190,8 @@ def check_decision_usable(decision: dict[str, Any], *, now: datetime) -> None:
     """
 
     moment = _require_clock(now)
+    if not isinstance(decision, dict):
+        raise ContractValidationError("decision: decision is malformed")
     try:
         expires_at = _parse_time(decision["expires_at"])
     except (KeyError, TypeError, AttributeError, ValueError) as exc:

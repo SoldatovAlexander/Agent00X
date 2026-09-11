@@ -466,6 +466,14 @@ class AuthorityTests(unittest.TestCase):
         )
         self.assertEqual(decision["effect"], "allow")
 
+    def test_malformed_decision_roots_denied_without_raw_error(self):
+        for bad in (None, ["decision"], "decision", 42):
+            with self.subTest(decision=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^decision: decision is malformed$"
+                ):
+                    check_decision_usable(bad, now=NOW)
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

@@ -375,6 +375,20 @@ class SchemaIdTests(unittest.TestCase):
             validate({"items": [{"known": "b", "injected": "caller-secret-002"}]}, schema)
         self.assertNotIn("caller-secret-002", str(items_raised.exception))
 
+    def test_non_mapping_roots_fail_as_contract_errors(self):
+        schema = {
+            "type": "object",
+            "required": ["a"],
+            "properties": {"a": {"type": "string"}},
+            "additionalProperties": False,
+        }
+        for bad in (None, 42, [1], "x", True, (("a", "b"),), 3.5):
+            with self.subTest(root=type(bad).__name__):
+                with self.assertRaises(ContractValidationError) as raised:
+                    validate(bad, schema)
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError))
+        validate({"a": "x"}, schema)
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

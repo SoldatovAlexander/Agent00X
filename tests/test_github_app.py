@@ -229,6 +229,23 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         minter.mint(grant)
                     self.assertNotIn("github-token-opaque", str(raised.exception))
 
+    def test_minter_rejects_non_mapping_grant_without_mint_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            calls = []
+            minter = GitHubAppInstallationTokenMinter(
+                config, post_json=lambda *args: calls.append(args),
+                now=lambda: datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+            )
+            for bad in (None, ["grant"], "grant", 42):
+                with self.subTest(grant=type(bad).__name__):
+                    with self.assertRaisesRegex(GitHubAppBrokerError, "credential grant is malformed"):
+                        minter.mint(bad)
+            self.assertEqual(calls, [])
+
     def test_minter_rejects_wrong_installation_without_token_exchange(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

@@ -99,6 +99,8 @@ class GitHubAppInstallationTokenMinter:
         self._now = now or (lambda: datetime.now(timezone.utc))
 
     def mint(self, credential_grant: Mapping[str, object]) -> _InstallationToken:
+        if not isinstance(credential_grant, dict):
+            raise GitHubAppBrokerError("GitHub App credential grant is malformed")
         if credential_grant.get("credential_class") != "github-app-installation":
             raise GitHubAppBrokerError("GitHub App token requires a github-app installation grant")
         if credential_grant.get("installation_id") != self._config.installation_id:

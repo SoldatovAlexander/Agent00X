@@ -49,8 +49,11 @@ def run_gated_dispatch(
 
     The ``dispatch`` callable runs only after both writes succeed. Any store
     failure raises PreDispatchError without starting the side effect.
+    A non-callable dispatch target is refused before any write.
     """
 
+    if not callable(dispatch):
+        raise PreDispatchError("pre-dispatch gate refused: dispatch is not callable")
     try:
         store.record_checkpoint(checkpoint)
         cursor = store.append(intent_event)

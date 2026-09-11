@@ -488,6 +488,23 @@ class PreDispatchGateTests(unittest.TestCase):
         self.assertEqual(stored_checkpoints[0]["checkpoint_id"], checkpoint["checkpoint_id"])
         self.assertEqual(stored_checkpoints[0]["trigger_event_id"], "event-store-demo-001")
 
+    def test_non_callable_dispatch_writes_nothing(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        for bad in (None, "dispatch", 42, ["dispatch"]):
+            with self.subTest(dispatch=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    PreDispatchError, "^pre-dispatch gate refused: dispatch is not callable$"
+                ):
+                    run_gated_dispatch(
+                        store,
+                        checkpoint=valid_checkpoint(),
+                        intent_event=valid_event("event-store-demo-002", 1),
+                        dispatch=bad,
+                    )
+        self.assertEqual([event["event_id"] for event in store.events()], ["event-store-demo-001"])
+        self.assertEqual(len(store.checkpoints()), 0)
+
     def test_injected_store_failure_blocks_dispatch(self):
         store = FailingStore()
         ObservationStore.append(store, valid_event("event-store-demo-001", 0))

@@ -118,6 +118,14 @@ class MockGitHubTests(unittest.TestCase):
                 )
                 self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
 
+    def test_non_mapping_request_stores_no_receipt(self):
+        for bad in (None, 123, "request", ["operation"]):
+            with self.subTest(request=type(bad).__name__):
+                endpoint = MockGitHubEndpoint()
+                with self.assertRaisesRegex(ContractValidationError, "request shape mismatch"):
+                    endpoint.publish_pull_request(bad)
+                self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

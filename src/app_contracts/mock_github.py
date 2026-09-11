@@ -28,7 +28,7 @@ class MockGitHubEndpoint:
             "operation", "repository_id", "branch", "staged_change_digest",
             "idempotency_key", "policy_effect", "approval_valid",
         }
-        if set(request) != required:
+        if not isinstance(request, dict) or set(request) != required:
             raise ContractValidationError("mock github: request shape mismatch")
         if request["operation"] != "publish_pull_request":
             raise ContractValidationError("mock github: operation is not registered")

@@ -126,6 +126,32 @@ class MockGitHubTests(unittest.TestCase):
                     endpoint.publish_pull_request(bad)
                 self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
 
+    def test_malformed_lookup_inputs_fail_without_receipt_change(self):
+        original = self.endpoint.publish_pull_request(self.request)
+        for bad_key in (None, 123, "", ["key"]):
+            with self.subTest(key=type(bad_key).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^mock github: lookup key is invalid$"
+                ):
+                    self.endpoint.find_by_idempotency_key(bad_key)
+        for bad_repo in (123, ["repo"], ""):
+            with self.subTest(repository=type(bad_repo).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^mock github: lookup repository is invalid$"
+                ):
+                    self.endpoint.find_by_idempotency_key(
+                        self.request["idempotency_key"], repository_id=bad_repo
+                    )
+        self.assertEqual(
+            self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]), original
+        )
+        self.assertEqual(
+            self.endpoint.find_by_idempotency_key(
+                self.request["idempotency_key"], repository_id=self.request["repository_id"]
+            ),
+            original,
+        )
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

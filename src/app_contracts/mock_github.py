@@ -75,6 +75,12 @@ class MockGitHubEndpoint:
         repository is never returned.
         """
 
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ContractValidationError("mock github: lookup key is invalid")
+        if repository_id is not None and (
+            not isinstance(repository_id, str) or not repository_id
+        ):
+            raise ContractValidationError("mock github: lookup repository is invalid")
         found = self._by_idempotency_key.get(idempotency_key)
         if found is not None and repository_id is not None and found.repository_id != repository_id:
             return None

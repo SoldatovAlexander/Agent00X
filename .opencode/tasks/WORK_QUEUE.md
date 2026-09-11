@@ -3130,6 +3130,202 @@ Commit: ALLOWED
 - none
 Commit: ALLOWED
 
+## Batch N — broad contract regression sweep
+
+Исполнитель выполняет EXP-125—EXP-144 строго сверху вниз: local, штатный suite,
+diff/status, один local commit и evidence. При первой ошибке остановиться. Без
+push, Docker, testdev, Agent00X-sandbox и внешних систем.
+
+## EXP-125 — authority expiry input boundary
+Статус: READY
+Цель: malformed approval expiry fails closed.
+Гипотеза: datetime parsing leaks no raw error.
+Зависит от: EXP-124
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy redesign.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed expiry denies; valid approval stays green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-126 — broker grant class boundary
+Статус: READY
+Цель: malformed grant class cannot open channel.
+Гипотеза: broker binding rejects invalid grant shape before factory.
+Зависит от: EXP-125
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real credentials.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- tests/test_broker.py
+Критерии приёмки:
+- invalid grant denies with zero factory calls.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-127 — actuator operation boundary
+Статус: READY
+Цель: malformed operation cannot publish.
+Гипотеза: actuator rejects before provider call.
+Зависит от: EXP-126
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub.
+Разрешённые пути:
+- src/app_contracts/actuator.py
+- tests/test_actuator.py
+Критерии приёмки:
+- invalid operation denies with zero side effect.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-128 — gateway audit event boundary
+Статус: READY
+Цель: malformed audit event fails closed.
+Гипотеза: gateway preserves deny semantics without raw error.
+Зависит от: EXP-127
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: gateway redesign.
+Разрешённые пути:
+- src/app_contracts/gateway.py
+- tests/test_gateway.py
+Критерии приёмки:
+- malformed audit input denies safely; known routing green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-129 — publication repository boundary
+Статус: READY
+Цель: malformed repository cannot journal publication.
+Гипотеза: journal validates before persistence.
+Зависит от: EXP-128
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration.
+Разрешённые paths:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- invalid repository denies without record mutation.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-130 — runtime audit mapping boundary
+Статус: READY
+Цель: malformed audit mapping cannot persist.
+Гипотеза: store keeps history unchanged on denial.
+Зависит от: EXP-129
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration.
+Разрешённые пути:
+- src/app_contracts/runtime_store.py
+- tests/test_runtime_store.py
+Критерии приёмки:
+- invalid audit mapping denied without mutation.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-131 — repository path whitespace boundary
+Статус: READY
+Цель: unsafe path spellings cannot enter manifest.
+Гипотеза: canonical path check remains contained.
+Зависит от: EXP-130
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real repository.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- unsafe spelling denied; safe manifest green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-132 — sandbox directory boundary
+Статус: READY
+Цель: malformed sandbox root fails closed.
+Гипотеза: local sandbox never escapes root.
+Зависит от: EXP-131
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker.
+Разрешённые пути:
+- src/app_contracts/sandbox.py
+- tests/test_sandbox.py
+Критерии приёмки:
+- invalid root denied; valid sandbox green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-133 — secret scan empty-canary boundary
+Статус: READY
+Цель: invalid canary fails deterministically.
+Гипотеза: scanner cannot silently accept unusable search token.
+Зависит от: EXP-132
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real secrets.
+Разрешённые пути:
+- src/app_contracts/secret_scan.py
+- tests/test_secret_scan.py
+Критерии приёмки:
+- invalid canary safe outcome; ordinary scan green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-134 — state target boundary
+Статус: READY
+Цель: malformed state target cannot transition.
+Гипотеза: transition contract rejects before mutation.
+Зависит от: EXP-133
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: workflow redesign.
+Разрешённые пути:
+- src/app_contracts/state_machine.py
+- tests/test_state_machine.py
+Критерии приёмки:
+- invalid target denied; valid transition green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
 ## Формат task card
 
 Добавляйте карточки в порядке выполнения. Исполнитель работает только с `READY`

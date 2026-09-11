@@ -26,10 +26,10 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
         raise ContractValidationError(f"chain: malformed contracts {malformed}")
     _require_members(chain)
 
-    process_ids = {
-        chain[name]["process_id"]
-        for name in ("process_contract", "staged_change", "approval", "intent", "action_receipt")
-    }
+    process_ids = _binding_values(
+        chain, "process_id",
+        ("process_contract", "staged_change", "approval", "intent", "action_receipt"),
+    )
     _require_single("process_id", process_ids)
 
     if chain["identity"]["identity_id"] != chain["capability_grant"]["subject"]:
@@ -44,10 +44,10 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
     if chain["trust_profile"]["principal_id"] != chain["identity"]["identity_id"]:
         raise ContractValidationError("chain: trust profile principal mismatch")
 
-    repositories = {
-        chain[name]["repository_id"]
-        for name in ("process_contract", "staged_change", "approval", "intent", "policy_decision", "action_receipt")
-    }
+    repositories = _binding_values(
+        chain, "repository_id",
+        ("process_contract", "staged_change", "approval", "intent", "policy_decision", "action_receipt"),
+    )
     _require_single("repository_id", repositories)
 
     if chain["canonical_envelope"]["correlation_id"] != chain["process_contract"]["process_id"]:
@@ -74,10 +74,10 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
         raise ContractValidationError("chain: only a passing verification can be staged")
 
     computed_staged_digest = sha256_digest(chain["staged_change"])
-    referenced_staged_digests = {
-        chain[name]["staged_change_digest"]
-        for name in ("approval", "intent", "policy_decision", "action_receipt")
-    }
+    referenced_staged_digests = _binding_values(
+        chain, "staged_change_digest",
+        ("approval", "intent", "policy_decision", "action_receipt"),
+    )
     _require_single("staged_change_digest", referenced_staged_digests)
     if referenced_staged_digests != {computed_staged_digest}:
         raise ContractValidationError("chain: staged change digest does not match content")
@@ -122,6 +122,18 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
 def _require_single(field: str, values: set[str]) -> None:
     if len(values) != 1:
         raise ContractValidationError(f"chain: {field} mismatch")
+
+
+def _binding_values(
+    chain: dict[str, dict[str, Any]], field: str, names: tuple[str, ...],
+) -> set[str]:
+    values: set[str] = set()
+    for name in names:
+        value = chain[name][field]
+        if not isinstance(value, str):
+            raise ContractValidationError(f"chain: {name} has non-string binding value")
+        values.add(value)
+    return values
 
 
 _REQUIRED_MEMBERS = {

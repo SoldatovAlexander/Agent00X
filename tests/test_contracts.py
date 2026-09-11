@@ -119,6 +119,25 @@ class ContractTests(unittest.TestCase):
                 self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
         validate_chain(self.chain)
 
+    def test_unhashable_binding_values_denied_without_details(self):
+        victims = [
+            ("staged_change", "process_id", ["process-demo-001"]),
+            ("approval", "repository_id", {"repo": 1}),
+            ("intent", "staged_change_digest", ["sha256:" + "a" * 64]),
+            ("policy_decision", "staged_change_digest", None),
+            ("action_receipt", "process_id", ("process-demo-001",)),
+        ]
+        for name, field, bad in victims:
+            with self.subTest(member=name):
+                chain = json.loads(json.dumps(self.chain))
+                chain[name][field] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, f"^chain: {name} has non-string binding value$"
+                ) as raised:
+                    validate_chain(chain)
+                self.assertNotIn("process-demo-001", str(raised.exception))
+        validate_chain(self.chain)
+
     def test_malformed_chain_entries_denied_without_details(self):
         for broken in (
             {"capability_grant": None},

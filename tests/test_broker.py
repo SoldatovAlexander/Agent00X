@@ -242,6 +242,26 @@ class BrokerTests(unittest.TestCase):
             )
         self.assertEqual(calls, [])
 
+    def test_malformed_request_digest_never_reaches_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        digest_cases = [123, None, ["sha256:" + "a" * 64], ""]
+        for bad in digest_cases:
+            with self.subTest(digest=type(bad).__name__):
+                grant = dict(self.chain["credential_use_grant"])
+                grant["request_digest"] = bad
+                with self.assertRaises(ContractValidationError):
+                    broker.open_github_publication_channel(
+                        grant, self.chain["actuator_request"], now=NOW
+                    )
+        missing = dict(self.chain["credential_use_grant"])
+        del missing["request_digest"]
+        with self.assertRaises(ContractValidationError):
+            broker.open_github_publication_channel(
+                missing, self.chain["actuator_request"], now=NOW
+            )
+        self.assertEqual(calls, [])
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

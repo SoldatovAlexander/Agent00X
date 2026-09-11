@@ -367,6 +367,20 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(recovered.pull_request_id, 1)
             self.assertEqual(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]).pull_request_id, 1)
 
+    def test_malformed_recovery_endpoint_leaves_attempting_record(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            for bad in (None, "endpoint", 42, object()):
+                with self.subTest(endpoint=type(bad).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^publication: collaborator is invalid$"
+                    ):
+                        recover_publication(journal, bad, self.request["process_id"])
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertIsNone(record.pull_request_id)
+
     def test_repeated_unknown_recovery_creates_no_side_effect_and_leaks_nothing(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

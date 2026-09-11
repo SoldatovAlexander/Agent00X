@@ -197,6 +197,8 @@ def recover_publication(
 ) -> PublicationRecord:
     """Recover safely; never re-run an uncertain side effect automatically."""
 
+    if not callable(getattr(endpoint, "find_by_idempotency_key", None)):
+        raise ContractValidationError("publication: collaborator is invalid")
     record = journal.get(process_id)
     if record.status == "completed":
         return record

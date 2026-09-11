@@ -59,6 +59,9 @@ def validate_approval(
 ) -> None:
     """Reject any approval no longer bound to this exact publication intent."""
 
+    for mapping in (approval, intent, staged_change):
+        if not isinstance(mapping, dict):
+            raise ContractValidationError("approval: binding root is malformed")
     moment = _require_clock(now)
     staged_digest = sha256_digest(staged_change)
     for field in ("process_id", "repository_id", "operation", "approval_id"):

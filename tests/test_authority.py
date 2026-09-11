@@ -365,6 +365,25 @@ class AuthorityTests(unittest.TestCase):
                 ):
                     check_decision_usable(decision, now=bad)
 
+    def test_malformed_binding_roots_denied_without_payload(self):
+        for position in ("approval", "intent", "staged_change"):
+            for bad in (None, ["binding"], "binding", 42):
+                with self.subTest(position=position, root=type(bad).__name__):
+                    bindings = {
+                        "approval": dict(self.chain["approval"]),
+                        "intent": dict(self.chain["intent"]),
+                        "staged_change": dict(self.chain["staged_change"]),
+                    }
+                    bindings[position] = bad
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^approval: binding root is malformed$"
+                    ) as raised:
+                        validate_approval(
+                            bindings["approval"], bindings["staged_change"], bindings["intent"],
+                            policy_version="policy-1", now=NOW,
+                        )
+                    self.assertNotIn("approval-demo-001", str(raised.exception))
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

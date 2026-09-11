@@ -132,6 +132,22 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 journal.get("process-publication-010")
 
+    def test_malformed_read_identifiers_denied_without_mutation(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            before = journal.get(self.request["process_id"])
+            for bad in (None, 123, "", ["process-publication-001"]):
+                with self.subTest(process_id=type(bad).__name__):
+                    with self.assertRaisesRegex(ValueError, "^publication process ID is invalid$"):
+                        journal.get(bad)
+                    with self.assertRaisesRegex(ValueError, "^publication process ID is invalid$"):
+                        journal.mark_attempting(bad)
+                    with self.assertRaisesRegex(ValueError, "^publication process ID is invalid$"):
+                        recover_publication(journal, self.endpoint, bad)
+            self.assertEqual(journal.get(self.request["process_id"]), before)
+            with self.assertRaises(KeyError):
+                journal.get("process-absent-009")
+
     def test_identical_prepare_replay_returns_existing_record(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

@@ -81,6 +81,8 @@ class PublicationJournal:
         return self.get(process_id)
 
     def get(self, process_id: str) -> PublicationRecord:
+        if not isinstance(process_id, str) or not process_id:
+            raise ValueError("publication process ID is invalid")
         row = self._connection.execute(
             """SELECT process_id, idempotency_key, request_digest, repository_id, status, pull_request_id
                FROM publication_attempts WHERE process_id = ?""",
@@ -126,6 +128,8 @@ class PublicationJournal:
         self._set_status(process_id, "attempting", "reconciliation_required")
 
     def _set_status(self, process_id: str, expected: str, target: str) -> None:
+        if not isinstance(process_id, str) or not process_id:
+            raise ValueError("publication process ID is invalid")
         with self._connection:
             updated = self._connection.execute(
                 """UPDATE publication_attempts SET status = ?

@@ -3326,6 +3326,196 @@ Commit: ALLOWED
 - none
 Commit: ALLOWED
 
+## EXP-135 — observation checkpoint mapping boundary
+Статус: READY
+Цель: malformed checkpoint fails closed.
+Гипотеза: journal read cannot leak raw lookup error.
+Зависит от: EXP-134
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: durable journal.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- malformed checkpoint denied; valid checkpoint green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-136 — learning correction mapping boundary
+Статус: READY
+Цель: malformed correction is rejected.
+Гипотеза: correction checker has deterministic root boundary.
+Зависит от: EXP-135
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: learning backend.
+Разрешённые пути:
+- src/app_contracts/learning_correction.py
+- tests/test_learning_correction.py
+Критерии приёмки:
+- malformed correction denies; valid correction green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-137 — memory interval mapping boundary
+Статус: READY
+Цель: malformed summary fails closed.
+Гипотеза: memory validation has deterministic root boundary.
+Зависит от: EXP-136
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: memory backend.
+Разрешённые пути:
+- src/app_contracts/memory_summary.py
+- tests/test_memory_summary.py
+Критерии приёмки:
+- malformed summary denies; valid summary green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-138 — chain root boundary
+Статус: READY
+Цель: malformed chain root is rejected.
+Гипотеза: chain checker leaks no raw type error.
+Зависит от: EXP-137
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: delegation redesign.
+Разрешённые пути:
+- src/app_contracts/chain.py
+- tests/test_contracts.py
+Критерии приёмки:
+- malformed root denied; valid chain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-139 — GitHub broker grant mapping boundary
+Статус: READY
+Цель: malformed adapter grant cannot mint token.
+Гипотеза: adapter fails before secret-bearing call.
+Зависит от: EXP-138
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub, secrets.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed grant denies with zero mint calls.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-140 — actuator request mapping boundary
+Статус: READY
+Цель: malformed request fails before publication.
+Гипотеза: actuator has explicit root contract.
+Зависит от: EXP-139
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub.
+Разрешённые пути:
+- src/app_contracts/actuator.py
+- tests/test_actuator.py
+Критерии приёмки:
+- malformed request denied with zero side effect.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-141 — broker request digest boundary
+Статус: READY
+Цель: malformed digest cannot open channel.
+Гипотеза: binding digest is strict before factory.
+Зависит от: EXP-140
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real credentials.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- tests/test_broker.py
+Критерии приёмки:
+- malformed digest denied with zero factory calls.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-142 — publication digest boundary
+Статус: READY
+Цель: malformed journal digest cannot persist.
+Гипотеза: prepare validates scalar binding before storage.
+Зависит от: EXP-141
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- malformed digest denied with no record mutation.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-143 — runtime reason-code boundary
+Статус: READY
+Цель: malformed audit reason fails closed.
+Гипотеза: store rejects non-string codes before persistence.
+Зависит от: EXP-142
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration.
+Разрешённые пути:
+- src/app_contracts/runtime_store.py
+- tests/test_runtime_store.py
+Критерии приёмки:
+- malformed reason denied with history unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-144 — repository content mapping boundary
+Статус: READY
+Цель: malformed change mapping cannot build manifest.
+Гипотеза: repository process rejects invalid content before hashing.
+Зависит от: EXP-143
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real repository.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- malformed mapping denied; valid manifest green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
 ## Формат task card
 
 Добавляйте карточки в порядке выполнения. Исполнитель работает только с `READY`

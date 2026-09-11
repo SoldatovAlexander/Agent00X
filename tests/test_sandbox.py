@@ -24,6 +24,20 @@ class SandboxTests(unittest.TestCase):
             self.assertIn("test_add", result.stderr)
             self.assertNotEqual(sandbox.workspace.resolve(), self.fixture.resolve())
 
+    def test_snapshot_symlink_escape_is_denied_before_copy(self):
+        import tempfile
+        backend = LocalProcessSandboxBackend()
+        with tempfile.TemporaryDirectory(prefix="app-sandbox-fixture-") as fixture_dir, \
+                tempfile.TemporaryDirectory(prefix="app-sandbox-outside-") as outside_dir:
+            fixture = Path(fixture_dir)
+            (fixture / "calculator.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            secret = Path(outside_dir) / "secret.txt"
+            secret.write_text("outside-canary-value", encoding="utf-8")
+            (fixture / "linked.py").symlink_to(secret)
+            with self.assertRaisesRegex(SandboxError, "must not contain symlinks"):
+                backend.create(fixture, {"python3"})
+            self.assertEqual(secret.read_text(encoding="utf-8"), "outside-canary-value")
+
     def test_non_allowlisted_command_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(SandboxError, "not allowlisted"):

@@ -20,6 +20,15 @@ class SandboxError(RuntimeError):
     pass
 
 
+def _assert_no_symlinks(snapshot: Path) -> None:
+    """Fail closed before copying: a linked snapshot could pull outside reads."""
+
+    for root, dirnames, filenames in os.walk(snapshot, followlinks=False):
+        for name in (*dirnames, *filenames):
+            if (Path(root) / name).is_symlink():
+                raise SandboxError("snapshot must not contain symlinks")
+
+
 @dataclass(frozen=True)
 class CommandResult:
     argv: tuple[str, ...]
@@ -48,6 +57,7 @@ class LocalProcessSandbox:
     def __init__(self, snapshot: Path, allowed_commands: set[str]) -> None:
         if not snapshot.is_dir():
             raise SandboxError("snapshot must be a directory")
+        _assert_no_symlinks(snapshot)
         self._root = Path(tempfile.mkdtemp(prefix="app-sandbox-"))
         self.snapshot = self._root / "snapshot"
         self.workspace = self._root / "workspace"

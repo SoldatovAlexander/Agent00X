@@ -2618,7 +2618,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-100 — credential grant expiry regression
-Статус: REVIEW
+Статус: CLOSED
 Цель: invalid or expired credential grant cannot be used to obtain a publication channel.
 Гипотеза: broker enforces grant lifetime before external channel access.
 Зависит от: EXP-099
@@ -2646,6 +2646,10 @@ Commit: ALLOWED
   открыть канал без проверки срока. Исправить в разрешённом scope так, чтобы
   expiry был обязательной границей до channel factory; без реального GitHub,
   secret или push.
+- ACCEPTED 2026-09-11: remediation `b40efa1` делает timezone-aware `now`
+  обязательным на всех broker opening paths и проверяет expiry до mint/factory.
+  Независимый штатный suite: 288 tests OK, 1 skipped. Внешних действий и push
+  не было.
 
 ## EXP-101 — actuator request identity regression
 Статус: CLOSED

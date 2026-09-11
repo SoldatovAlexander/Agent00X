@@ -354,6 +354,25 @@ class RuntimeStoreTests(unittest.TestCase):
                         )
             self.assertEqual(store.audit_events("process-durable-017"), [])
 
+    def test_non_sequence_reason_containers_denied_without_history_change(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-018")
+            containers = (
+                {"code": "denied"},
+                {"denied"},
+                frozenset({"denied"}),
+                (code for code in ("denied",)),
+            )
+            for codes in containers:
+                with self.subTest(container=type(codes).__name__):
+                    with self.assertRaises(ContractValidationError):
+                        store.append_audit_event(
+                            "process-durable-018", actor_id="agent-worker-001",
+                            event_type="gateway.request", input_digest="sha256:" + "a" * 64,
+                            result="denied", reason_codes=codes,
+                        )
+            self.assertEqual(store.audit_events("process-durable-018"), [])
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

@@ -373,6 +373,28 @@ class RuntimeStoreTests(unittest.TestCase):
                         )
             self.assertEqual(store.audit_events("process-durable-018"), [])
 
+    def test_malformed_lookup_id_denied_on_all_read_paths(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-019")
+            for bad in (None, 123, "", ["process-durable-019"]):
+                with self.subTest(process_id=type(bad).__name__):
+                    for read in (
+                        store.get,
+                        store.events,
+                        store.audit_events,
+                    ):
+                        with self.assertRaisesRegex(
+                            ContractValidationError, "^runtime: process ID is invalid$"
+                        ):
+                            read(bad)
+            with self.assertRaises(ProcessNotFound):
+                store.get("process-absent-001")
+            with self.assertRaises(ProcessNotFound):
+                store.events("process-absent-001")
+            with self.assertRaises(ProcessNotFound):
+                store.audit_events("process-absent-001")
+            self.assertEqual(store.get("process-durable-019").version, 0)
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

@@ -118,6 +118,8 @@ class SQLiteProcessStore:
         return self.get(process_id)
 
     def get(self, process_id: str) -> ProcessRecord:
+        if not isinstance(process_id, str) or not process_id:
+            raise ContractValidationError("runtime: process ID is invalid")
         row = self._connection.execute(
             "SELECT process_id, state, version, updated_at FROM processes WHERE process_id = ?",
             (process_id,),

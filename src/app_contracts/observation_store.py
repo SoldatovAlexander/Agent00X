@@ -96,6 +96,8 @@ class ObservationStore:
         explicit read API to fetch events.
         """
 
+        if not isinstance(checkpoint, dict):
+            raise ContractValidationError("checkpoint is malformed")
         validate(checkpoint, CHECKPOINT_SCHEMA)
         trigger = checkpoint["trigger_event_id"]
         trigger_position: int | None = None

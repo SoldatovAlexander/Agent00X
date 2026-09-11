@@ -153,6 +153,22 @@ class ObservationStoreTests(unittest.TestCase):
                 self.assertNotIn("Stored rationale", str(raised.exception))
         self.assertEqual(store.check_checkpoint(valid_checkpoint()), 0)
 
+    def test_non_mapping_checkpoint_denied_without_lookup(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        for bad in (None, ["checkpoint"], "checkpoint", 42):
+            with self.subTest(checkpoint=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^checkpoint is malformed$"
+                ):
+                    store.check_checkpoint(bad)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^checkpoint is malformed$"
+                ):
+                    store.record_checkpoint(bad)
+        self.assertEqual(store.check_checkpoint(valid_checkpoint()), 0)
+        self.assertEqual(len(store.checkpoints()), 0)
+
     def test_missing_trigger_event_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

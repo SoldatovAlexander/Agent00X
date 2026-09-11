@@ -91,6 +91,45 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(GitHubAppConfigurationError, "https"):
                 GitHubAppBrokerConfig.from_environment(environment)
 
+    def test_malformed_direct_request_makes_zero_provider_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            calls = []
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: calls.append(("POST", url)),
+                get_json=lambda url, headers: calls.append(("GET", url)),
+            )
+            base = {
+                "operation": "publish_pull_request",
+                "repository_id": "github-installation/456/repository/1001",
+                "branch": "agent/process-demo-001",
+                "staged_change_digest": "sha256:" + "a" * 64,
+                "idempotency_key": "publish/process-demo-001/sha256:" + "a" * 64,
+                "policy_effect": "allow",
+                "approval_valid": True,
+            }
+            malformed = [None, 42, "request", ["operation"]]
+            for bad in malformed:
+                with self.subTest(request=type(bad).__name__):
+                    with self.assertRaises(ContractValidationError):
+                        channel.publish_pull_request(bad)
+            for field, bad in (
+                ("branch", None), ("branch", 123), ("branch", ""),
+                ("staged_change_digest", None), ("repository_id", 42),
+                ("idempotency_key", ["key"]),
+            ):
+                with self.subTest(field=field):
+                    request = dict(base)
+                    request[field] = bad
+                    with self.assertRaisesRegex(ContractValidationError, "request field is invalid"):
+                        channel.publish_pull_request(request)
+            self.assertEqual(calls, [])
+
     def test_publication_channel_posts_only_allowlisted_typed_request(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

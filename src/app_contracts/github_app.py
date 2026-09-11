@@ -310,8 +310,12 @@ class GitHubAppPublicationChannel:
 
     def publish_pull_request(self, request: dict[str, Any]) -> GitHubPullRequest:
         expected = {"operation", "repository_id", "branch", "staged_change_digest", "idempotency_key", "policy_effect", "approval_valid"}
-        if set(request) != expected or request["operation"] != "publish_pull_request":
+        if not isinstance(request, dict) or set(request) != expected or request["operation"] != "publish_pull_request":
             raise ContractValidationError("GitHub actuator: request shape or operation is invalid")
+        for field in ("repository_id", "branch", "staged_change_digest", "idempotency_key"):
+            value = request[field]
+            if not isinstance(value, str) or not value:
+                raise ContractValidationError("GitHub actuator: request field is invalid")
         repository_id = f"github-installation/{self._config.installation_id}/repository/{self._config.repository_id}"
         if request["repository_id"] != repository_id:
             raise ContractValidationError("GitHub actuator: request repository is not allowlisted")

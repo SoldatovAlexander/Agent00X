@@ -37,6 +37,18 @@ class LearningCorrectionVersionTests(unittest.TestCase):
                 ):
                     check_version(bad)
 
+    def test_malformed_correction_identity_denied_without_leak(self):
+        for bad in (123, None, "", ["correction-observer-demo-001"]):
+            with self.subTest(identity=type(bad).__name__):
+                correction = valid_correction()
+                correction["correction_id"] = bad
+                correction["supersedes"] = "correction-observer-demo-000"
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^correction: correction identity is invalid$"
+                ) as raised:
+                    check_version(correction)
+                self.assertNotIn("observer-demo", str(raised.exception))
+
     def test_malformed_supersedes_reference_is_denied(self):
         for bad in (123, ["correction-observer-demo-000"], "", {"ref": "x"}):
             with self.subTest(reference=type(bad).__name__):

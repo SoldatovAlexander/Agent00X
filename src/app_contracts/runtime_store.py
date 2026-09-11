@@ -98,6 +98,8 @@ class SQLiteProcessStore:
             )
 
     def create(self, process_id: str, *, now: datetime | None = None) -> ProcessRecord:
+        if not isinstance(process_id, str) or not process_id:
+            raise ContractValidationError("runtime: process ID is invalid")
         timestamp = _timestamp(now)
         try:
             with self._connection:

@@ -316,6 +316,19 @@ class RuntimeStoreTests(unittest.TestCase):
             self.assertEqual((advanced.state, advanced.version), (ProcessState.SPECIFIED, 1))
             self.assertEqual(len(store.events("process-durable-015")), 2)
 
+    def test_malformed_process_id_creates_no_record(self):
+        with SQLiteProcessStore(self.database) as store:
+            for bad in (None, 123, "", ["process-durable-016"]):
+                with self.subTest(process_id=type(bad).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^runtime: process ID is invalid$"
+                    ):
+                        store.create(bad)
+            with self.assertRaises(ProcessNotFound):
+                store.get("process-durable-016")
+            record = store.create("process-durable-016")
+            self.assertEqual(record.version, 0)
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

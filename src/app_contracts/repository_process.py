@@ -180,6 +180,8 @@ def build_publish_manifest(sandbox: LocalProcessSandbox, prepared: PreparedChang
     against the fixed contents.
     """
 
+    if not isinstance(prepared, PreparedChange):
+        raise ContractValidationError("publish manifest prepared change is invalid")
     if sha256_bytes(prepared.patch.encode("utf-8")) != prepared.staged_change["patch_digest"]:
         raise ContractValidationError("staged change patch digest no longer matches prepared change")
     verified = dict(prepared.verified_contents)

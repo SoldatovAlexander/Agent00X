@@ -388,6 +388,20 @@ class RepositoryProcessTests(unittest.TestCase):
         manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
         self.assertEqual([item.path for item in manifest], ["calculator.py"])
 
+    def test_malformed_prepared_change_denied_without_output(self):
+        sandbox, result = self.prepare()
+        for bad in (None, {"patch": "x"}, ["prepared"], "prepared", 42):
+            with self.subTest(prepared=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^publish manifest prepared change is invalid$"
+                ):
+                    build_publish_manifest(sandbox, bad, {"calculator.py": self.new_calculator})
+        self.assertEqual(
+            (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), self.new_calculator
+        )
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
+        self.assertEqual([item.path for item in manifest], ["calculator.py"])
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

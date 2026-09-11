@@ -3137,7 +3137,7 @@ diff/status, один local commit и evidence. При первой ошибке
 push, Docker, testdev, Agent00X-sandbox и внешних систем.
 
 ## EXP-125 — authority expiry input boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed approval expiry fails closed.
 Гипотеза: datetime parsing leaks no raw error.
 Зависит от: EXP-124
@@ -3156,7 +3156,7 @@ push, Docker, testdev, Agent00X-sandbox и внешних систем.
 Commit: ALLOWED
 
 ## EXP-126 — broker grant class boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed grant class cannot open channel.
 Гипотеза: broker binding rejects invalid grant shape before factory.
 Зависит от: EXP-125
@@ -3175,7 +3175,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-127 — actuator operation boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed operation cannot publish.
 Гипотеза: actuator rejects before provider call.
 Зависит от: EXP-126
@@ -3194,7 +3194,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-128 — gateway audit event boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed audit event fails closed.
 Гипотеза: gateway preserves deny semantics without raw error.
 Зависит от: EXP-127
@@ -3213,7 +3213,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-129 — publication repository boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed repository cannot journal publication.
 Гипотеза: journal validates before persistence.
 Зависит от: EXP-128
@@ -3232,7 +3232,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-130 — runtime audit mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed audit mapping cannot persist.
 Гипотеза: store keeps history unchanged on denial.
 Зависит от: EXP-129
@@ -3251,7 +3251,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-131 — repository path whitespace boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: unsafe path spellings cannot enter manifest.
 Гипотеза: canonical path check remains contained.
 Зависит от: EXP-130
@@ -3270,7 +3270,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-132 — sandbox directory boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed sandbox root fails closed.
 Гипотеза: local sandbox never escapes root.
 Зависит от: EXP-131
@@ -3289,7 +3289,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-133 — secret scan empty-canary boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: invalid canary fails deterministically.
 Гипотеза: scanner cannot silently accept unusable search token.
 Зависит от: EXP-132
@@ -3308,7 +3308,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-134 — state target boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed state target cannot transition.
 Гипотеза: transition contract rejects before mutation.
 Зависит от: EXP-133
@@ -3327,7 +3327,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-135 — observation checkpoint mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed checkpoint fails closed.
 Гипотеза: journal read cannot leak raw lookup error.
 Зависит от: EXP-134
@@ -3346,7 +3346,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-136 — learning correction mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed correction is rejected.
 Гипотеза: correction checker has deterministic root boundary.
 Зависит от: EXP-135
@@ -3365,7 +3365,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-137 — memory interval mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed summary fails closed.
 Гипотеза: memory validation has deterministic root boundary.
 Зависит от: EXP-136
@@ -3384,7 +3384,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-138 — chain root boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed chain root is rejected.
 Гипотеза: chain checker leaks no raw type error.
 Зависит от: EXP-137
@@ -3403,7 +3403,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-139 — GitHub broker grant mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed adapter grant cannot mint token.
 Гипотеза: adapter fails before secret-bearing call.
 Зависит от: EXP-138
@@ -3422,7 +3422,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-140 — actuator request mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed request fails before publication.
 Гипотеза: actuator has explicit root contract.
 Зависит от: EXP-139
@@ -3441,7 +3441,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-141 — broker request digest boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed digest cannot open channel.
 Гипотеза: binding digest is strict before factory.
 Зависит от: EXP-140
@@ -3460,7 +3460,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-142 — publication digest boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed journal digest cannot persist.
 Гипотеза: prepare validates scalar binding before storage.
 Зависит от: EXP-141
@@ -3479,7 +3479,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-143 — runtime reason-code boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed audit reason fails closed.
 Гипотеза: store rejects non-string codes before persistence.
 Зависит от: EXP-142
@@ -3498,7 +3498,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-144 — repository content mapping boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed change mapping cannot build manifest.
 Гипотеза: repository process rejects invalid content before hashing.
 Зависит от: EXP-143

@@ -65,6 +65,408 @@ Commit: DENIED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+
+## Batch P — authority and boundary hardening
+
+## EXP-165 — validate authority clock type
+Статус: READY
+Цель: Authority rejects a non-datetime or naive use clock through a stable contract error.
+Гипотеза: approval and decision expiry checks cannot rely on unchecked caller clocks.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy semantics and external publication.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed now values are denied without raw attribute errors or side effects.
+- valid aware clocks preserve expiry behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-166 — gate approval root mappings
+Статус: READY
+Цель: Authority rejects malformed approval, intent, and staged-change roots deterministically.
+Гипотеза: direct approval validation must validate mapping boundaries before field access and hashing.
+Зависит от: EXP-165
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: approval schema format or policy decisions.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed roots yield stable ContractValidationError messages without payload leakage.
+- valid approval binding remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-167 — validate policy configuration identity sets
+Статус: READY
+Цель: malformed PolicyConfig version and allowlist members fail at construction.
+Гипотеза: policy cannot operate with empty/non-string identity constraints or arbitrary iterable inputs.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: allowlist contents for valid configuration.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed config fails without raw errors.
+- valid config preserves decisions.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-168 — require boolean policy availability
+Статус: READY
+Цель: DeterministicPolicy does not treat truthy non-booleans as availability.
+Гипотеза: invalid availability configuration cannot yield an allow decision.
+Зависит от: EXP-167
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Gateway availability behavior.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed availability is denied or rejected deterministically.
+- valid True/False behavior is unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-169 — gate policy decision request shape
+Статус: READY
+Цель: direct policy evaluation rejects malformed actuator requests before decision construction.
+Гипотеза: missing or malformed request identity fields cannot cause raw key errors or be echoed in reasons.
+Зависит от: EXP-168
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: changing valid allow/deny policy rules.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed requests have a stable fail-closed outcome without side effects.
+- valid bound request behavior remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-170 — gate usable-decision root and clock
+Статус: READY
+Цель: decision-use checks validate decision mapping and now before expiry field access.
+Гипотеза: malformed decisions and clocks fail through the authority boundary without raw exceptions.
+Зависит от: EXP-165
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: decision schema or decision lifetime for valid data.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- malformed decision roots and clocks raise stable ContractValidationError.
+- valid allow decision remains usable only before expiry.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-171 — gate actuator gateway-decision shape
+Статус: READY
+Цель: the mock actuator rejects malformed gateway decisions before endpoint access.
+Гипотеза: only a typed slow-path allow can cross the action boundary.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Gateway classifier or mock endpoint behavior for valid decisions.
+Разрешённые пути:
+- src/app_contracts/actuator.py
+- tests/test_actuator.py
+Критерии приёмки:
+- malformed gateway decision causes zero endpoint calls and no raw errors.
+- valid slow-path allow remains publishable.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-172 — reject false actuator approval proof early
+Статус: READY
+Цель: false or non-boolean approval_valid is denied before the mock endpoint.
+Гипотеза: authority proof must be validated by the actuator boundary, not delegated to the provider double.
+Зависит от: EXP-171
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: approval digest validation or endpoint implementation.
+Разрешённые пути:
+- src/app_contracts/actuator.py
+- tests/test_actuator.py
+Критерии приёмки:
+- invalid approval proof makes zero endpoint calls.
+- true proof with existing valid inputs still publishes.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-173 — gate actuator policy-decision shape
+Статус: READY
+Цель: malformed policy-decision roots are denied before action publication.
+Гипотеза: an actuator must not access unchecked decision fields or leak caller values.
+Зависит от: EXP-172
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy engine decision generation.
+Разрешённые пути:
+- src/app_contracts/actuator.py
+- tests/test_actuator.py
+Критерии приёмки:
+- malformed decision inputs cause zero endpoint calls and stable errors.
+- valid allow decisions retain binding checks.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-174 — gate brokered actuator broker shape
+Статус: READY
+Цель: BrokeredGitHubActuator rejects an invalid broker before any action path.
+Гипотеза: a non-conforming broker cannot be invoked through an unchecked method access.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: GitHub App minting and provider calls.
+Разрешённые пути:
+- src/app_contracts/github_actuator.py
+- tests/test_github_app.py
+Критерии приёмки:
+- invalid broker causes a stable boundary error and zero provider calls.
+- valid broker path preserves current behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-175 — validate mock reconciliation lookup inputs
+Статус: READY
+Цель: MockGitHub reconciliation rejects malformed lookup identifiers without exposing them.
+Гипотеза: read-only reconciliation has the same typed boundary as publication.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: publication idempotency semantics for valid identifiers.
+Разрешённые пути:
+- src/app_contracts/mock_github.py
+- tests/test_mock_github.py
+Критерии приёмки:
+- malformed key/repository inputs fail deterministically and do not alter receipts.
+- valid same- and cross-repository lookup behavior remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-176 — constrain mock publication branch shape
+Статус: READY
+Цель: MockGitHub rejects branches outside the agent process namespace.
+Гипотеза: the mock action boundary must not accept a content-bound key for an arbitrary branch.
+Зависит от: EXP-175
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub branches or namespace design changes.
+Разрешённые пути:
+- src/app_contracts/mock_github.py
+- tests/test_mock_github.py
+Критерии приёмки:
+- malformed/out-of-namespace branches make no receipt.
+- existing valid agent/process branches remain accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-177 — gate publication journal read identifiers
+Статус: READY
+Цель: PublicationJournal read and transition paths reject malformed process IDs before SQLite operations.
+Гипотеза: journal methods share a stable process identity boundary.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database schema and valid recovery semantics.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- malformed IDs fail without raw errors or journal mutation.
+- valid not-found and lifecycle behavior remain unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-178 — gate repository test-command shape before writes
+Статус: READY
+Цель: prepare_change rejects malformed test commands before workspace mutation.
+Гипотеза: an invalid verification command cannot leave an altered ephemeral workspace or partial artifacts.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: valid allowlisted command execution and Docker.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- malformed command shapes fail before workspace writes and staged artifacts.
+- valid preparation remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-179 — validate repository preparation metadata
+Статус: READY
+Цель: prepare_change rejects malformed process/task/repository/base-commit metadata before writes.
+Гипотеза: artifact identifiers must be typed and non-empty before they enter evidence or digests.
+Зависит от: EXP-178
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: artifact schema redesign or publication.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- malformed metadata leaves workspace and artifacts untouched.
+- valid preparation retains existing evidence bindings.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-180 — validate canonical schema enum declarations
+Статус: READY
+Цель: malformed enum declarations fail schema validation before instance validation.
+Гипотеза: scalar or malformed enum definitions cannot silently change contract acceptance.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: supported valid schema semantics.
+Разрешённые пути:
+- src/app_contracts/validator.py
+- tests/test_contracts.py
+Критерии приёмки:
+- malformed enum declarations raise deterministic RuntimeError.
+- existing schemas and valid enum behavior remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-181 — validate schema type declarations
+Статус: READY
+Цель: malformed type declarations fail at schema validation instead of during instance processing.
+Гипотеза: schema structure errors have a stable fail-closed boundary.
+Зависит от: EXP-180
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: adding new JSON Schema types.
+Разрешённые пути:
+- src/app_contracts/validator.py
+- tests/test_contracts.py
+Критерии приёмки:
+- unsupported or non-string type declarations raise deterministic RuntimeError before payload inspection.
+- valid project schemas remain structurally valid.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-182 — validate GitHub minter expiry response
+Статус: READY
+Цель: GitHub App minter rejects malformed token expiry timestamps without exposing token material.
+Гипотеза: a nonempty string is insufficient proof of a usable short-lived installation token.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub requests, private-key access, and testdev.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed expiry response fails before a token object is returned and leaks no token.
+- a valid timestamp response remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-183 — validate GitHub permission duplication
+Статус: READY
+Цель: duplicate GitHub permission entries are rejected before token exchange.
+Гипотеза: ambiguous grant permissions cannot be silently collapsed into a provider payload.
+Зависит от: EXP-182
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: permission allowlist expansion or real GitHub calls.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- duplicate/ambiguous permissions make zero token-exchange calls.
+- valid distinct allowed permissions retain current payload.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-184 — sanitize GitHub reconciliation identifiers
+Статус: READY
+Цель: direct GitHub reconciliation rejects malformed branch and idempotency identifiers before GET.
+Гипотеза: read-only provider calls require the same typed namespace boundary as publication.
+Зависит от: EXP-183
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub calls, token minting, and pull-request creation.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed direct reconciliation inputs make zero GET calls and yield stable errors.
+- valid reconciliation behavior remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

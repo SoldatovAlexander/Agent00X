@@ -67,6 +67,8 @@ def validate_credential_use_grant(
     grant_id = credential_grant["credential_grant_id"]
     if not isinstance(grant_id, str) or not grant_id:
         raise ContractValidationError("broker: binding value is invalid")
+    if credential_grant.get("credential_class") != "github-app-installation":
+        raise ContractValidationError("broker: credential class mismatch")
     if credential_grant["actuator_id"] != actuator_request["actuator_id"]:
         raise ContractValidationError("broker: actuator identity mismatch")
     if credential_grant["repository_id"] != actuator_request["repository_id"]:

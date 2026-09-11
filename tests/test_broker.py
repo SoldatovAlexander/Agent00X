@@ -221,6 +221,27 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(broker.opened_grants, [])
         self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
 
+    def test_invalid_grant_class_never_reaches_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        for bad in ("superuser", "", None, 123):
+            with self.subTest(grant_class=bad):
+                grant = dict(self.chain["credential_use_grant"])
+                grant["credential_class"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^broker: credential class mismatch$"
+                ):
+                    broker.open_github_publication_channel(
+                        grant, self.chain["actuator_request"], now=NOW
+                    )
+        missing = dict(self.chain["credential_use_grant"])
+        del missing["credential_class"]
+        with self.assertRaisesRegex(ContractValidationError, "credential class mismatch"):
+            broker.open_github_publication_channel(
+                missing, self.chain["actuator_request"], now=NOW
+            )
+        self.assertEqual(calls, [])
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

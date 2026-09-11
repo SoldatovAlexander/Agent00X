@@ -17,6 +17,7 @@ class ContractValidationError(ValueError):
 
 
 _ANNOTATIONS = {"$schema", "$id", "title", "description"}
+_SUPPORTED_TYPES = {"object", "array", "string", "integer", "boolean"}
 _SUPPORTED = _ANNOTATIONS | {
     "type", "additionalProperties", "required", "properties", "const", "enum",
     "pattern", "format", "minLength", "maxLength", "minimum", "minItems", "items",
@@ -56,6 +57,12 @@ def validate_schema(schema: Any, path: str = "$") -> None:
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
         raise RuntimeError(
             f"invalid schema declaration at {path}: enum must be a non-empty list"
+        )
+    if "type" in schema and (
+        not isinstance(schema["type"], str) or schema["type"] not in _SUPPORTED_TYPES
+    ):
+        raise RuntimeError(
+            f"invalid schema declaration at {path}: unsupported type {schema['type']!r}"
         )
     if "items" in schema:
         validate_schema(schema["items"], f"{path}[]")

@@ -415,6 +415,16 @@ class SchemaIdTests(unittest.TestCase):
                     validate("allow", schema)
         validate("allow", {"enum": ["allow", "deny"]})
 
+    def test_malformed_type_declaration_rejected_before_instance_check(self):
+        for bad in ("number", "", None, 123, ["string"], {"type": "string"}):
+            with self.subTest(declaration=bad):
+                schema = {"type": bad}
+                with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*unsupported type"):
+                    validate_schema(schema)
+                with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*unsupported type"):
+                    validate("anything", schema)
+        validate("anything", {"type": "string"})
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

@@ -48,6 +48,19 @@ _REQUIRED_ENVELOPE_FIELDS = (
     ("security", "tainted"),
     ("security", "sensitivity"),
 )
+_REQUIRED_AUDIT_FIELDS = (
+    ("source", "principal_id"),
+    ("payload", "content_digest"),
+)
+
+
+def _require_audit_shape(envelope: dict[str, Any]) -> None:
+    if not isinstance(envelope.get("correlation_id"), str) or not envelope["correlation_id"]:
+        raise ContractValidationError("gateway: envelope is malformed")
+    for section, field in _REQUIRED_AUDIT_FIELDS:
+        section_value = envelope.get(section)
+        if not isinstance(section_value, dict) or field not in section_value:
+            raise ContractValidationError("gateway: envelope is malformed")
 _SLOW_PORTS = frozenset({"tool", "approval", "credential-operation"})
 _PRIVILEGE_PREFIXES = ("capability.", "identity.", "delegation.")
 
@@ -104,6 +117,7 @@ def enforce(
     """
 
     try:
+        _require_audit_shape(envelope)
         decision = classify(envelope, policy_available=policy_available)
     except (ContractValidationError, KeyError, TypeError, AttributeError):
         return GatewayDecision(GatewayPath.DEGRADED, False, ("malformed-envelope",))

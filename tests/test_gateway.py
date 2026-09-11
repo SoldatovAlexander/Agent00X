@@ -154,6 +154,36 @@ class GatewayTests(unittest.TestCase):
                 ):
                     classify(envelope_value, policy_available=True)
 
+    def test_malformed_audit_input_denied_with_zero_sink_calls(self):
+        calls = []
+
+        class CountingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                calls.append((process_id, kwargs))
+
+        base = dict(envelope("repository.read"))
+        base.update({
+            "correlation_id": "process-gateway-004",
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "payload": {"content_digest": "sha256:" + "d" * 64},
+        })
+        variants = []
+        missing_correlation = dict(base)
+        del missing_correlation["correlation_id"]
+        variants.append(missing_correlation)
+        missing_principal = dict(base)
+        missing_principal["source"] = {"protocol": "internal"}
+        variants.append(missing_principal)
+        missing_digest = dict(base)
+        del missing_digest["payload"]
+        variants.append(missing_digest)
+        for broken in variants:
+            decision = enforce(broken, policy_available=True, audit_sink=CountingSink())
+            self.assertEqual(decision.path, GatewayPath.DEGRADED)
+            self.assertFalse(decision.allowed)
+            self.assertEqual(decision.reason_codes, ("malformed-envelope",))
+        self.assertEqual(calls, [])
+
     def test_malformed_envelope_denied_with_zero_sink_calls(self):
         calls = []
 

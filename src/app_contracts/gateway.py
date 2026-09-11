@@ -7,6 +7,8 @@ from enum import StrEnum
 from datetime import datetime
 from typing import Any, Protocol
 
+from .validator import ContractValidationError
+
 class GatewayPath(StrEnum):
     FAST = "fast"
     SLOW = "slow"
@@ -20,6 +22,15 @@ class GatewayDecision:
     reason_codes: tuple[str, ...]
 
 
+def _require_envelope_shape(envelope: dict[str, Any]) -> None:
+    if not isinstance(envelope, dict):
+        raise ContractValidationError("gateway: envelope is malformed")
+    for section, field in _REQUIRED_ENVELOPE_FIELDS:
+        section_value = envelope.get(section)
+        if not isinstance(section_value, dict) or field not in section_value:
+            raise ContractValidationError("gateway: envelope is malformed")
+
+
 class GatewayAuditSink(Protocol):
     def append_audit_event(
         self, process_id: str, *, actor_id: str, event_type: str, input_digest: str,
@@ -30,6 +41,13 @@ class GatewayAuditSink(Protocol):
 _READ_ONLY_OPERATIONS = frozenset({
     "repository.read", "workspace.read", "artifact.read", "evidence.read",
 })
+_REQUIRED_ENVELOPE_FIELDS = (
+    ("intent", "operation"),
+    ("destination", "port"),
+    ("source", "protocol"),
+    ("security", "tainted"),
+    ("security", "sensitivity"),
+)
 _SLOW_PORTS = frozenset({"tool", "approval", "credential-operation"})
 _PRIVILEGE_PREFIXES = ("capability.", "identity.", "delegation.")
 
@@ -37,6 +55,7 @@ _PRIVILEGE_PREFIXES = ("capability.", "identity.", "delegation.")
 def classify(envelope: dict[str, Any], *, policy_available: bool) -> GatewayDecision:
     """Choose the minimum safe path; a missing policy never permits a write."""
 
+    _require_envelope_shape(envelope)
     operation = envelope["intent"]["operation"]
     port = envelope["destination"]["port"]
     security = envelope["security"]
@@ -86,7 +105,7 @@ def enforce(
 
     try:
         decision = classify(envelope, policy_available=policy_available)
-    except (KeyError, TypeError, AttributeError):
+    except (ContractValidationError, KeyError, TypeError, AttributeError):
         return GatewayDecision(GatewayPath.DEGRADED, False, ("malformed-envelope",))
     try:
         audit_sink.append_audit_event(

@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.gateway import GatewayPath, classify, enforce
 from app_contracts.runtime_store import SQLiteProcessStore
+from app_contracts.validator import ContractValidationError
 
 
 def envelope(operation: str, *, port: str = "data", protocol: str = "internal", tainted: bool = False) -> dict:
@@ -135,6 +136,23 @@ class GatewayTests(unittest.TestCase):
         dumped = json.dumps(decision.reason_codes)
         self.assertNotIn("agent-worker-001", dumped)
         self.assertNotIn("c" * 8, dumped)
+
+    def test_classify_rejects_malformed_envelope_deterministically(self):
+        malformed = [
+            {},
+            {"intent": None},
+            {"intent": {"operation": "workspace.read"}},
+            {"intent": {"operation": "x"}, "destination": "tool"},
+            "not-a-mapping",
+            None,
+            [],
+        ]
+        for envelope_value in malformed:
+            with self.subTest(envelope=type(envelope_value).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^gateway: envelope is malformed$"
+                ):
+                    classify(envelope_value, policy_available=True)
 
     def test_malformed_envelope_denied_with_zero_sink_calls(self):
         calls = []

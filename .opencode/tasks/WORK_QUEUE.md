@@ -2972,6 +2972,69 @@ Commit: ALLOWED
 - none
 Commit: ALLOWED
 
+## Batch M — next boundary sweep
+
+Исполнитель выполняет только EXP-117—EXP-119 по порядку: local, штатный suite,
+diff/status, один local commit и evidence; при первой ошибке — стоп. Без push и
+внешних систем.
+
+## EXP-117 — runtime process identity boundary
+Статус: READY
+Цель: invalid process identity cannot create a runtime record.
+Гипотеза: SQLite boundary does not coerce malformed IDs.
+Зависит от: EXP-116
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration, GitHub.
+Разрешённые пути:
+- src/app_contracts/runtime_store.py
+- tests/test_runtime_store.py
+Критерии приёмки:
+- malformed ID denies without row/event; valid create remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-118 — delegation mapping boundary
+Статус: READY
+Цель: malformed delegation chain entries fail closed.
+Гипотеза: chain validation rejects non-mapping parent/child before comparison.
+Зависит от: EXP-117
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: delegation redesign, GitHub.
+Разрешённые пути:
+- src/app_contracts/chain.py
+- tests/test_contracts.py
+Критерии приёмки:
+- malformed chain denies without details; valid chain remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-119 — repository absolute-path regression
+Статус: READY
+Цель: absolute paths cannot enter publish manifest.
+Гипотеза: path normalisation remains repository-contained.
+Зависит от: EXP-118
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real repository, GitHub.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- unsafe paths deny before output; safe paths remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
 ## Формат task card
 
 Добавляйте карточки в порядке выполнения. Исполнитель работает только с `READY`

@@ -372,8 +372,8 @@ class GitHubAppCredentialBroker:
         self._put_json = put_json
         self._used_grants: set[str] = set()
 
-    def open_github_publication_channel(self, credential_grant: dict[str, Any], actuator_request: dict[str, Any]) -> GitHubAppPublicationChannel:
-        validate_credential_use_grant(credential_grant, actuator_request)
+    def open_github_publication_channel(self, credential_grant: dict[str, Any], actuator_request: dict[str, Any], *, now: datetime) -> GitHubAppPublicationChannel:
+        validate_credential_use_grant(credential_grant, actuator_request, now=now)
         grant_id = credential_grant["credential_grant_id"]
         if grant_id in self._used_grants:
             raise ContractValidationError("broker: credential grant already used")

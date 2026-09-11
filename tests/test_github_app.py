@@ -247,6 +247,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "operation": actuator_request["operation"],
                 "request_digest": sha256_digest(actuator_request),
                 "single_use": True,
+                "expires_at": "2026-09-04T12:12:00Z",
             }
             intent = {
                 "branch_namespace": actuator_request["branch_namespace"],
@@ -278,6 +279,57 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                     now=now,
                     approval=approval,
                 )
+
+    def test_github_broker_enforces_grant_expiry_before_channel(self):
+        import copy
+
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            minted = []
+
+            class FakeMinter:
+                def mint(self, grant):
+                    minted.append(grant["credential_grant_id"])
+                    return _InstallationToken("opaque-private-token", "2026-09-04T12:10:00Z")
+
+            broker = GitHubAppCredentialBroker(config, FakeMinter(), get_json=lambda _url, _headers: [])
+            actuator_request = {
+                "actuator_id": "actuator-github-001",
+                "operation": "publish_pull_request",
+                "repository_id": "github-installation/456/repository/1001",
+                "branch_namespace": "agent/process-demo-001",
+                "staged_change_digest": "sha256:" + "b" * 64,
+                "idempotency_key": "publish/process-demo-001/sha256:" + "b" * 64,
+            }
+            grant = {
+                "credential_grant_id": "credential-grant-demo-002",
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "repository_id": actuator_request["repository_id"],
+                "permissions": ["contents:write", "pull_requests:write"],
+                "actuator_id": actuator_request["actuator_id"],
+                "operation": actuator_request["operation"],
+                "request_digest": sha256_digest(actuator_request),
+                "single_use": True,
+                "expires_at": "2026-09-04T12:12:00Z",
+            }
+            now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+            with self.assertRaises(TypeError):
+                broker.open_github_publication_channel(grant, actuator_request)
+            self.assertEqual(minted, [])
+            expired = copy.deepcopy(grant)
+            expired["credential_grant_id"] = "credential-grant-expired-001"
+            expired["expires_at"] = "2020-01-01T00:00:00Z"
+            with self.assertRaisesRegex(ContractValidationError, "^broker: credential grant expired$") as raised:
+                broker.open_github_publication_channel(expired, actuator_request, now=now)
+            self.assertEqual(minted, [])
+            self.assertNotIn("opaque-private-token", str(raised.exception))
+            channel = broker.open_github_publication_channel(grant, actuator_request, now=now)
+            self.assertIsNotNone(channel)
+            self.assertEqual(minted, ["credential-grant-demo-002"])
 
 
 class GitHubReconciliationTests(unittest.TestCase):

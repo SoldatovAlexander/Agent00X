@@ -18,7 +18,11 @@ class GitHubPublicationChannel(Protocol):
 
 class CredentialBroker(Protocol):
     def open_github_publication_channel(
-        self, credential_grant: dict[str, Any], actuator_request: dict[str, Any],
+        self,
+        credential_grant: dict[str, Any],
+        actuator_request: dict[str, Any],
+        *,
+        now: datetime,
     ) -> GitHubPublicationChannel: ...
 
 
@@ -39,12 +43,12 @@ def validate_credential_use_grant(
     credential_grant: dict[str, Any],
     actuator_request: dict[str, Any],
     *,
-    now: datetime | None = None,
+    now: datetime,
 ) -> None:
     """Ensure a single-use broker channel is scoped to exactly one request.
 
-    Grant lifetime is enforced whenever the caller supplies ``now``; without
-    it only structural binding is checked, preserving legacy call paths.
+    The explicit timezone-aware ``now`` is mandatory: grant lifetime is
+    always enforced, so no channel opens for a malformed or expired grant.
     """
 
     if not isinstance(credential_grant, dict) or any(
@@ -73,20 +77,19 @@ def validate_credential_use_grant(
         raise ContractValidationError("broker: request digest mismatch")
     if credential_grant["single_use"] is not True:
         raise ContractValidationError("broker: credential grant must be single-use")
-    if now is not None:
-        if now.tzinfo is None:
-            raise ContractValidationError("broker: grant expiry check requires aware time")
-        raw_expiry = credential_grant.get("expires_at")
-        if not isinstance(raw_expiry, str):
-            raise ContractValidationError("broker: credential grant expiry is invalid")
-        try:
-            expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ContractValidationError("broker: credential grant expiry is invalid") from exc
-        if expires_at.tzinfo is None:
-            raise ContractValidationError("broker: credential grant expiry is invalid")
-        if expires_at <= now.astimezone(timezone.utc):
-            raise ContractValidationError("broker: credential grant expired")
+    if now.tzinfo is None:
+        raise ContractValidationError("broker: grant expiry check requires aware time")
+    raw_expiry = credential_grant.get("expires_at")
+    if not isinstance(raw_expiry, str):
+        raise ContractValidationError("broker: credential grant expiry is invalid")
+    try:
+        expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ContractValidationError("broker: credential grant expiry is invalid") from exc
+    if expires_at.tzinfo is None:
+        raise ContractValidationError("broker: credential grant expiry is invalid")
+    if expires_at <= now.astimezone(timezone.utc):
+        raise ContractValidationError("broker: credential grant expired")
 
 
 @dataclass
@@ -106,7 +109,7 @@ class InMemoryCredentialBroker:
         credential_grant: dict[str, Any],
         actuator_request: dict[str, Any],
         *,
-        now: datetime | None = None,
+        now: datetime,
     ) -> GitHubPublicationChannel:
         validate_credential_use_grant(credential_grant, actuator_request, now=now)
         grant_id = credential_grant["credential_grant_id"]

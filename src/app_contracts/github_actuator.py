@@ -43,8 +43,10 @@ class BrokeredGitHubActuator:
         # swap of request, intent, or grant never reaches the broker/provider
         # boundary.
         check_intent_approved(intent, approval)
-        # The broker validates grant/request binding before any provider call.
-        channel = self._broker.open_github_publication_channel(credential_grant, actuator_request)
+        # The broker validates grant/request binding and grant lifetime
+        # before any provider call; use time is always forwarded so expiry
+        # is enforced on every broker opening path.
+        channel = self._broker.open_github_publication_channel(credential_grant, actuator_request, now=now)
         # The channel is intentionally opaque. It alone performs the provider operation.
         # The approval, approved intent, and use time are forwarded so a
         # post-allow swap or a stale decision is rejected at the actuator

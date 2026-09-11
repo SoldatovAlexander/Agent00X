@@ -100,10 +100,10 @@ class BrokerTests(unittest.TestCase):
                 grant = dict(self.chain["credential_use_grant"])
                 del grant[missing]
                 with self.assertRaisesRegex(ContractValidationError, "grant is malformed") as raised:
-                    broker.open_github_publication_channel(grant, self.chain["actuator_request"])
+                    broker.open_github_publication_channel(grant, self.chain["actuator_request"], now=NOW)
                 self.assertNotIn("token", str(raised.exception))
         with self.assertRaisesRegex(ContractValidationError, "grant is malformed"):
-            broker.open_github_publication_channel("not-a-grant", self.chain["actuator_request"])
+            broker.open_github_publication_channel("not-a-grant", self.chain["actuator_request"], now=NOW)
         self.assertEqual(calls, [])
 
     def test_malformed_request_never_reaches_channel_factory(self):
@@ -121,7 +121,7 @@ class BrokerTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ContractValidationError, "actuator request is malformed"
                 ) as raised:
-                    broker.open_github_publication_channel(grant, bad)
+                    broker.open_github_publication_channel(grant, bad, now=NOW)
                 self.assertNotIn("caller-secret-001", str(raised.exception))
         self.assertEqual(calls, [])
 
@@ -136,7 +136,7 @@ class BrokerTests(unittest.TestCase):
                     with self.assertRaisesRegex(
                         ContractValidationError, "^broker: binding value is invalid$"
                     ) as raised:
-                        broker.open_github_publication_channel(grant, self.chain["actuator_request"])
+                        broker.open_github_publication_channel(grant, self.chain["actuator_request"], now=NOW)
                     self.assertNotIn("caller-secret-001", str(raised.exception))
                     request = dict(self.chain["actuator_request"])
                     request[field] = bad
@@ -144,7 +144,7 @@ class BrokerTests(unittest.TestCase):
                         ContractValidationError, "binding value is invalid"
                     ):
                         broker.open_github_publication_channel(
-                            self.chain["credential_use_grant"], request
+                            self.chain["credential_use_grant"], request, now=NOW
                         )
         self.assertEqual(calls, [])
 
@@ -158,7 +158,7 @@ class BrokerTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ContractValidationError, "^broker: binding value is invalid$"
                 ):
-                    broker.open_github_publication_channel(grant, self.chain["actuator_request"])
+                    broker.open_github_publication_channel(grant, self.chain["actuator_request"], now=NOW)
         self.assertEqual(calls, [])
 
     def test_expired_or_malformed_grant_never_reaches_factory(self):
@@ -193,6 +193,33 @@ class BrokerTests(unittest.TestCase):
             self.chain["credential_use_grant"], self.chain["actuator_request"], now=valid_now,
         )
         self.assertEqual(calls, ["factory"])
+
+    def test_missing_now_is_refused_before_channel_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        with self.assertRaises(TypeError):
+            broker.open_github_publication_channel(
+                self.chain["credential_use_grant"], self.chain["actuator_request"],
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(broker.opened_grants, [])
+
+    def test_brokered_publish_without_now_is_refused_before_channel(self):
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        with self.assertRaises(TypeError):
+            actuator.publish_pull_request(
+                actuator_request=self.chain["actuator_request"],
+                credential_grant=self.chain["credential_use_grant"],
+                policy_decision=self.decision,
+                approval_valid=True,
+                gateway_decision=self.gateway,
+                intent=self.chain["intent"],
+                approval=self.chain["approval"],
+            )
+        self.assertEqual(broker.opened_grants, [])
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
 
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"

@@ -428,6 +428,44 @@ class AuthorityTests(unittest.TestCase):
             intent=self.chain["intent"], now=NOW,
         )["effect"] == "allow")
 
+    def test_malformed_decision_requests_denied_without_side_effect(self):
+        for bad in (None, ["request"], "request", 42):
+            with self.subTest(request=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^policy: actuator request is malformed$"
+                ):
+                    self.policy.decide(
+                        decision_id="decision-policy-012",
+                        actuator_request=bad,
+                        approval=self.chain["approval"],
+                        staged_change=self.chain["staged_change"],
+                        intent=self.chain["intent"], now=NOW,
+                    )
+        for override in (
+            {"operation": ""}, {"repository_id": None}, {"actuator_id": 123},
+        ):
+            with self.subTest(override=override):
+                request = dict(self.chain["actuator_request"])
+                request.update(override)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^policy: actuator request is malformed$"
+                ):
+                    self.policy.decide(
+                        decision_id="decision-policy-013",
+                        actuator_request=request,
+                        approval=self.chain["approval"],
+                        staged_change=self.chain["staged_change"],
+                        intent=self.chain["intent"], now=NOW,
+                    )
+        decision = self.policy.decide(
+            decision_id="decision-policy-014",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

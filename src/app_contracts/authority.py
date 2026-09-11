@@ -131,6 +131,12 @@ class DeterministicPolicy:
         if not self._available:
             raise PolicyUnavailable("policy service is unavailable")
         moment = _require_clock(now)
+        if not isinstance(actuator_request, dict):
+            raise ContractValidationError("policy: actuator request is malformed")
+        for field in ("operation", "repository_id", "actuator_id"):
+            value = actuator_request.get(field)
+            if not isinstance(value, str) or not value:
+                raise ContractValidationError("policy: actuator request is malformed")
 
         reasons: list[str] = []
         effect = "allow"

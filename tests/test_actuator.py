@@ -110,6 +110,23 @@ class ActuatorTests(unittest.TestCase):
                     endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
                 )
 
+    def test_non_mapping_request_denied_with_zero_side_effect(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        for bad in (None, 123, "request", ["operation"], (("operation", "x"),)):
+            with self.subTest(request=type(bad).__name__):
+                endpoint = MockGitHubEndpoint()
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^actuator: request is malformed$"
+                ):
+                    publish_authorized_request(
+                        endpoint, bad, self.decision, approval_valid=True,
+                        gateway_decision=gateway, intent=self.chain["intent"],
+                        now=NOW, approval=self.chain["approval"],
+                    )
+                self.assertIsNone(
+                    endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
+                )
+
     def test_fast_path_cannot_reach_actuator(self):
         with self.assertRaisesRegex(ContractValidationError, "gateway has not authorized"):
             publish_authorized_request(

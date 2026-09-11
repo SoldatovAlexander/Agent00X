@@ -90,9 +90,9 @@ def validate_approval(
     check_intent_approved(intent, approval)
     if approval["policy_version"] != policy_version:
         raise ContractValidationError("approval: policy version mismatch")
-    if _parse_time(approval["expires_at"]) <= moment:
+    if _require_expiry(approval, "expiry") <= moment:
         raise ContractValidationError("approval: expired")
-    if _parse_time(intent["expires_at"]) <= moment:
+    if _require_expiry(intent, "intent expiry") <= moment:
         raise ContractValidationError("approval: intent expired")
 
 
@@ -179,6 +179,19 @@ def check_decision_usable(decision: dict[str, Any], *, now: datetime) -> None:
         raise ContractValidationError("decision: not allow")
     if expires_at <= moment:
         raise ContractValidationError("decision: expired")
+
+
+def _require_expiry(mapping: dict[str, Any], label: str) -> datetime:
+    raw = mapping.get("expires_at")
+    if not isinstance(raw, str):
+        raise ContractValidationError(f"approval: {label} is invalid")
+    try:
+        moment = _parse_time(raw)
+    except ValueError as exc:
+        raise ContractValidationError(f"approval: {label} is invalid") from exc
+    if moment.tzinfo is None:
+        raise ContractValidationError(f"approval: {label} is invalid")
+    return moment
 
 
 def _parse_time(value: str) -> datetime:

@@ -311,6 +311,27 @@ class AuthorityTests(unittest.TestCase):
             policy_version="policy-1", now=NOW,
         )
 
+    def test_malformed_approval_expiry_denied_without_raw_error(self):
+        for holder, bad in (
+            ("approval", 123), ("approval", None), ("approval", "not-a-time"),
+            ("approval", "2026-09-04T12:11:00"), ("intent", 123),
+            ("intent", "not-a-time"), ("intent", "2026-09-04T12:11:00"),
+        ):
+            with self.subTest(holder=holder, expiry=bad):
+                approval = dict(self.chain["approval"])
+                intent = dict(self.chain["intent"])
+                (approval if holder == "approval" else intent)["expires_at"] = bad
+                with self.assertRaises(ContractValidationError) as raised:
+                    validate_approval(
+                        approval, self.chain["staged_change"], intent,
+                        policy_version="policy-1", now=NOW,
+                    )
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError))
+        validate_approval(
+            self.chain["approval"], self.chain["staged_change"], self.chain["intent"],
+            policy_version="policy-1", now=NOW,
+        )
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

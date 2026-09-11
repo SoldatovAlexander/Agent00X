@@ -273,6 +273,10 @@ class GitHubAppPublicationChannel:
     def publish_verified_files(self, *, branch: str, staged_change: Mapping[str, object], files: Sequence[object]) -> str:
         """Create a scoped branch and publish only files exported from a verified manifest."""
 
+        if not isinstance(staged_change, dict):
+            raise ContractValidationError("GitHub actuator: staged change is invalid")
+        if not isinstance(files, (list, tuple)) or not files:
+            raise ContractValidationError("GitHub actuator: verified publish manifest is empty")
         repository_id = f"github-installation/{self._config.installation_id}/repository/{self._config.repository_id}"
         if staged_change.get("repository_id") != repository_id:
             raise ContractValidationError("GitHub actuator: staged change repository is not allowlisted")
@@ -284,8 +288,6 @@ class GitHubAppPublicationChannel:
             raise ContractValidationError("GitHub actuator: staged change patch digest is invalid")
         if not isinstance(branch, str) or not branch.startswith("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
-        if not files:
-            raise ContractValidationError("GitHub actuator: verified publish manifest is empty")
         validated: list[tuple[str, str]] = []
         for file in files:
             path, content, content_digest = getattr(file, "path", None), getattr(file, "content", None), getattr(file, "content_digest", None)

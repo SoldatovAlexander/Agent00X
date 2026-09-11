@@ -184,6 +184,51 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractValidationError, "not allowlisted"):
                 channel.publish_pull_request({"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/999", "branch": "agent/process-demo-001", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "key", "policy_effect": "allow", "approval_valid": True})
 
+    def test_malformed_verified_file_inputs_make_zero_provider_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            calls = []
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: calls.append(("POST", url)),
+                get_json=lambda url, headers: calls.append(("GET", url)),
+                put_json=lambda url, headers, payload: calls.append(("PUT", url)),
+            )
+            staged = {
+                "repository_id": "github-installation/456/repository/1001",
+                "base_commit": "a" * 40,
+                "patch_digest": "sha256:" + "b" * 64,
+            }
+            from app_contracts.digests import sha256_bytes
+            content = "verified content\n"
+            valid_files = [PublishableFile("proof.txt", content, sha256_bytes(content.encode()))]
+            cases = [
+                {"staged_change": None},
+                {"staged_change": [("repository_id", 1)]},
+                {"staged_change": "staged"},
+                {"branch": None},
+                {"branch": 123},
+                {"files": None},
+                {"files": 42},
+                {"files": "proof.txt"},
+                {"files": []},
+            ]
+            for override in cases:
+                with self.subTest(override=override):
+                    kwargs = {
+                        "branch": "agent/process-demo-001",
+                        "staged_change": staged,
+                        "files": valid_files,
+                    }
+                    kwargs.update(override)
+                    with self.assertRaises(ContractValidationError):
+                        channel.publish_verified_files(**kwargs)
+            self.assertEqual(calls, [])
+
     def test_verified_manifest_creates_scoped_branch_and_contents_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

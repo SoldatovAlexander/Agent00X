@@ -354,6 +354,30 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         minter.mint(bad)
             self.assertEqual(calls, [])
 
+    def test_minter_rejects_duplicate_permissions_without_exchange(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            generated = __import__("subprocess").run(
+                ["openssl", "genrsa", "-out", str(key_path), "2048"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            calls = []
+            minter = GitHubAppInstallationTokenMinter(
+                config, post_json=lambda *args: calls.append(args),
+                now=lambda: datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+            )
+            grant = {
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "permissions": ["contents:write", "contents:write"],
+            }
+            with self.assertRaisesRegex(GitHubAppBrokerError, "duplicate GitHub permissions"):
+                minter.mint(grant)
+            self.assertEqual(calls, [])
+
     def test_minter_rejects_malformed_token_expiry_without_token(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

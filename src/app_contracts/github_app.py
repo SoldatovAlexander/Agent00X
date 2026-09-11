@@ -164,6 +164,8 @@ def _github_permissions(raw_permissions: object) -> dict[str, str]:
             raise GitHubAppBrokerError("credential grant contains an unsupported GitHub permission")
         scope, level = permission.split(":", 1)
         permissions[scope] = level
+    if len(permissions) != len(raw_permissions):
+        raise GitHubAppBrokerError("credential grant contains duplicate GitHub permissions")
     return permissions
 
 

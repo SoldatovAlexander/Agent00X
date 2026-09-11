@@ -44,6 +44,8 @@ class GitHubAppBrokerConfig:
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "GitHubAppBrokerConfig":
         source = os.environ if environ is None else environ
+        if not isinstance(source, Mapping):
+            raise GitHubAppConfigurationError("configuration source is invalid")
         app_id = _positive_integer(source, "AGENT_GITHUB_APP_ID")
         installation_id = _positive_integer(source, "AGENT_GITHUB_INSTALLATION_ID")
         repository_id = _positive_integer(source, "AGENT_GITHUB_REPOSITORY_ID")
@@ -58,6 +60,8 @@ class GitHubAppBrokerConfig:
             raise GitHubAppConfigurationError("AGENT_GITHUB_PRIVATE_KEY_PATH must not be readable by group or others")
 
         api_url = source.get("AGENT_GITHUB_API_URL", "https://api.github.com")
+        if not isinstance(api_url, str):
+            raise GitHubAppConfigurationError("AGENT_GITHUB_API_URL must be an absolute https URL")
         parsed = urlparse(api_url)
         if parsed.scheme != "https" or not parsed.netloc:
             raise GitHubAppConfigurationError("AGENT_GITHUB_API_URL must be an absolute https URL")
@@ -65,10 +69,10 @@ class GitHubAppBrokerConfig:
 
 
 def _required(source: Mapping[str, str], name: str) -> str:
-    value = source.get(name, "").strip()
-    if not value:
+    value = source.get(name, "")
+    if not isinstance(value, str) or not value.strip():
         raise GitHubAppConfigurationError(f"{name} is required")
-    return value
+    return value.strip()
 
 
 def _positive_integer(source: Mapping[str, str], name: str) -> int:

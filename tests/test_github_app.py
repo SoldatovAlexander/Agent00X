@@ -51,6 +51,30 @@ class GitHubAppConfigurationTests(unittest.TestCase):
         self.assertEqual(config.repository, "example/agent00x-sandbox")
         self.assertEqual(config.api_url, "https://api.github.com")
 
+    def test_preflight_rejects_non_string_configuration_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            base = self._environment(key_path)
+            cases = [
+                ("AGENT_GITHUB_APP_ID", 123),
+                ("AGENT_GITHUB_TEST_REPOSITORY", None),
+                ("AGENT_GITHUB_PRIVATE_KEY_PATH", ["path"]),
+                ("AGENT_GITHUB_API_URL", 12345),
+            ]
+            for name, bad in cases:
+                with self.subTest(setting=name):
+                    environment = dict(base)
+                    environment[name] = bad
+                    with self.assertRaises(GitHubAppConfigurationError) as raised:
+                        GitHubAppBrokerConfig.from_environment(environment)
+                    message = str(raised.exception)
+                    self.assertNotIn(str(key_path), message)
+                    self.assertNotIn("unused", message)
+            with self.assertRaisesRegex(GitHubAppConfigurationError, "configuration source is invalid"):
+                GitHubAppBrokerConfig.from_environment(["AGENT_GITHUB_APP_ID=123"])
+
     def test_preflight_fails_closed_for_missing_or_invalid_metadata(self):
         with self.assertRaisesRegex(GitHubAppConfigurationError, "AGENT_GITHUB_APP_ID is required"):
             GitHubAppBrokerConfig.from_environment({})

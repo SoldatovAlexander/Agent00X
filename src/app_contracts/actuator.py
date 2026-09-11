@@ -51,6 +51,8 @@ def publish_authorized_request(
             raise ContractValidationError("actuator: request identity is invalid")
     if actuator_request["operation"] != "publish_pull_request":
         raise ContractValidationError("actuator: operation is not registered")
+    if not isinstance(gateway_decision, GatewayDecision):
+        raise ContractValidationError("actuator: gateway decision is malformed")
     check_decision_usable(policy_decision, now=now)
     check_intent_approved(intent, approval)
     if not gateway_decision.allowed or gateway_decision.path is not GatewayPath.SLOW:

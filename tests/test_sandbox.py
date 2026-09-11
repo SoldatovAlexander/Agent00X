@@ -61,6 +61,32 @@ class SandboxTests(unittest.TestCase):
             result = sandbox.run(["python3", "-m", "unittest", "-q"])
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_malformed_invocation_denied_without_execution(self):
+        with self.backend.create(self.fixture, {"python3"}) as sandbox:
+            for bad_argv in (None, 123, "python3 -m unittest", b"python3", [], [None], ["python3", 42], [""]):
+                with self.subTest(argv=type(bad_argv).__name__):
+                    with self.assertRaisesRegex(SandboxError, "command invocation is malformed"):
+                        sandbox.run(bad_argv)
+            for bad_timeout in (True, "30", -1, 0, None):
+                with self.subTest(timeout=bad_timeout):
+                    with self.assertRaisesRegex(SandboxError, "command timeout is invalid"):
+                        sandbox.run(["python3", "--version"], timeout_seconds=bad_timeout)
+            result = sandbox.run(["python3", "--version"])
+            self.assertEqual(result.returncode, 0)
+
+    def test_malformed_invocation_denied_without_execution(self):
+        with self.backend.create(self.fixture, {"python3"}) as sandbox:
+            for bad_argv in (None, 123, "python3 -m unittest", b"python3", [], [None], ["python3", 42], [""]):
+                with self.subTest(argv=type(bad_argv).__name__):
+                    with self.assertRaisesRegex(SandboxError, "command invocation is malformed"):
+                        sandbox.run(bad_argv)
+            for bad_timeout in (True, "30", -1, 0, None):
+                with self.subTest(timeout=bad_timeout):
+                    with self.assertRaisesRegex(SandboxError, "command timeout is invalid"):
+                        sandbox.run(["python3", "--version"], timeout_seconds=bad_timeout)
+            result = sandbox.run(["python3", "--version"])
+            self.assertEqual(result.returncode, 0)
+
     def test_non_allowlisted_command_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(SandboxError, "not allowlisted"):

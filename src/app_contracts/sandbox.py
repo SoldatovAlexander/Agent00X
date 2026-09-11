@@ -74,8 +74,19 @@ class LocalProcessSandbox:
     def run(self, argv: Sequence[str], timeout_seconds: int = 30) -> CommandResult:
         if self._closed:
             raise SandboxError("sandbox is closed")
-        if not argv:
-            raise SandboxError("empty command")
+        if (
+            isinstance(argv, (str, bytes))
+            or not isinstance(argv, (list, tuple))
+            or not argv
+            or any(not isinstance(part, str) or not part for part in argv)
+        ):
+            raise SandboxError("command invocation is malformed")
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not timeout_seconds > 0
+        ):
+            raise SandboxError("command timeout is invalid")
         executable = Path(argv[0]).name
         if executable not in self._allowed_commands:
             raise SandboxError(f"command {executable!r} is not allowlisted")

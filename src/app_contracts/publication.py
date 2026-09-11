@@ -51,6 +51,8 @@ class PublicationJournal:
     ) -> PublicationRecord:
         if not isinstance(process_id, str) or not process_id:
             raise ValueError("publication process ID is invalid")
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ValueError("publication idempotency key is invalid")
         try:
             existing = self.get(process_id)
         except KeyError:

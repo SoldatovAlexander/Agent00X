@@ -86,6 +86,22 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 journal.get(self.request["process_id"])
 
+    def test_malformed_idempotency_key_creates_no_record(self):
+        with PublicationJournal(self.database) as journal:
+            for bad in (None, 123, "", ["publish/x"]):
+                with self.subTest(key=type(bad).__name__):
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication idempotency key is invalid$"
+                    ):
+                        journal.prepare(
+                            "process-publication-009",
+                            idempotency_key=bad,
+                            request_digest="sha256:" + "b" * 64,
+                            repository_id=self.request["repository_id"],
+                        )
+            with self.assertRaises(KeyError):
+                journal.get("process-publication-009")
+
     def test_identical_prepare_replay_returns_existing_record(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

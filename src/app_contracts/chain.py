@@ -24,6 +24,7 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
     malformed = [name for name in names if not isinstance(chain[name], dict)]
     if malformed:
         raise ContractValidationError(f"chain: malformed contracts {malformed}")
+    _require_members(chain)
 
     process_ids = {
         chain[name]["process_id"]
@@ -123,7 +124,70 @@ def _require_single(field: str, values: set[str]) -> None:
         raise ContractValidationError(f"chain: {field} mismatch")
 
 
+_REQUIRED_MEMBERS = {
+    "process_contract": ("process_id", "repository_id"),
+    "identity": ("identity_id", "status"),
+    "capability_grant": (
+        "subject", "status", "process_id", "grant_id",
+        "delegable_actions", "resources", "max_delegation_depth",
+    ),
+    "delegation_receipt": (
+        "parent_grant_id", "issuer", "process_id", "actions",
+        "resources", "remaining_delegation_depth",
+    ),
+    "trust_profile": ("principal_id",),
+    "canonical_envelope": ("correlation_id", "security"),
+    "task_contract": ("process_id", "task_id"),
+    "evidence_bundle": ("task_id", "patch_digest"),
+    "verification_report": ("evidence_digest", "verdict"),
+    "staged_change": (
+        "process_id", "repository_id", "patch_digest", "evidence_digest",
+        "verification_digest", "patch_artifact_ref",
+    ),
+    "approval": ("process_id", "repository_id", "staged_change_digest", "approval_id"),
+    "intent": (
+        "process_id", "repository_id", "staged_change_digest", "approval_id",
+        "branch_namespace", "title_artifact_ref", "body_artifact_ref",
+        "idempotency_key", "base_commit",
+    ),
+    "policy_decision": ("repository_id", "staged_change_digest", "decision_id", "effect"),
+    "actuator_request": (
+        "process_id", "repository_id", "base_commit", "staged_change_digest",
+        "approval_id", "branch_namespace", "title_artifact_ref",
+        "body_artifact_ref", "idempotency_key", "policy_decision_id",
+        "patch_artifact_ref", "actuator_id",
+    ),
+    "credential_use_grant": ("actuator_id", "repository_id", "request_digest"),
+    "action_receipt": (
+        "process_id", "repository_id", "staged_change_digest", "approval_id",
+        "policy_decision_id", "idempotency_key",
+    ),
+}
+
+
+def _require_members(chain: dict[str, dict[str, Any]]) -> None:
+    for name, fields in _REQUIRED_MEMBERS.items():
+        member = chain[name]
+        for field in fields:
+            if field not in member:
+                raise ContractValidationError(f"chain: {name} is missing {field}")
+    security = chain["canonical_envelope"]["security"]
+    if not isinstance(security, dict) or "tainted" not in security:
+        raise ContractValidationError("chain: canonical_envelope is missing security.tainted")
+
+
 def _validate_delegation(parent: dict[str, Any], child: dict[str, Any]) -> None:
+    for holder, field in (
+        (child, "actions"), (child, "resources"),
+        (parent, "delegable_actions"), (parent, "resources"),
+    ):
+        if not isinstance(holder[field], (list, tuple)):
+            raise ContractValidationError(f"chain: delegation {field} is malformed")
+    for field in ("remaining_delegation_depth", "max_delegation_depth"):
+        holder = child if field == "remaining_delegation_depth" else parent
+        value = holder[field]
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ContractValidationError(f"chain: delegation {field} is malformed")
     if child["issuer"] != parent["subject"]:
         raise ContractValidationError("chain: delegation issuer mismatch")
     if child["process_id"] != parent["process_id"]:

@@ -134,6 +134,34 @@ class ContractTests(unittest.TestCase):
             validate_chain(["not-a-chain"])
         validate_chain(self.chain)
 
+    def test_incomplete_member_contracts_denied_without_raw_error(self):
+        victims = [
+            ("staged_change", "process_id"),
+            ("approval", "approval_id"),
+            ("intent", "branch_namespace"),
+            ("delegation_receipt", "actions"),
+            ("canonical_envelope", "security"),
+            ("action_receipt", "idempotency_key"),
+        ]
+        for name, field in victims:
+            with self.subTest(member=name):
+                chain = json.loads(json.dumps(self.chain))
+                del chain[name][field]
+                with self.assertRaises(ContractValidationError) as raised:
+                    validate_chain(chain)
+                self.assertNotIsInstance(raised.exception, (KeyError, TypeError, AttributeError))
+        validate_chain(self.chain)
+
+    def test_malformed_member_values_denied_without_details(self):
+        chain = json.loads(json.dumps(self.chain))
+        chain["delegation_receipt"]["actions"] = {"write": True}
+        with self.assertRaisesRegex(ContractValidationError, "^chain: delegation actions is malformed$"):
+            validate_chain(chain)
+        chain = json.loads(json.dumps(self.chain))
+        chain["delegation_receipt"]["remaining_delegation_depth"] = "plenty"
+        with self.assertRaisesRegex(ContractValidationError, "^chain: delegation remaining_delegation_depth is malformed$"):
+            validate_chain(chain)
+
     def test_delegation_cannot_expand_actions(self):
         chain = json.loads(json.dumps(self.chain))
         chain["delegation_receipt"]["actions"].append("workspace.patch")

@@ -111,6 +111,14 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("authorization", envelope["security"]["permitted_uses"])
         self.assertIn("authorization", envelope["security"]["forbidden_uses"])
 
+    def test_malformed_chain_roots_denied_without_raw_error(self):
+        for bad in (None, "chain", 42, [["process_contract"]]):
+            with self.subTest(root=type(bad).__name__):
+                with self.assertRaises(ContractValidationError) as raised:
+                    validate_chain(bad)
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
+        validate_chain(self.chain)
+
     def test_malformed_chain_entries_denied_without_details(self):
         for broken in (
             {"capability_grant": None},

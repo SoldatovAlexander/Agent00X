@@ -415,6 +415,19 @@ class AuthorityTests(unittest.TestCase):
         )
         self.assertEqual(decision["effect"], "allow")
 
+    def test_non_boolean_availability_rejected_at_construction(self):
+        for bad in ("false", "true", 1, 0, None, []):
+            with self.subTest(available=bad):
+                with self.assertRaisesRegex(ValueError, "availability must be a boolean"):
+                    DeterministicPolicy(self.config, available=bad)
+        self.assertTrue(DeterministicPolicy(self.config).decide(
+            decision_id="decision-policy-011",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )["effect"] == "allow")
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

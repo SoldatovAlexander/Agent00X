@@ -113,6 +113,8 @@ class DeterministicPolicy:
     """Narrow allowlist policy for the one MVP side effect."""
 
     def __init__(self, config: PolicyConfig, *, available: bool = True) -> None:
+        if not isinstance(available, bool):
+            raise ValueError("policy: availability must be a boolean")
         self._config = config
         self._available = available
 

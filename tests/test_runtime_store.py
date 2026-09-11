@@ -329,6 +329,31 @@ class RuntimeStoreTests(unittest.TestCase):
             record = store.create("process-durable-016")
             self.assertEqual(record.version, 0)
 
+    def test_malformed_audit_fields_denied_without_mutation(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-017")
+            cases = (
+                {"actor_id": None}, {"actor_id": ""},
+                {"event_type": 123}, {"input_digest": None},
+                {"result": []}, {"result": ""},
+            )
+            for override in cases:
+                with self.subTest(override=override):
+                    kwargs = {
+                        "actor_id": "agent-worker-001",
+                        "event_type": "gateway.request",
+                        "input_digest": "sha256:" + "a" * 64,
+                        "result": "denied",
+                    }
+                    kwargs.update(override)
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^audit: event field is invalid$"
+                    ):
+                        store.append_audit_event(
+                            "process-durable-017", reason_codes=("denied",), **kwargs
+                        )
+            self.assertEqual(store.audit_events("process-durable-017"), [])
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

@@ -195,6 +195,9 @@ class SQLiteProcessStore:
         now: datetime | None = None,
     ) -> None:
         _validate_reason_codes(reason_codes)
+        for field in (actor_id, event_type, input_digest, result):
+            if not isinstance(field, str) or not field:
+                raise ContractValidationError("audit: event field is invalid")
         self.get(process_id)
         with self._connection:
             self._connection.execute(

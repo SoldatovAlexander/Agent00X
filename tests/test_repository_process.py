@@ -345,6 +345,27 @@ class RepositoryProcessTests(unittest.TestCase):
         manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
         self.assertEqual([item.path for item in manifest], ["calculator.py"])
 
+    def test_whitespace_padded_paths_denied_without_mutation(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        for unsafe in (" calculator.py", "calculator.py ", "\tcalculator.py", "calculator.py\n"):
+            with self.subTest(path=repr(unsafe)):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={unsafe: "evil"},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                self.assertEqual(
+                    (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+                )
+        self.assertEqual(_safe_relative_path("my dir/file.txt").as_posix(), "my dir/file.txt")
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

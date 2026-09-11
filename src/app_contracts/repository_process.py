@@ -211,6 +211,7 @@ def _safe_relative_path(value: str) -> Path:
         path.is_absolute()
         or ".." in path.parts
         or value in {"", "."}
+        or value != value.strip()
         or value.startswith(("./", "../"))
         or "/./" in value
         or value.endswith("/.")

@@ -405,6 +405,16 @@ class SchemaIdTests(unittest.TestCase):
                 self.assertNotIsInstance(raised.exception, TypeError)
         self.assertEqual(sha256_digest({"b": 2, "a": 1}), sha256_digest({"a": 1, "b": 2}))
 
+    def test_malformed_enum_declaration_rejected_before_instance_check(self):
+        for bad in ("allow", 42, {"allow": True}, [], None):
+            with self.subTest(enum=bad):
+                schema = {"enum": bad}
+                with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*enum"):
+                    validate_schema(schema)
+                with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*enum"):
+                    validate("allow", schema)
+        validate("allow", {"enum": ["allow", "deny"]})
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

@@ -53,6 +53,10 @@ def validate_schema(schema: Any, path: str = "$") -> None:
         raise RuntimeError(
             f"invalid schema declaration at {path}: additionalProperties must be a boolean"
         )
+    if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
+        raise RuntimeError(
+            f"invalid schema declaration at {path}: enum must be a non-empty list"
+        )
     if "items" in schema:
         validate_schema(schema["items"], f"{path}[]")
 

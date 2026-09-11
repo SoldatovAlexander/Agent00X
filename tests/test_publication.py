@@ -283,6 +283,24 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertNotIn(self.request["idempotency_key"], leaked)
             self.assertNotIn(self.request["staged_change_digest"], leaked)
 
+    def test_malformed_collaborators_denied_without_mutation_or_call(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            bad_journals = (None, "journal", 42, object())
+            for bad_journal in bad_journals:
+                with self.subTest(journal=type(bad_journal).__name__):
+                    with self.assertRaises(ContractValidationError):
+                        execute_publication(bad_journal, self.endpoint, dict(self.request))
+            for bad_endpoint in (None, "endpoint", 42, object()):
+                with self.subTest(endpoint=type(bad_endpoint).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^publication: collaborator is invalid$"
+                    ):
+                        execute_publication(journal, bad_endpoint, dict(self.request))
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "prepared")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_malformed_request_values_denied_before_attempt(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

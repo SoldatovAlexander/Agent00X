@@ -2871,6 +2871,107 @@ Commit: ALLOWED
 - none
 Commit: ALLOWED
 
+## Batch L — boundary follow-up
+
+Выполнять только EXP-112—EXP-116 строго по порядку: local, штатный suite,
+diff/status, один local commit и evidence на карточку. При первой ошибке — стоп.
+Docker, testdev, Agent00X-sandbox, внешние системы и push запрещены.
+
+## EXP-112 — authority identifier scalar boundary
+Статус: READY
+Цель: typed approval/intent identifiers fail closed before equality checks.
+Гипотеза: malformed scalar identity cannot alias authorization binding.
+Зависит от: EXP-100
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy redesign, GitHub.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- tests/test_authority.py
+Критерии приёмки:
+- non-string required identifiers deny without payload leak; valid approval stays green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-113 — gateway malformed-envelope regression
+Статус: READY
+Цель: malformed gateway envelope fails closed without raw lookup error.
+Гипотеза: classification has deterministic mapping/type boundary.
+Зависит от: EXP-112
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: gateway redesign, GitHub.
+Разрешённые пути:
+- src/app_contracts/gateway.py
+- tests/test_gateway.py
+Критерии приёмки:
+- malformed envelope denied and existing routing remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-114 — publication idempotency-key boundary
+Статус: READY
+Цель: malformed idempotency key cannot create journal state.
+Гипотеза: journal prepare validates identity scalars before persistence.
+Зависит от: EXP-113
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database migration, real GitHub.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- malformed key denies with no record mutation; valid replay remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-115 — sandbox symlink containment regression
+Статус: READY
+Цель: sandbox rejects symlink escape from working root.
+Гипотеза: containment check resolves links before file access.
+Зависит от: EXP-114
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker, real repository, GitHub.
+Разрешённые пути:
+- src/app_contracts/sandbox.py
+- tests/test_sandbox.py
+Критерии приёмки:
+- crafted symlink escape is denied without outside read; normal file remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-116 — GitHub token response boundary
+Статус: READY
+Цель: malformed token-mint response cannot create a usable channel.
+Гипотеза: adapter validates opaque token response fields before use.
+Зависит от: EXP-115
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub, secrets.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed response denies without token leak; valid mock response remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
 ## Формат task card
 
 Добавляйте карточки в порядке выполнения. Исполнитель работает только с `READY`

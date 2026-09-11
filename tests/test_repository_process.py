@@ -428,6 +428,35 @@ class RepositoryProcessTests(unittest.TestCase):
                     ["calculator.py", "test_calculator.py"],
                 )
 
+    def test_malformed_metadata_leaves_workspace_untouched(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        base_kwargs = {
+            "process_id": "process-m1-demo",
+            "task_id": "task-m1-demo",
+            "repository_id": "github-installation/42/repository/1001",
+            "base_commit": "a" * 40,
+        }
+        for field in ("process_id", "task_id", "repository_id", "base_commit"):
+            for bad in (None, 123, ""):
+                with self.subTest(field=field, value=bad):
+                    kwargs = dict(base_kwargs)
+                    kwargs[field] = bad
+                    sandbox = self.backend.create(self.fixture, {"python3"})
+                    self.addCleanup(sandbox.close)
+                    with self.assertRaisesRegex(
+                        ContractValidationError, f"preparation {field} is invalid"
+                    ):
+                        prepare_change(
+                            sandbox,
+                            changes={"calculator.py": self.new_calculator},
+                            test_command=["python3", "-m", "unittest", "-v"],
+                            **kwargs,
+                        )
+                    self.assertEqual(
+                        (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"),
+                        original,
+                    )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

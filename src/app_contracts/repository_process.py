@@ -57,6 +57,14 @@ def prepare_change(
         or any(not isinstance(part, str) or not part for part in test_command)
     ):
         raise ContractValidationError("test command is malformed")
+    for label, value in (
+        ("process_id", process_id),
+        ("task_id", task_id),
+        ("repository_id", repository_id),
+        ("base_commit", base_commit),
+    ):
+        if not isinstance(value, str) or not value:
+            raise ContractValidationError(f"preparation {label} is invalid")
     for key in changes:
         if not isinstance(key, str) or not key:
             raise ContractValidationError("change proposal has invalid path")

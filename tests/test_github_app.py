@@ -202,6 +202,33 @@ class GitHubAppConfigurationTests(unittest.TestCase):
         self.assertEqual(json.loads(base64.urlsafe_b64decode(payload + "=="))["iss"], "123")
         self.assertTrue(signature)
 
+    def test_minter_rejects_malformed_token_response_without_leak(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            generated = __import__("subprocess").run(
+                ["openssl", "genrsa", "-out", str(key_path), "2048"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            grant = {
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "permissions": ["contents:write"],
+            }
+            for bad_response in (["github-token-opaque"], "github-token-opaque", None, 42):
+                with self.subTest(response=type(bad_response).__name__):
+                    minter = GitHubAppInstallationTokenMinter(
+                        config, post_json=lambda *_args: bad_response,
+                        now=lambda: datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+                    )
+                    with self.assertRaisesRegex(
+                        GitHubAppBrokerError, "token response must be an object"
+                    ) as raised:
+                        minter.mint(grant)
+                    self.assertNotIn("github-token-opaque", str(raised.exception))
+
     def test_minter_rejects_wrong_installation_without_token_exchange(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

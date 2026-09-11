@@ -115,6 +115,8 @@ class GitHubAppInstallationTokenMinter:
                 "permissions": _github_permissions(credential_grant.get("permissions")),
             },
         )
+        if not isinstance(token_response, dict):
+            raise GitHubAppBrokerError("GitHub App token response must be an object")
         token = token_response.get("token")
         expires_at = token_response.get("expires_at")
         if not isinstance(token, str) or not token or not isinstance(expires_at, str) or not expires_at:

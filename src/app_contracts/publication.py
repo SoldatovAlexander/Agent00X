@@ -160,6 +160,15 @@ def execute_publication(
         or any(field not in request for field in boundary_fields)
     ):
         raise ContractValidationError("publication: request is malformed")
+    for field in (
+        "operation", "repository_id", "branch",
+        "staged_change_digest", "idempotency_key", "policy_effect",
+    ):
+        value = request[field]
+        if not isinstance(value, str) or not value:
+            raise ContractValidationError("publication: request value is invalid")
+    if not isinstance(request["approval_valid"], bool):
+        raise ContractValidationError("publication: request value is invalid")
     record = journal.get(request["process_id"])
     if record.status != "prepared":
         raise ValueError("publication is not prepared")

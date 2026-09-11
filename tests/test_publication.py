@@ -255,6 +255,26 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertNotIn(self.request["idempotency_key"], leaked)
             self.assertNotIn(self.request["staged_change_digest"], leaked)
 
+    def test_malformed_request_values_denied_before_attempt(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            cases = [
+                {"branch": 123}, {"branch": None}, {"branch": ""},
+                {"staged_change_digest": None}, {"operation": ["publish_pull_request"]},
+                {"idempotency_key": ""}, {"policy_effect": None}, {"approval_valid": "yes"},
+            ]
+            for override in cases:
+                with self.subTest(override=override):
+                    request = dict(self.request)
+                    request.update(override)
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^publication: request value is invalid$"
+                    ):
+                        execute_publication(journal, self.endpoint, request)
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "prepared")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_malformed_request_denied_before_state_or_side_effect(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

@@ -119,4 +119,7 @@ class InMemoryCredentialBroker:
             raise ContractValidationError("broker: credential grant already used")
         self._used_grants.add(grant_id)
         self.opened_grants.append(grant_id)
-        return self._channel_factory()
+        channel = self._channel_factory()
+        if not callable(getattr(channel, "publish_pull_request", None)):
+            raise ContractValidationError("broker: channel factory result is invalid")
+        return channel

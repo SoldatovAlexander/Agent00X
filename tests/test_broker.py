@@ -163,7 +163,7 @@ class BrokerTests(unittest.TestCase):
 
     def test_malformed_clock_denied_before_factory(self):
         calls = []
-        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory") or self.endpoint)
         for bad_now in (None, "2026-09-04T12:07:00Z", 123, datetime(2026, 9, 4, 12, 7)):
             with self.subTest(now=type(bad_now).__name__):
                 with self.assertRaisesRegex(
@@ -181,7 +181,7 @@ class BrokerTests(unittest.TestCase):
 
     def test_expired_or_malformed_grant_never_reaches_factory(self):
         calls = []
-        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory") or self.endpoint)
         valid_now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
         expired = [
             datetime(2026, 9, 4, 12, 11, tzinfo=timezone.utc),
@@ -279,6 +279,18 @@ class BrokerTests(unittest.TestCase):
                 missing, self.chain["actuator_request"], now=NOW
             )
         self.assertEqual(calls, [])
+
+    def test_malformed_factory_result_never_reaches_actuator(self):
+        for bad in (None, 123, "channel", {}, ["channel"]):
+            with self.subTest(result=type(bad).__name__):
+                broker = InMemoryCredentialBroker(lambda: bad)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^broker: channel factory result is invalid$"
+                ):
+                    broker.open_github_publication_channel(
+                        self.chain["credential_use_grant"], self.chain["actuator_request"],
+                        now=NOW,
+                    )
 
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"

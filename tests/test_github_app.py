@@ -363,6 +363,14 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(GitHubAppBrokerError, "does not match"):
                 minter.mint({"credential_class": "github-app-installation", "installation_id": 999, "permissions": ["contents:write"]})
 
+    def test_brokered_actuator_rejects_invalid_broker_without_calls(self):
+        for bad in (None, "broker", 42, {}, object()):
+            with self.subTest(broker=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^GitHub actuator: broker is invalid$"
+                ):
+                    BrokeredGitHubActuator(bad)
+
     def test_broker_to_actuator_path_keeps_token_private_and_grant_single_use(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

@@ -15,6 +15,8 @@ from .validator import ContractValidationError
 
 class BrokeredGitHubActuator:
     def __init__(self, broker: CredentialBroker) -> None:
+        if not callable(getattr(broker, "open_github_publication_channel", None)):
+            raise ContractValidationError("GitHub actuator: broker is invalid")
         self._broker = broker
 
     def publish_pull_request(

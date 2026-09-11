@@ -354,6 +354,34 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         minter.mint(bad)
             self.assertEqual(calls, [])
 
+    def test_minter_rejects_malformed_token_expiry_without_token(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            generated = __import__("subprocess").run(
+                ["openssl", "genrsa", "-out", str(key_path), "2048"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            grant = {
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "permissions": ["contents:write"],
+            }
+            for bad_expiry in ("tomorrow", "2026-09-04 12:10:00", "2026-13-45T99:99:99Z", ""):
+                with self.subTest(expiry=bad_expiry):
+                    minter = GitHubAppInstallationTokenMinter(
+                        config,
+                        post_json=lambda *_a: {"token": "github-token-opaque", "expires_at": bad_expiry},
+                        now=lambda: datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+                    )
+                    with self.assertRaisesRegex(
+                        GitHubAppBrokerError, "token (expiry is invalid|response is missing required fields)"
+                    ) as raised:
+                        minter.mint(grant)
+                    self.assertNotIn("github-token-opaque", str(raised.exception))
+
     def test_minter_rejects_wrong_installation_without_token_exchange(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

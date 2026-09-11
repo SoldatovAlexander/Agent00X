@@ -127,6 +127,12 @@ class GitHubAppInstallationTokenMinter:
         expires_at = token_response.get("expires_at")
         if not isinstance(token, str) or not token or not isinstance(expires_at, str) or not expires_at:
             raise GitHubAppBrokerError("GitHub App token response is missing required fields")
+        try:
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise GitHubAppBrokerError("GitHub App token expiry is invalid") from exc
+        if parsed_expiry.tzinfo is None:
+            raise GitHubAppBrokerError("GitHub App token expiry is invalid")
         return _InstallationToken(token, expires_at)
 
     def _app_jwt(self) -> str:

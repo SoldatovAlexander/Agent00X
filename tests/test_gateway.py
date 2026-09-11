@@ -137,6 +137,34 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn("agent-worker-001", dumped)
         self.assertNotIn("c" * 8, dumped)
 
+    def test_non_boolean_policy_availability_denied_without_sink(self):
+        calls = []
+
+        class CountingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                calls.append((process_id, kwargs))
+
+        request = envelope("repository.read")
+        request.update({
+            "correlation_id": "process-gateway-006",
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "payload": {"content_digest": "sha256:" + "f" * 64},
+        })
+        for bad in ("false", "true", 1, 0, None, []):
+            with self.subTest(signal=bad):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^gateway: policy availability is invalid$"
+                ):
+                    classify(envelope("repository.read"), policy_available=bad)
+                decision = enforce(request, policy_available=bad, audit_sink=CountingSink())
+                self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                self.assertFalse(decision.allowed)
+        self.assertEqual(calls, [])
+        self.assertTrue(classify(envelope("repository.read"), policy_available=True).allowed)
+        self.assertFalse(
+            classify(envelope("publish_pull_request", port="tool"), policy_available=False).allowed
+        )
+
     def test_malformed_scalar_fields_denied_before_routing_or_sink(self):
         calls = []
 

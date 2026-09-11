@@ -75,6 +75,8 @@ def classify(envelope: dict[str, Any], *, policy_available: bool) -> GatewayDeci
     """Choose the minimum safe path; a missing policy never permits a write."""
 
     _require_envelope_shape(envelope)
+    if not isinstance(policy_available, bool):
+        raise ContractValidationError("gateway: policy availability is invalid")
     operation = envelope["intent"]["operation"]
     port = envelope["destination"]["port"]
     security = envelope["security"]

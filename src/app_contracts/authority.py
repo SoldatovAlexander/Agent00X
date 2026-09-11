@@ -59,7 +59,7 @@ def validate_approval(
 ) -> None:
     """Reject any approval no longer bound to this exact publication intent."""
 
-    moment = _utc(now)
+    moment = _require_clock(now)
     staged_digest = sha256_digest(staged_change)
     for field in ("process_id", "repository_id", "operation", "approval_id"):
         if field not in approval or field not in intent:
@@ -115,6 +115,7 @@ class DeterministicPolicy:
     ) -> dict[str, Any]:
         if not self._available:
             raise PolicyUnavailable("policy service is unavailable")
+        moment = _require_clock(now)
 
         reasons: list[str] = []
         effect = "allow"
@@ -143,7 +144,6 @@ class DeterministicPolicy:
             else:
                 reasons = ["repository-allowlisted", "approval-valid", "digest-bound"]
 
-        moment = _utc(now)
         expires_at = moment + timedelta(seconds=self._config.decision_ttl_seconds)
         return {
             "schema_version": 1,
@@ -168,7 +168,7 @@ def check_decision_usable(decision: dict[str, Any], *, now: datetime) -> None:
     time because a fresh decision cannot enforce its own TTL.
     """
 
-    moment = _utc(now)
+    moment = _require_clock(now)
     try:
         expires_at = _parse_time(decision["expires_at"])
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
@@ -198,10 +198,10 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        raise ValueError("now must be timezone-aware")
-    return value.astimezone(timezone.utc)
+def _require_clock(now: Any) -> datetime:
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise ContractValidationError("authority: clock is invalid")
+    return now.astimezone(timezone.utc)
 
 
 def _format_time(value: datetime) -> str:

@@ -332,6 +332,39 @@ class AuthorityTests(unittest.TestCase):
             policy_version="policy-1", now=NOW,
         )
 
+    def test_malformed_clocks_denied_as_contract_errors(self):
+        bad_clocks = (None, "2026-09-04T12:07:00Z", 123, datetime(2026, 9, 4, 12, 7))
+        decision = self.policy.decide(
+            decision_id="decision-policy-008",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        for bad in bad_clocks:
+            with self.subTest(now=bad):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^authority: clock is invalid$"
+                ):
+                    validate_approval(
+                        self.chain["approval"], self.chain["staged_change"],
+                        self.chain["intent"], policy_version="policy-1", now=bad,
+                    )
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^authority: clock is invalid$"
+                ):
+                    self.policy.decide(
+                        decision_id="decision-policy-009",
+                        actuator_request=self.chain["actuator_request"],
+                        approval=self.chain["approval"],
+                        staged_change=self.chain["staged_change"],
+                        intent=self.chain["intent"], now=bad,
+                    )
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^authority: clock is invalid$"
+                ):
+                    check_decision_usable(decision, now=bad)
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

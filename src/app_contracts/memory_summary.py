@@ -35,7 +35,9 @@ def check_sources(summary: dict[str, Any]) -> None:
 
     try:
         refs = summary["source_refs"]
-        unique = isinstance(refs, list) and len(set(refs)) == len(refs)
+        if not isinstance(refs, list):
+            raise ContractValidationError("summary: source refs are invalid")
+        unique = len(set(refs)) == len(refs)
     except (KeyError, TypeError) as exc:
         raise ContractValidationError("summary: source refs are invalid") from exc
     if not unique:

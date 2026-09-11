@@ -49,6 +49,18 @@ class MemorySummaryIntervalTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "period boundary is invalid"):
             check_interval(summary)
 
+    def test_malformed_source_shapes_denied_without_payload(self):
+        for bad in ({"ref": "artifact://x"}, "artifact://x", None, [{"ref": "artifact://x"}]):
+            with self.subTest(sources=type(bad).__name__):
+                summary = valid_summary()
+                summary["source_refs"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^summary: source refs are invalid$"
+                ) as raised:
+                    check_sources(summary)
+                self.assertNotIn("Three tool calls", str(raised.exception))
+        check_sources(valid_summary())
+
     def test_duplicate_source_reference_is_rejected_without_content(self):
         summary = valid_summary()
         summary["source_refs"] = [

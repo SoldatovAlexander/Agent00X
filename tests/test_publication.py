@@ -102,6 +102,22 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 journal.get("process-publication-009")
 
+    def test_malformed_request_digest_creates_no_record(self):
+        with PublicationJournal(self.database) as journal:
+            for bad in (None, 123, "", ["sha256:" + "b" * 64]):
+                with self.subTest(digest=type(bad).__name__):
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication request digest is invalid$"
+                    ):
+                        journal.prepare(
+                            "process-publication-011",
+                            idempotency_key=self.request["idempotency_key"],
+                            request_digest=bad,
+                            repository_id=self.request["repository_id"],
+                        )
+            with self.assertRaises(KeyError):
+                journal.get("process-publication-011")
+
     def test_malformed_repository_creates_no_record(self):
         with PublicationJournal(self.database) as journal:
             for bad in (None, 123, ""):

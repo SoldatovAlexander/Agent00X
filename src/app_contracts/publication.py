@@ -55,6 +55,8 @@ class PublicationJournal:
             raise ValueError("publication idempotency key is invalid")
         if not isinstance(repository_id, str) or not repository_id:
             raise ValueError("publication repository is invalid")
+        if not isinstance(request_digest, str) or not request_digest:
+            raise ValueError("publication request digest is invalid")
         try:
             existing = self.get(process_id)
         except KeyError:

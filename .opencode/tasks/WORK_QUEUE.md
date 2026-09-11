@@ -3035,6 +3035,101 @@ Commit: ALLOWED
 - none
 Commit: ALLOWED
 
+## EXP-120 — validator root mapping regression
+Статус: READY
+Цель: non-mapping root fails as contract validation.
+Гипотеза: validator leaks no raw attribute error.
+Зависит от: EXP-119
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema redesign, GitHub.
+Разрешённые пути:
+- src/app_contracts/validator.py
+- tests/test_contracts.py
+Критерии приёмки:
+- malformed roots deny deterministically; valid corpus remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-121 — memory source reference boundary
+Статус: READY
+Цель: malformed memory sources cannot satisfy provenance.
+Гипотеза: source validation rejects invalid references before comparison.
+Зависит от: EXP-120
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: memory backend, GitHub.
+Разрешённые пути:
+- src/app_contracts/memory_summary.py
+- tests/test_memory_summary.py
+Критерии приёмки:
+- malformed sources deny without payload leak; valid sources remain green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-122 — correction reference boundary
+Статус: READY
+Цель: malformed supersedes reference cannot pass correction gate.
+Гипотеза: correction graph accepts explicit valid references only.
+Зависит от: EXP-121
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: learning backend, GitHub.
+Разрешённые пути:
+- src/app_contracts/learning_correction.py
+- tests/test_learning_correction.py
+Критерии приёмки:
+- malformed reference denies; valid correction remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-123 — observation self-reference regression
+Статус: READY
+Цель: result cannot use itself as predecessor.
+Гипотеза: causality excludes self before classification.
+Зависит от: EXP-122
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: durable journal, GitHub.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- self-reference denies without payload; valid predecessor stays green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-124 — mock provider identity boundary
+Статус: READY
+Цель: malformed mock request cannot store a receipt.
+Гипотеза: test provider cannot mask identity defects.
+Зависит от: EXP-123
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub.
+Разрешённые пути:
+- src/app_contracts/mock_github.py
+- tests/test_mock_github.py
+Критерии приёмки:
+- malformed identity denies without receipt; normal replay remains green.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
 ## Формат task card
 
 Добавляйте карточки в порядке выполнения. Исполнитель работает только с `READY`

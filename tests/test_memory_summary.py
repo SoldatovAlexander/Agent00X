@@ -15,6 +15,20 @@ from test_observer_contracts import valid_summary
 
 
 class MemorySummaryIntervalTests(unittest.TestCase):
+    def test_non_mapping_summary_denied_deterministically(self):
+        for bad in (None, [], "summary", 42):
+            with self.subTest(summary=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^summary: summary is malformed$"
+                ):
+                    check_interval(bad)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^summary: summary is malformed$"
+                ):
+                    check_sources(bad)
+        check_interval(valid_summary())
+        check_sources(valid_summary())
+
     def test_reversed_interval_is_rejected(self):
         summary = valid_summary()
         summary["period_start"], summary["period_end"] = summary["period_end"], summary["period_start"]

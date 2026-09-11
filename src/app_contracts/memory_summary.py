@@ -17,6 +17,8 @@ from .validator import ContractValidationError
 def check_interval(summary: dict[str, Any]) -> None:
     """Reject a MemorySummary whose coverage interval runs backwards."""
 
+    if not isinstance(summary, dict):
+        raise ContractValidationError("summary: summary is malformed")
     try:
         start = _parse_time(summary["period_start"])
         end = _parse_time(summary["period_end"])
@@ -33,6 +35,8 @@ def check_sources(summary: dict[str, Any]) -> None:
     condition. The error carries no summary content.
     """
 
+    if not isinstance(summary, dict):
+        raise ContractValidationError("summary: summary is malformed")
     try:
         refs = summary["source_refs"]
         if not isinstance(refs, list):

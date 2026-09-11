@@ -50,6 +50,9 @@ def prepare_change(
         raise ContractValidationError("change proposal is empty")
     if not isinstance(changes, dict):
         raise ContractValidationError("change proposal is malformed")
+    for key in changes:
+        if not isinstance(key, str) or not key:
+            raise ContractValidationError("change proposal has invalid path")
     timestamp = now or datetime.now(timezone.utc)
     changed_paths: list[str] = []
     patch_parts: list[str] = []
@@ -184,6 +187,11 @@ def build_publish_manifest(sandbox: LocalProcessSandbox, prepared: PreparedChang
         raise ContractValidationError("publish manifest is empty")
     if not changes:
         raise ContractValidationError("publish manifest is empty")
+    if not isinstance(changes, dict):
+        raise ContractValidationError("publish manifest request is malformed")
+    for key in changes:
+        if not isinstance(key, str) or not key:
+            raise ContractValidationError("publish manifest request has invalid path")
     requested_list = [_safe_relative_path(name).as_posix() for name in changes]
     if len(set(requested_list)) != len(changes):
         raise ContractValidationError("publish manifest request has duplicate paths")

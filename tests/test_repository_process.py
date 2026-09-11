@@ -366,6 +366,28 @@ class RepositoryProcessTests(unittest.TestCase):
                 )
         self.assertEqual(_safe_relative_path("my dir/file.txt").as_posix(), "my dir/file.txt")
 
+    def test_malformed_mapping_keys_denied_without_output(self):
+        sandbox, result = self.prepare()
+        for bad_changes in ({123: "x"}, {None: "x"}, [("calculator.py", "x")], "calculator.py"):
+            with self.subTest(changes=type(bad_changes).__name__):
+                with self.assertRaises(ContractValidationError):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes=bad_changes,
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                with self.assertRaises(ContractValidationError):
+                    build_publish_manifest(sandbox, result, bad_changes)
+        self.assertEqual(
+            (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), self.new_calculator
+        )
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
+        self.assertEqual([item.path for item in manifest], ["calculator.py"])
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

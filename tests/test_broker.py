@@ -63,14 +63,17 @@ class BrokerTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "already used"):
             self._publish()
 
-    def test_grant_replay_after_channel_failure_stays_denied(self):
+    def test_failed_factory_leaves_grant_reusable_once(self):
         calls = []
+        state = {"fail": True}
 
-        def failing_factory():
+        def flaky_factory():
             calls.append("factory")
-            raise RuntimeError("injected provider failure")
+            if state["fail"]:
+                raise RuntimeError("injected provider failure")
+            return self.endpoint
 
-        broker = InMemoryCredentialBroker(failing_factory)
+        broker = InMemoryCredentialBroker(flaky_factory)
         actuator = BrokeredGitHubActuator(broker)
 
         def attempt():
@@ -87,9 +90,14 @@ class BrokerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "injected provider failure"):
             attempt()
+        self.assertEqual(broker.opened_grants, [])
+        state["fail"] = False
+        result = attempt()
+        self.assertEqual(result.pull_request_id, 1)
+        self.assertEqual(broker.opened_grants, ["credential-grant-demo-001"])
         with self.assertRaisesRegex(ContractValidationError, "already used"):
             attempt()
-        self.assertEqual(calls, ["factory"])
+        self.assertEqual(calls, ["factory", "factory"])
         self.assertNotIn("token", json.dumps(self.chain["credential_use_grant"]))
 
     def test_malformed_grant_never_reaches_channel_factory(self):
@@ -291,6 +299,23 @@ class BrokerTests(unittest.TestCase):
                         self.chain["credential_use_grant"], self.chain["actuator_request"],
                         now=NOW,
                     )
+
+    def test_malformed_factory_result_leaves_grant_reusable(self):
+        box = {"channel": None}
+        broker = InMemoryCredentialBroker(lambda: box["channel"])
+        with self.assertRaisesRegex(
+            ContractValidationError, "^broker: channel factory result is invalid$"
+        ):
+            broker.open_github_publication_channel(
+                self.chain["credential_use_grant"], self.chain["actuator_request"], now=NOW,
+            )
+        self.assertEqual(broker.opened_grants, [])
+        box["channel"] = self.endpoint
+        channel = broker.open_github_publication_channel(
+            self.chain["credential_use_grant"], self.chain["actuator_request"], now=NOW,
+        )
+        self.assertIs(channel, self.endpoint)
+        self.assertEqual(broker.opened_grants, ["credential-grant-demo-001"])
 
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"

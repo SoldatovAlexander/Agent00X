@@ -12,16 +12,20 @@ def canonical_json(value: Any) -> bytes:
 
     M0 uses sorted UTF-8 JSON without insignificant whitespace. A standards-based
     canonicalization profile can replace this function only through a versioned
-    contract change.
+    contract change. Unencodable values fail with a deterministic error that
+    carries no key or value representation.
     """
 
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("canonical JSON is not encodable") from exc
 
 
 def sha256_digest(value: Any) -> str:

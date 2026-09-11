@@ -397,6 +397,14 @@ class SchemaIdTests(unittest.TestCase):
                 self.assertNotIsInstance(raised.exception, (TypeError, AttributeError))
         validate({"a": "x"}, schema)
 
+    def test_invalid_mapping_keys_fail_without_representation(self):
+        for bad in ({1: "a", "b": 2}, {(1, 2): "x"}, {frozenset({"k"}): "y"}):
+            with self.subTest(keys=type(next(iter(bad))).__name__):
+                with self.assertRaisesRegex(ValueError, "^canonical JSON is not encodable$") as raised:
+                    sha256_digest(bad)
+                self.assertNotIsInstance(raised.exception, TypeError)
+        self.assertEqual(sha256_digest({"b": 2, "a": 1}), sha256_digest({"a": 1, "b": 2}))
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

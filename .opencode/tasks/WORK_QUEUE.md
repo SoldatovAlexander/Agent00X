@@ -3558,7 +3558,7 @@ PR, чтение secrets, изменение unit-файлов или перез
 ## Batch O — contract boundaries, local-only
 
 ## EXP-145 — type-check gateway envelope fields
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed values in required gateway envelope fields are denied before classification.
 Гипотеза: presence alone must not let non-string operation/protocol/port or non-boolean security fields enter routing logic.
 Зависит от: none
@@ -3578,7 +3578,7 @@ PR, чтение secrets, изменение unit-файлов или перез
 Commit: ALLOWED
 
 ## EXP-146 — require boolean gateway policy availability
-Статус: READY
+Статус: ACCEPTED
 Цель: a non-boolean policy availability signal cannot authorize a request.
 Гипотеза: truthy strings and integers must not be treated as a healthy Policy Engine.
 Зависит от: EXP-145
@@ -3598,7 +3598,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-147 — gate broker clock shape
-Статус: READY
+Статус: ACCEPTED
 Цель: credential validation rejects missing, non-datetime, and naive clock values before any channel action.
 Гипотеза: grant expiry checks must not rely on an unchecked caller-supplied clock.
 Зависит от: none
@@ -3618,7 +3618,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-148 — validate broker channel factory result
-Статус: READY
+Статус: ACCEPTED
 Цель: a malformed broker factory result is rejected before it can be exposed to an actuator.
 Гипотеза: opening a credential channel must fail closed when the private provider interface is absent.
 Зависит от: EXP-147
@@ -3638,7 +3638,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-149 — validate local sandbox allowlist shape
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed local command allowlists cannot create a sandbox.
 Гипотеза: allowlist members must be non-empty command names, not arbitrary iterable values.
 Зависит от: none
@@ -3658,7 +3658,8 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-150 — validate local sandbox command invocation shape
-Статус: READY
+Статус: REVIEW
+Результат Control Plane: CHANGES REQUESTED — в tests/test_sandbox.py дважды определён `test_malformed_invocation_denied_without_execution`; оставь одно определение и сохрани все его проверки. Production-код этой карточки не меняй.
 Цель: malformed argv and timeout values are denied before subprocess invocation.
 Гипотеза: strings, non-string argv members, booleans, and invalid timeout values must not cross the local process boundary.
 Зависит от: EXP-149
@@ -3678,7 +3679,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-151 — gate secret-scan surface container
-Статус: READY
+Статус: ACCEPTED
 Цель: non-mapping scan surfaces fail deterministically without representation leakage.
 Гипотеза: the canary scanner must validate its root boundary before iterating names or values.
 Зависит от: none
@@ -3698,7 +3699,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-152 — pin correction identity boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: a LearningCorrection self-reference check validates correction_id type before comparison.
 Гипотеза: malformed correction identity cannot bypass or destabilize supersession validation.
 Зависит от: none
@@ -3718,7 +3719,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-153 — validate MemorySummary source references
-Статус: READY
+Статус: ACCEPTED
 Цель: source_refs accepts only non-empty string references before duplicate comparison.
 Гипотеза: malformed source members cannot be silently accepted or trigger a raw set/hash exception.
 Зависит от: none
@@ -3738,7 +3739,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-154 — gate state-machine current state type
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed current state values are rejected deterministically.
 Гипотеза: only ProcessState values may index the transition graph.
 Зависит от: none
@@ -3758,7 +3759,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-155 — sanitize unknown observation trigger errors
-Статус: READY
+Статус: ACCEPTED
 Цель: an unknown checkpoint trigger is denied without echoing its caller-supplied identifier.
 Гипотеза: causality failures must not place untrusted event identifiers into error text.
 Зависит от: none
@@ -3778,7 +3779,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-156 — sanitize unknown invocation errors
-Статус: READY
+Статус: ACCEPTED
 Цель: an unknown result invocation reference is denied without echoing caller content.
 Гипотеза: result causality errors must not disclose an untrusted invocation identifier.
 Зависит от: EXP-155
@@ -3798,7 +3799,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-157 — validate publication request values before attempt
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed required publication request values cannot transition a prepared record to attempting.
 Гипотеза: type and emptiness checks must occur before the external-effect state boundary.
 Зависит от: none
@@ -3818,7 +3819,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-158 — gate publication receipt object shape
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed completion receipts cannot cause raw errors or mutate an attempt.
 Гипотеза: journal completion validates the receipt boundary before reading its fields.
 Зависит от: EXP-157
@@ -3838,7 +3839,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-159 — gate runtime lookup process identifier
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed process IDs are rejected before SQLite read queries.
 Гипотеза: read APIs must apply the same process identity boundary as process creation.
 Зависит от: none
@@ -3858,7 +3859,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-160 — gate publish-manifest prepared change shape
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed prepared-change roots are denied before digest or workspace access.
 Гипотеза: manifest construction must not trust an object merely because it exposes similar attributes.
 Зависит от: none
@@ -3878,7 +3879,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-161 — canonicalize invalid mapping keys safely
-Статус: READY
+Статус: ACCEPTED
 Цель: canonical digest helpers reject unsupported mapping keys with a deterministic value error.
 Гипотеза: digest callers must not receive raw sort/type errors for malformed object keys.
 Зависит от: none
@@ -3898,7 +3899,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-162 — gate GitHub App environment value types
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed GitHub App configuration value types fail through the configuration boundary.
 Гипотеза: non-string environment mapping values cannot trigger raw attribute errors during preflight.
 Зависит от: none
@@ -3918,7 +3919,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-163 — gate GitHub publication request fields
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed GitHub publication request field values are rejected before reconciliation or POST.
 Гипотеза: the provider channel validates scalar request fields at its own boundary even when called directly.
 Зависит от: EXP-162
@@ -3938,7 +3939,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-164 — gate GitHub verified-file request shape
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed verified-file publication inputs are rejected before branch or content provider calls.
 Гипотеза: branch, staged-change, and file input boundaries are independently enforced in the GitHub channel.
 Зависит от: EXP-163

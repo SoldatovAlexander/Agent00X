@@ -152,6 +152,22 @@ class ActuatorTests(unittest.TestCase):
                     endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
                 )
 
+    def test_malformed_policy_decision_denied_before_endpoint(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        for bad in (None, ["decision"], "decision", 42):
+            with self.subTest(decision=type(bad).__name__):
+                endpoint = MockGitHubEndpoint()
+                with self.assertRaises(ContractValidationError) as raised:
+                    publish_authorized_request(
+                        endpoint, self.chain["actuator_request"], bad,
+                        approval_valid=True, gateway_decision=gateway,
+                        intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
+                    )
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
+                self.assertIsNone(
+                    endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
+                )
+
     def test_fast_path_cannot_reach_actuator(self):
         with self.assertRaisesRegex(ContractValidationError, "gateway has not authorized"):
             publish_authorized_request(

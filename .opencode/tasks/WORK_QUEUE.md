@@ -2979,7 +2979,7 @@ diff/status, один local commit и evidence; при первой ошибке
 внешних систем.
 
 ## EXP-117 — runtime process identity boundary
-Статус: READY
+Статус: CLOSED
 Цель: invalid process identity cannot create a runtime record.
 Гипотеза: SQLite boundary does not coerce malformed IDs.
 Зависит от: EXP-116
@@ -2998,7 +2998,7 @@ diff/status, один local commit и evidence; при первой ошибке
 Commit: ALLOWED
 
 ## EXP-118 — delegation mapping boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed delegation chain entries fail closed.
 Гипотеза: chain validation rejects non-mapping parent/child before comparison.
 Зависит от: EXP-117
@@ -3017,7 +3017,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-119 — repository absolute-path regression
-Статус: READY
+Статус: CLOSED
 Цель: absolute paths cannot enter publish manifest.
 Гипотеза: path normalisation remains repository-contained.
 Зависит от: EXP-118
@@ -3036,7 +3036,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-120 — validator root mapping regression
-Статус: READY
+Статус: CLOSED
 Цель: non-mapping root fails as contract validation.
 Гипотеза: validator leaks no raw attribute error.
 Зависит от: EXP-119
@@ -3055,7 +3055,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-121 — memory source reference boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed memory sources cannot satisfy provenance.
 Гипотеза: source validation rejects invalid references before comparison.
 Зависит от: EXP-120
@@ -3074,7 +3074,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-122 — correction reference boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed supersedes reference cannot pass correction gate.
 Гипотеза: correction graph accepts explicit valid references only.
 Зависит от: EXP-121
@@ -3093,7 +3093,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-123 — observation self-reference regression
-Статус: READY
+Статус: CLOSED
 Цель: result cannot use itself as predecessor.
 Гипотеза: causality excludes self before classification.
 Зависит от: EXP-122
@@ -3112,7 +3112,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-124 — mock provider identity boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed mock request cannot store a receipt.
 Гипотеза: test provider cannot mask identity defects.
 Зависит от: EXP-123

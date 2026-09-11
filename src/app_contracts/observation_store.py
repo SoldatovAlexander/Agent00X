@@ -109,7 +109,7 @@ class ObservationStore:
         else:
             trigger_event = None
         if trigger_event is None or trigger_position is None:
-            raise ContractValidationError(f"unknown trigger event: {trigger}")
+            raise ContractValidationError("unknown trigger event")
         for field in ("process_id", "run_id", "branch_id"):
             if trigger_event[field] != checkpoint[field]:
                 raise ContractValidationError(f"checkpoint trigger {field} mismatch")

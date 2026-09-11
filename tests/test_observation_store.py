@@ -169,6 +169,19 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual(store.check_checkpoint(valid_checkpoint()), 0)
         self.assertEqual(len(store.checkpoints()), 0)
 
+    def test_unknown_trigger_error_carries_no_identifier(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        hostile = valid_checkpoint(trigger_event_id="event-caller-secret-001")
+        with self.assertRaisesRegex(
+            ContractValidationError, "^unknown trigger event$"
+        ) as raised:
+            store.check_checkpoint(hostile)
+        self.assertNotIn("caller-secret-001", str(raised.exception))
+        self.assertEqual(len(store.events()), 1)
+        self.assertEqual(len(store.checkpoints()), 0)
+        self.assertEqual(store.check_checkpoint(valid_checkpoint()), 0)
+
     def test_missing_trigger_event_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

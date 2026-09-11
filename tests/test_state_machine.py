@@ -103,6 +103,15 @@ class StateMachineTests(unittest.TestCase):
         )
         self.assertEqual(state, ProcessState.SPECIFIED)
 
+    def test_malformed_target_denied_without_transition(self):
+        for bad in ("executing", None, 42, ["specified"]):
+            with self.subTest(target=type(bad).__name__):
+                with self.assertRaisesRegex(InvalidTransition, "^transition target is invalid$"):
+                    transition(ProcessState.AUTHORIZED, bad, TransitionEvidence())
+        state = transition(ProcessState.AUTHORIZED, ProcessState.EXECUTING, TransitionEvidence())
+        self.assertEqual(state, ProcessState.EXECUTING)
+        self.assertIsInstance(state, ProcessState)
+
     def test_unknown_shortcut_is_rejected(self):
         with self.assertRaisesRegex(InvalidTransition, "is not allowed"):
             transition(ProcessState.RECEIVED, ProcessState.APPLYING, TransitionEvidence())

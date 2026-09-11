@@ -86,6 +86,30 @@ class ActuatorTests(unittest.TestCase):
                 )
                 self.assertNotIn("caller-secret", str(raised.exception))
 
+    def test_unregistered_operation_denied_before_provider_call(self):
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        request = dict(self.chain["actuator_request"], operation="workspace.delete")
+        decision = dict(self.decision, operation="workspace.delete")
+        intent = dict(self.chain["intent"], operation="workspace.delete")
+        for label, triple in (
+            ("request-only", (request, self.decision, self.chain["intent"])),
+            ("coordinated", (request, decision, intent)),
+        ):
+            with self.subTest(case=label):
+                endpoint = MockGitHubEndpoint()
+                asked_request, asked_decision, asked_intent = triple
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^actuator: operation is not registered$"
+                ):
+                    publish_authorized_request(
+                        endpoint, asked_request, asked_decision, approval_valid=True,
+                        gateway_decision=gateway, intent=asked_intent,
+                        now=NOW, approval=self.chain["approval"],
+                    )
+                self.assertIsNone(
+                    endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
+                )
+
     def test_fast_path_cannot_reach_actuator(self):
         with self.assertRaisesRegex(ContractValidationError, "gateway has not authorized"):
             publish_authorized_request(

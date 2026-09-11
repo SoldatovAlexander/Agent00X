@@ -2878,7 +2878,7 @@ diff/status, один local commit и evidence на карточку. При п�
 Docker, testdev, Agent00X-sandbox, внешние системы и push запрещены.
 
 ## EXP-112 — authority identifier scalar boundary
-Статус: READY
+Статус: CLOSED
 Цель: typed approval/intent identifiers fail closed before equality checks.
 Гипотеза: malformed scalar identity cannot alias authorization binding.
 Зависит от: EXP-100
@@ -2897,7 +2897,7 @@ Docker, testdev, Agent00X-sandbox, внешние системы и push зап�
 Commit: ALLOWED
 
 ## EXP-113 — gateway malformed-envelope regression
-Статус: READY
+Статус: CLOSED
 Цель: malformed gateway envelope fails closed without raw lookup error.
 Гипотеза: classification has deterministic mapping/type boundary.
 Зависит от: EXP-112
@@ -2916,7 +2916,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-114 — publication idempotency-key boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed idempotency key cannot create journal state.
 Гипотеза: journal prepare validates identity scalars before persistence.
 Зависит от: EXP-113
@@ -2935,7 +2935,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-115 — sandbox symlink containment regression
-Статус: READY
+Статус: CLOSED
 Цель: sandbox rejects symlink escape from working root.
 Гипотеза: containment check resolves links before file access.
 Зависит от: EXP-114
@@ -2954,7 +2954,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-116 — GitHub token response boundary
-Статус: READY
+Статус: CLOSED
 Цель: malformed token-mint response cannot create a usable channel.
 Гипотеза: adapter validates opaque token response fields before use.
 Зависит от: EXP-115

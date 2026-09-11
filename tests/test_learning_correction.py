@@ -48,6 +48,19 @@ class LearningCorrectionVersionTests(unittest.TestCase):
                     check_version(correction)
         check_version(valid_correction())
 
+    def test_malformed_correction_roots_denied_deterministically(self):
+        for bad in (
+            {"version": [1]},
+            {"version": {"n": 1}},
+            {"version": 2, "supersedes": ["correction-observer-demo-000"]},
+            {},
+        ):
+            with self.subTest(correction=bad):
+                with self.assertRaises(ContractValidationError) as raised:
+                    check_version(bad)
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
+        check_version(valid_correction())
+
     def test_valid_correction_passes_unmutated(self):
         correction = valid_correction()
         correction["supersedes"] = "correction-observer-demo-000"

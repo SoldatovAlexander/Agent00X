@@ -55,7 +55,7 @@ class LocalProcessSandbox:
     network_isolated = False
 
     def __init__(self, snapshot: Path, allowed_commands: set[str]) -> None:
-        if not snapshot.is_dir():
+        if not isinstance(snapshot, Path) or not snapshot.is_dir():
             raise SandboxError("snapshot must be a directory")
         _assert_no_symlinks(snapshot)
         self._root = Path(tempfile.mkdtemp(prefix="app-sandbox-"))

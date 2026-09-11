@@ -24,6 +24,17 @@ class SandboxTests(unittest.TestCase):
             self.assertIn("test_add", result.stderr)
             self.assertNotEqual(sandbox.workspace.resolve(), self.fixture.resolve())
 
+    def test_malformed_snapshot_root_denied_without_sandbox(self):
+        import tempfile
+        backend = LocalProcessSandboxBackend()
+        with tempfile.TemporaryDirectory(prefix="app-sandbox-file-") as directory:
+            regular_file = Path(directory) / "file.txt"
+            regular_file.write_text("data", encoding="utf-8")
+            for bad in (None, 123, str(self.fixture), regular_file):
+                with self.subTest(root=type(bad).__name__):
+                    with self.assertRaisesRegex(SandboxError, "snapshot must be a directory"):
+                        backend.create(bad, {"python3"})
+
     def test_snapshot_symlink_escape_is_denied_before_copy(self):
         import tempfile
         backend = LocalProcessSandboxBackend()

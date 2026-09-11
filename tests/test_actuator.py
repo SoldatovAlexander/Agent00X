@@ -56,12 +56,21 @@ class ActuatorTests(unittest.TestCase):
             )
 
     def test_invalid_approval_cannot_reach_mock_boundary(self):
-        with self.assertRaisesRegex(ContractValidationError, "authority proof"):
-            publish_authorized_request(
-                self.endpoint, self.chain["actuator_request"], self.decision, approval_valid=False,
-                gateway_decision=GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",)),
-                intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
-            )
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        for bad_proof in (False, None, "yes", 0, []):
+            with self.subTest(proof=bad_proof):
+                endpoint = MockGitHubEndpoint()
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^actuator: approval proof is invalid$"
+                ):
+                    publish_authorized_request(
+                        endpoint, self.chain["actuator_request"], self.decision,
+                        approval_valid=bad_proof, gateway_decision=gateway,
+                        intent=self.chain["intent"], now=NOW, approval=self.chain["approval"],
+                    )
+                self.assertIsNone(
+                    endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"])
+                )
 
     def test_malformed_request_identity_denied_before_publish(self):
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))

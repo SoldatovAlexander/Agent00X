@@ -40,6 +40,8 @@ def publish_authorized_request(
 
     if approval is None:
         raise ContractValidationError("actuator: approval is required")
+    if approval_valid is not True:
+        raise ContractValidationError("actuator: approval proof is invalid")
     if not isinstance(actuator_request, dict):
         raise ContractValidationError("actuator: request is malformed")
     for field in (

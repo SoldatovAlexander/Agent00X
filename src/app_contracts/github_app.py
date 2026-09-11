@@ -267,6 +267,12 @@ class GitHubAppPublicationChannel:
         is known. None is an explicit unknown outcome, not a missing receipt.
         """
 
+        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+            raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            raise ContractValidationError("GitHub actuator: idempotency key is invalid")
+        if not isinstance(staged_change_digest, str):
+            raise ContractValidationError("GitHub actuator: staged change digest is invalid")
         repository_id = f"github-installation/{self._config.installation_id}/repository/{self._config.repository_id}"
         marker = f"<!-- agent-process-idempotency: {idempotency_key} -->"
         try:

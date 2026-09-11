@@ -354,6 +354,35 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         minter.mint(bad)
             self.assertEqual(calls, [])
 
+    def test_malformed_reconcile_inputs_make_zero_get_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            calls = []
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: calls.append(("POST", url)),
+                get_json=lambda url, headers: calls.append(("GET", url)),
+            )
+            key = "publish/process-demo-001/sha256:" + "c" * 64
+            digest = "sha256:" + "c" * 64
+            for kwargs in (
+                {"branch": None, "idempotency_key": key},
+                {"branch": 123, "idempotency_key": key},
+                {"branch": "main", "idempotency_key": key},
+                {"branch": "agent/process-demo-001", "idempotency_key": None},
+                {"branch": "agent/process-demo-001", "idempotency_key": ""},
+                {"branch": "agent/process-demo-001", "idempotency_key": key,
+                 "staged_change_digest": 123},
+            ):
+                with self.subTest(kwargs=kwargs):
+                    with self.assertRaises(ContractValidationError):
+                        channel.reconcile_pull_request(**kwargs)
+            self.assertEqual(calls, [])
+
     def test_minter_rejects_duplicate_permissions_without_exchange(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

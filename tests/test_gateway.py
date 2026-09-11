@@ -137,6 +137,50 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn("agent-worker-001", dumped)
         self.assertNotIn("c" * 8, dumped)
 
+    def test_malformed_scalar_fields_denied_before_routing_or_sink(self):
+        calls = []
+
+        class CountingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                calls.append((process_id, kwargs))
+
+        base = {
+            "correlation_id": "process-gateway-005",
+            "intent": {"operation": "repository.read", "risk_class": "low"},
+            "destination": {"port": "data"},
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "security": {"tainted": False, "sensitivity": "internal"},
+            "payload": {"content_digest": "sha256:" + "e" * 64},
+        }
+        import copy
+        variants = []
+        for section, field, bad in (
+            ("intent", "operation", 123),
+            ("intent", "operation", ""),
+            ("intent", "operation", None),
+            ("destination", "port", ["tool"]),
+            ("source", "protocol", 42),
+            ("security", "tainted", "yes"),
+            ("security", "tainted", 1),
+            ("security", "tainted", None),
+        ):
+            broken = copy.deepcopy(base)
+            broken[section][field] = bad
+            variants.append(broken)
+        for broken in variants:
+            with self.subTest(envelope=broken):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^gateway: envelope is malformed$"
+                ):
+                    classify(broken, policy_available=True)
+                decision = enforce(broken, policy_available=True, audit_sink=CountingSink())
+                self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                self.assertFalse(decision.allowed)
+                self.assertEqual(decision.reason_codes, ("malformed-envelope",))
+        self.assertEqual(calls, [])
+        decision = classify(envelope("repository.read"), policy_available=True)
+        self.assertEqual((decision.path, decision.allowed), (GatewayPath.FAST, True))
+
     def test_classify_rejects_malformed_envelope_deterministically(self):
         malformed = [
             {},

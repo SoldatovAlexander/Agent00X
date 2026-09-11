@@ -29,6 +29,12 @@ def _require_envelope_shape(envelope: dict[str, Any]) -> None:
         section_value = envelope.get(section)
         if not isinstance(section_value, dict) or field not in section_value:
             raise ContractValidationError("gateway: envelope is malformed")
+    for section, field in (("intent", "operation"), ("destination", "port"), ("source", "protocol")):
+        value = envelope[section][field]
+        if not isinstance(value, str) or not value:
+            raise ContractValidationError("gateway: envelope is malformed")
+    if not isinstance(envelope["security"]["tainted"], bool):
+        raise ContractValidationError("gateway: envelope is malformed")
 
 
 class GatewayAuditSink(Protocol):

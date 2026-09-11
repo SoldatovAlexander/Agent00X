@@ -68,8 +68,17 @@ Commit: ALLOWED
 
 ## Batch P — authority and boundary hardening
 
+Результат Control Plane:
+- ACCEPTED 2026-09-12: независимое review commits `2e76f42`—`45035de`
+  подтвердило соответствие разрешённым путям и fail-closed negative paths для
+  authority, actuator, brokered actuator, mock/publication/repository boundaries,
+  schema declarations и GitHub App adapter. Проверка
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`:
+  360 tests passed, 1 opt-in Docker test skipped. Нет внешних вызовов,
+  публикаций или изменений конфигурации.
+
 ## EXP-165 — validate authority clock type
-Статус: READY
+Статус: ACCEPTED
 Цель: Authority rejects a non-datetime or naive use clock through a stable contract error.
 Гипотеза: approval and decision expiry checks cannot rely on unchecked caller clocks.
 Зависит от: none
@@ -89,7 +98,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-166 — gate approval root mappings
-Статус: READY
+Статус: ACCEPTED
 Цель: Authority rejects malformed approval, intent, and staged-change roots deterministically.
 Гипотеза: direct approval validation must validate mapping boundaries before field access and hashing.
 Зависит от: EXP-165
@@ -109,7 +118,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-167 — validate policy configuration identity sets
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed PolicyConfig version and allowlist members fail at construction.
 Гипотеза: policy cannot operate with empty/non-string identity constraints or arbitrary iterable inputs.
 Зависит от: none
@@ -129,7 +138,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-168 — require boolean policy availability
-Статус: READY
+Статус: ACCEPTED
 Цель: DeterministicPolicy does not treat truthy non-booleans as availability.
 Гипотеза: invalid availability configuration cannot yield an allow decision.
 Зависит от: EXP-167
@@ -149,7 +158,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-169 — gate policy decision request shape
-Статус: READY
+Статус: ACCEPTED
 Цель: direct policy evaluation rejects malformed actuator requests before decision construction.
 Гипотеза: missing or malformed request identity fields cannot cause raw key errors or be echoed in reasons.
 Зависит от: EXP-168
@@ -169,7 +178,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-170 — gate usable-decision root and clock
-Статус: READY
+Статус: ACCEPTED
 Цель: decision-use checks validate decision mapping and now before expiry field access.
 Гипотеза: malformed decisions and clocks fail through the authority boundary without raw exceptions.
 Зависит от: EXP-165
@@ -189,7 +198,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-171 — gate actuator gateway-decision shape
-Статус: READY
+Статус: ACCEPTED
 Цель: the mock actuator rejects malformed gateway decisions before endpoint access.
 Гипотеза: only a typed slow-path allow can cross the action boundary.
 Зависит от: none
@@ -209,7 +218,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-172 — reject false actuator approval proof early
-Статус: READY
+Статус: ACCEPTED
 Цель: false or non-boolean approval_valid is denied before the mock endpoint.
 Гипотеза: authority proof must be validated by the actuator boundary, not delegated to the provider double.
 Зависит от: EXP-171
@@ -229,7 +238,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-173 — gate actuator policy-decision shape
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed policy-decision roots are denied before action publication.
 Гипотеза: an actuator must not access unchecked decision fields or leak caller values.
 Зависит от: EXP-172
@@ -249,7 +258,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-174 — gate brokered actuator broker shape
-Статус: READY
+Статус: ACCEPTED
 Цель: BrokeredGitHubActuator rejects an invalid broker before any action path.
 Гипотеза: a non-conforming broker cannot be invoked through an unchecked method access.
 Зависит от: none
@@ -269,7 +278,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-175 — validate mock reconciliation lookup inputs
-Статус: READY
+Статус: ACCEPTED
 Цель: MockGitHub reconciliation rejects malformed lookup identifiers without exposing them.
 Гипотеза: read-only reconciliation has the same typed boundary as publication.
 Зависит от: none
@@ -289,7 +298,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-176 — constrain mock publication branch shape
-Статус: READY
+Статус: ACCEPTED
 Цель: MockGitHub rejects branches outside the agent process namespace.
 Гипотеза: the mock action boundary must not accept a content-bound key for an arbitrary branch.
 Зависит от: EXP-175
@@ -309,7 +318,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-177 — gate publication journal read identifiers
-Статус: READY
+Статус: ACCEPTED
 Цель: PublicationJournal read and transition paths reject malformed process IDs before SQLite operations.
 Гипотеза: journal methods share a stable process identity boundary.
 Зависит от: none
@@ -329,7 +338,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-178 — gate repository test-command shape before writes
-Статус: READY
+Статус: ACCEPTED
 Цель: prepare_change rejects malformed test commands before workspace mutation.
 Гипотеза: an invalid verification command cannot leave an altered ephemeral workspace or partial artifacts.
 Зависит от: none
@@ -349,7 +358,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-179 — validate repository preparation metadata
-Статус: READY
+Статус: ACCEPTED
 Цель: prepare_change rejects malformed process/task/repository/base-commit metadata before writes.
 Гипотеза: artifact identifiers must be typed and non-empty before they enter evidence or digests.
 Зависит от: EXP-178
@@ -369,7 +378,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-180 — validate canonical schema enum declarations
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed enum declarations fail schema validation before instance validation.
 Гипотеза: scalar or malformed enum definitions cannot silently change contract acceptance.
 Зависит от: none
@@ -389,7 +398,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-181 — validate schema type declarations
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed type declarations fail at schema validation instead of during instance processing.
 Гипотеза: schema structure errors have a stable fail-closed boundary.
 Зависит от: EXP-180
@@ -409,7 +418,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-182 — validate GitHub minter expiry response
-Статус: READY
+Статус: ACCEPTED
 Цель: GitHub App minter rejects malformed token expiry timestamps without exposing token material.
 Гипотеза: a nonempty string is insufficient proof of a usable short-lived installation token.
 Зависит от: none
@@ -429,7 +438,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-183 — validate GitHub permission duplication
-Статус: READY
+Статус: ACCEPTED
 Цель: duplicate GitHub permission entries are rejected before token exchange.
 Гипотеза: ambiguous grant permissions cannot be silently collapsed into a provider payload.
 Зависит от: EXP-182
@@ -449,7 +458,7 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-184 — sanitize GitHub reconciliation identifiers
-Статус: READY
+Статус: ACCEPTED
 Цель: direct GitHub reconciliation rejects malformed branch and idempotency identifiers before GET.
 Гипотеза: read-only provider calls require the same typed namespace boundary as publication.
 Зависит от: EXP-183

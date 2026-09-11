@@ -21,5 +21,8 @@ def check_version(correction: dict[str, Any]) -> None:
     if isinstance(version, bool) or not isinstance(version, int) or version < 1:
         raise ContractValidationError("correction: version is invalid")
     supersedes = correction.get("supersedes")
-    if supersedes is not None and supersedes == correction.get("correction_id"):
-        raise ContractValidationError("correction: cannot supersede itself")
+    if supersedes is not None:
+        if not isinstance(supersedes, str) or not supersedes:
+            raise ContractValidationError("correction: supersedes reference is invalid")
+        if supersedes == correction.get("correction_id"):
+            raise ContractValidationError("correction: cannot supersede itself")

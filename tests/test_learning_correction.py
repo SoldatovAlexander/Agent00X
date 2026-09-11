@@ -37,6 +37,17 @@ class LearningCorrectionVersionTests(unittest.TestCase):
                 ):
                     check_version(bad)
 
+    def test_malformed_supersedes_reference_is_denied(self):
+        for bad in (123, ["correction-observer-demo-000"], "", {"ref": "x"}):
+            with self.subTest(reference=type(bad).__name__):
+                correction = valid_correction()
+                correction["supersedes"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^correction: supersedes reference is invalid$"
+                ):
+                    check_version(correction)
+        check_version(valid_correction())
+
     def test_valid_correction_passes_unmutated(self):
         correction = valid_correction()
         correction["supersedes"] = "correction-observer-demo-000"

@@ -290,6 +290,27 @@ class AuthorityTests(unittest.TestCase):
         )
         self.assertEqual(decision["effect"], "allow")
 
+    def test_non_string_identifiers_cannot_alias_binding(self):
+        for field in ("process_id", "repository_id", "operation", "approval_id"):
+            for left, right in ((True, 1), (123, 123), (None, None), ("", "x")):
+                with self.subTest(field=field, values=(left, right)):
+                    approval = dict(self.chain["approval"])
+                    intent = dict(self.chain["intent"])
+                    approval[field] = left
+                    intent[field] = right
+                    with self.assertRaisesRegex(
+                        ContractValidationError, f"approval: {field} is invalid"
+                    ) as raised:
+                        validate_approval(
+                            approval, self.chain["staged_change"], intent,
+                            policy_version="policy-1", now=NOW,
+                        )
+                    self.assertNotIn("approval-demo-001", str(raised.exception))
+        validate_approval(
+            self.chain["approval"], self.chain["staged_change"], self.chain["intent"],
+            policy_version="policy-1", now=NOW,
+        )
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

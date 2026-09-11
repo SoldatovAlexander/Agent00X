@@ -67,9 +67,17 @@ def validate_approval(
     for mapping, field in ((approval, "policy_version"), (approval, "expires_at"), (intent, "expires_at")):
         if field not in mapping:
             raise ContractValidationError(f"approval: {field} is missing")
-    required_matches = ("process_id", "repository_id", "operation")
+    required_matches = ("process_id", "repository_id", "operation", "approval_id")
     for field in required_matches:
-        if approval[field] != intent[field]:
+        left, right = approval[field], intent[field]
+        if (
+            not isinstance(left, str)
+            or not isinstance(right, str)
+            or not left
+            or not right
+        ):
+            raise ContractValidationError(f"approval: {field} is invalid")
+        if left != right:
             raise ContractValidationError(f"approval: {field} mismatch")
     if _require_digest(
         approval.get("staged_change_digest"), "approval: staged change digest is invalid"
@@ -80,8 +88,6 @@ def validate_approval(
     ) != staged_digest:
         raise ContractValidationError("approval: intent staged change digest mismatch")
     check_intent_approved(intent, approval)
-    if intent["approval_id"] != approval["approval_id"]:
-        raise ContractValidationError("approval: approval_id mismatch")
     if approval["policy_version"] != policy_version:
         raise ContractValidationError("approval: policy version mismatch")
     if _parse_time(approval["expires_at"]) <= moment:

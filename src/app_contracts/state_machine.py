@@ -65,6 +65,8 @@ class TransitionEvidence:
 def transition(current: ProcessState, target: ProcessState, evidence: TransitionEvidence) -> ProcessState:
     if not isinstance(evidence, TransitionEvidence):
         raise InvalidTransition("transition evidence is invalid")
+    if not isinstance(current, ProcessState):
+        raise InvalidTransition("transition current state is invalid")
     if not isinstance(target, ProcessState):
         raise InvalidTransition("transition target is invalid")
     if current in _TERMINAL:

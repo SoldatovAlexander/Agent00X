@@ -103,6 +103,14 @@ class StateMachineTests(unittest.TestCase):
         )
         self.assertEqual(state, ProcessState.SPECIFIED)
 
+    def test_malformed_current_state_denied_without_details(self):
+        for bad in ("executing", None, 42, ["received"]):
+            with self.subTest(current=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    InvalidTransition, "^transition current state is invalid$"
+                ):
+                    transition(bad, ProcessState.VERIFYING, TransitionEvidence(artifact_digest=True))
+
     def test_malformed_target_denied_without_transition(self):
         for bad in ("executing", None, 42, ["specified"]):
             with self.subTest(target=type(bad).__name__):

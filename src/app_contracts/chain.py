@@ -16,9 +16,14 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
         "intent", "policy_decision", "actuator_request", "credential_use_grant",
         "action_receipt",
     )
+    if not isinstance(chain, dict):
+        raise ContractValidationError("chain: chain is malformed")
     missing = [name for name in names if name not in chain]
     if missing:
         raise ContractValidationError(f"chain: missing contracts {missing}")
+    malformed = [name for name in names if not isinstance(chain[name], dict)]
+    if malformed:
+        raise ContractValidationError(f"chain: malformed contracts {malformed}")
 
     process_ids = {
         chain[name]["process_id"]

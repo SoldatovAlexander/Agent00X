@@ -111,6 +111,21 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn("authorization", envelope["security"]["permitted_uses"])
         self.assertIn("authorization", envelope["security"]["forbidden_uses"])
 
+    def test_malformed_chain_entries_denied_without_details(self):
+        for broken in (
+            {"capability_grant": None},
+            {"delegation_receipt": ["not-a-mapping"]},
+            {"capability_grant": "grant"},
+        ):
+            with self.subTest(broken=sorted(broken)):
+                chain = json.loads(json.dumps(self.chain))
+                chain.update(broken)
+                with self.assertRaisesRegex(ContractValidationError, "^chain: malformed contracts "):
+                    validate_chain(chain)
+        with self.assertRaisesRegex(ContractValidationError, "^chain: chain is malformed$"):
+            validate_chain(["not-a-chain"])
+        validate_chain(self.chain)
+
     def test_delegation_cannot_expand_actions(self):
         chain = json.loads(json.dumps(self.chain))
         chain["delegation_receipt"]["actions"].append("workspace.patch")

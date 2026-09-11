@@ -3554,3 +3554,405 @@ Control Plane создаёт, меняет статусы и закрывает 
 допустимую read/test-операцию. Ни одна карточка не может разрешить push, создание
 PR, чтение secrets, изменение unit-файлов или перезапуск сервиса.
 Историю завершённых работ храните вне `.opencode/`, если она нужна проекту.
+
+## Batch O — contract boundaries, local-only
+
+## EXP-145 — type-check gateway envelope fields
+Статус: READY
+Цель: malformed values in required gateway envelope fields are denied before classification.
+Гипотеза: presence alone must not let non-string operation/protocol/port or non-boolean security fields enter routing logic.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy semantics, audit sink implementation, external calls.
+Разрешённые пути:
+- src/app_contracts/gateway.py
+- tests/test_gateway.py
+Критерии приёмки:
+- malformed scalar field values return the stable malformed-envelope deny path and do not reach an audit sink.
+- valid envelopes retain their current routing decision.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-146 — require boolean gateway policy availability
+Статус: READY
+Цель: a non-boolean policy availability signal cannot authorize a request.
+Гипотеза: truthy strings and integers must not be treated as a healthy Policy Engine.
+Зависит от: EXP-145
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: changing fast/slow/degraded policy semantics for valid booleans.
+Разрешённые пути:
+- src/app_contracts/gateway.py
+- tests/test_gateway.py
+Критерии приёмки:
+- non-boolean policy availability is denied deterministically without a raw exception or audit call.
+- True and False preserve existing behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-147 — gate broker clock shape
+Статус: READY
+Цель: credential validation rejects missing, non-datetime, and naive clock values before any channel action.
+Гипотеза: grant expiry checks must not rely on an unchecked caller-supplied clock.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: credential minting and GitHub connectivity.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- tests/test_broker.py
+Критерии приёмки:
+- invalid now values raise a stable ContractValidationError and leave the channel factory unopened.
+- a valid aware datetime remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-148 — validate broker channel factory result
+Статус: READY
+Цель: a malformed broker factory result is rejected before it can be exposed to an actuator.
+Гипотеза: opening a credential channel must fail closed when the private provider interface is absent.
+Зависит от: EXP-147
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: provider API implementation or credential material.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- tests/test_broker.py
+Критерии приёмки:
+- non-channel factory results fail with a stable boundary error and are not returned.
+- valid test channels continue to open once per valid grant.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-149 — validate local sandbox allowlist shape
+Статус: READY
+Цель: malformed local command allowlists cannot create a sandbox.
+Гипотеза: allowlist members must be non-empty command names, not arbitrary iterable values.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker backend and network isolation claims.
+Разрешённые пути:
+- src/app_contracts/sandbox.py
+- tests/test_sandbox.py
+Критерии приёмки:
+- malformed allowlist roots and members are denied before filesystem copy or process execution.
+- a valid allowlist preserves existing local test execution.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-150 — validate local sandbox command invocation shape
+Статус: READY
+Цель: malformed argv and timeout values are denied before subprocess invocation.
+Гипотеза: strings, non-string argv members, booleans, and invalid timeout values must not cross the local process boundary.
+Зависит от: EXP-149
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker backend and command execution semantics for valid argv.
+Разрешённые пути:
+- src/app_contracts/sandbox.py
+- tests/test_sandbox.py
+Критерии приёмки:
+- invalid invocation shapes raise SandboxError without starting a command.
+- a valid allowlisted command continues to run in the ephemeral workspace.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-151 — gate secret-scan surface container
+Статус: READY
+Цель: non-mapping scan surfaces fail deterministically without representation leakage.
+Гипотеза: the canary scanner must validate its root boundary before iterating names or values.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: scanning credential files or changing canary matching semantics.
+Разрешённые пути:
+- src/app_contracts/secret_scan.py
+- tests/test_secret_scan.py
+Критерии приёмки:
+- malformed surface roots raise a stable error that contains neither attacker values nor repr output.
+- valid mappings retain their current findings.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-152 — pin correction identity boundary
+Статус: READY
+Цель: a LearningCorrection self-reference check validates correction_id type before comparison.
+Гипотеза: malformed correction identity cannot bypass or destabilize supersession validation.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema changes and correction storage.
+Разрешённые пути:
+- src/app_contracts/learning_correction.py
+- tests/test_learning_correction.py
+Критерии приёмки:
+- malformed correction_id values are rejected without raw errors or payload leakage.
+- valid correction and true self-supersession behavior remain unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-153 — validate MemorySummary source references
+Статус: READY
+Цель: source_refs accepts only non-empty string references before duplicate comparison.
+Гипотеза: malformed source members cannot be silently accepted or trigger a raw set/hash exception.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: summary schema and persistence.
+Разрешённые пути:
+- src/app_contracts/memory_summary.py
+- tests/test_memory_summary.py
+Критерии приёмки:
+- malformed source members yield the stable source-refs boundary error without revealing values.
+- valid distinct references and duplicate rejection preserve current behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-154 — gate state-machine current state type
+Статус: READY
+Цель: malformed current state values are rejected deterministically.
+Гипотеза: only ProcessState values may index the transition graph.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: transition graph changes or new states.
+Разрешённые пути:
+- src/app_contracts/state_machine.py
+- tests/test_state_machine.py
+Критерии приёмки:
+- malformed current values raise InvalidTransition without raw type details.
+- valid legal and illegal transitions retain existing outcomes.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-155 — sanitize unknown observation trigger errors
+Статус: READY
+Цель: an unknown checkpoint trigger is denied without echoing its caller-supplied identifier.
+Гипотеза: causality failures must not place untrusted event identifiers into error text.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: event schema, journal persistence, and dispatch execution.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- unknown trigger rejection has a stable payload-free error and does not alter journal/checkpoint state.
+- a valid checkpoint remains accepted.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-156 — sanitize unknown invocation errors
+Статус: READY
+Цель: an unknown result invocation reference is denied without echoing caller content.
+Гипотеза: result causality errors must not disclose an untrusted invocation identifier.
+Зависит от: EXP-155
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: intent type allowlist and event ordering semantics.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- unknown invocation rejection has a stable payload-free error and returns no stored payload.
+- valid causality references preserve their current cursor result.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-157 — validate publication request values before attempt
+Статус: READY
+Цель: malformed required publication request values cannot transition a prepared record to attempting.
+Гипотеза: type and emptiness checks must occur before the external-effect state boundary.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: MockGitHub behavior, GitHub connectivity, and recovery semantics for valid requests.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- malformed required request values are rejected before journal mutation and endpoint invocation.
+- a valid request remains published exactly once.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-158 — gate publication receipt object shape
+Статус: READY
+Цель: malformed completion receipts cannot cause raw errors or mutate an attempt.
+Гипотеза: journal completion validates the receipt boundary before reading its fields.
+Зависит от: EXP-157
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: endpoint implementation or changing valid receipt binding checks.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- malformed receipt roots and fields are rejected with a stable error while status remains attempting.
+- a matching valid receipt still completes the record.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-159 — gate runtime lookup process identifier
+Статус: READY
+Цель: malformed process IDs are rejected before SQLite read queries.
+Гипотеза: read APIs must apply the same process identity boundary as process creation.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: database schema and valid not-found behavior.
+Разрешённые пути:
+- src/app_contracts/runtime_store.py
+- tests/test_runtime_store.py
+Критерии приёмки:
+- get, events, and audit_events reject malformed process IDs with a stable contract error.
+- valid existing and absent string IDs retain their current results.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-160 — gate publish-manifest prepared change shape
+Статус: READY
+Цель: malformed prepared-change roots are denied before digest or workspace access.
+Гипотеза: manifest construction must not trust an object merely because it exposes similar attributes.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: prepared change serialization format or repository publication.
+Разрешённые пути:
+- src/app_contracts/repository_process.py
+- tests/test_repository_process.py
+Критерии приёмки:
+- malformed prepared-change inputs yield a stable ContractValidationError without output files or raw attribute errors.
+- a genuine prepared change still exports the verified manifest.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-161 — canonicalize invalid mapping keys safely
+Статус: READY
+Цель: canonical digest helpers reject unsupported mapping keys with a deterministic value error.
+Гипотеза: digest callers must not receive raw sort/type errors for malformed object keys.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: changing canonical encoding of valid JSON values.
+Разрешённые пути:
+- src/app_contracts/digests.py
+- tests/test_contracts.py
+Критерии приёмки:
+- mixed or non-string mapping keys fail without exposing their repr or values.
+- valid mapping ordering and Unicode digest behavior remain unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-162 — gate GitHub App environment value types
+Статус: READY
+Цель: malformed GitHub App configuration value types fail through the configuration boundary.
+Гипотеза: non-string environment mapping values cannot trigger raw attribute errors during preflight.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real environment access, private-key reading, testdev, and GitHub requests.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed configuration value types raise GitHubAppConfigurationError without path or value leakage.
+- valid metadata preflight behavior remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-163 — gate GitHub publication request fields
+Статус: READY
+Цель: malformed GitHub publication request field values are rejected before reconciliation or POST.
+Гипотеза: the provider channel validates scalar request fields at its own boundary even when called directly.
+Зависит от: EXP-162
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub calls, token minting, branch creation, and pull-request creation.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed direct requests make zero get/post calls and raise a stable ContractValidationError.
+- valid allowlisted requests retain current reconciliation and publication behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-164 — gate GitHub verified-file request shape
+Статус: READY
+Цель: malformed verified-file publication inputs are rejected before branch or content provider calls.
+Гипотеза: branch, staged-change, and file input boundaries are independently enforced in the GitHub channel.
+Зависит от: EXP-163
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real GitHub calls, token minting, branch creation, and pull-request creation.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- malformed direct verified-file requests make zero get/post/put calls and fail with a stable boundary error.
+- a valid verified manifest preserves existing scoped branch and content payload behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED

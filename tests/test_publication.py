@@ -183,6 +183,18 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.status, "attempting")
             self.assertIsNone(record.pull_request_id)
 
+    def test_malformed_receipt_root_leaves_attempt_untouched(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            for bad in (None, ["receipt"], "receipt", 42, {"pull_request_id": 1}):
+                with self.subTest(receipt=type(bad).__name__):
+                    with self.assertRaisesRegex(ValueError, "^publication receipt is invalid$"):
+                        journal.mark_completed(self.request["process_id"], bad)
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertIsNone(record.pull_request_id)
+
     def test_malformed_receipt_id_leaves_attempt_untouched(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

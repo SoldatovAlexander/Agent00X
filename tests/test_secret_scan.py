@@ -153,6 +153,15 @@ class CanaryCredentialTests(unittest.TestCase):
         self.assertEqual(find_canary_surfaces(self.canary, clean), [])
         assert_canary_absent(self.canary, clean)
 
+    def test_invalid_canary_rejected_deterministically(self):
+        for bad in ("", None, 123, ["canary"]):
+            with self.subTest(canary=type(bad).__name__):
+                with self.assertRaises(ValueError) as raised:
+                    find_canary_surfaces(bad, self.clean_surfaces)
+                self.assertNotIsInstance(raised.exception, TypeError)
+                with self.assertRaises(ValueError):
+                    assert_canary_absent(bad, self.clean_surfaces)
+
     def test_canary_leak_in_audit_is_detected(self):
         surfaces = dict(self.clean_surfaces)
         surfaces["audit"] = {"note": self.canary}

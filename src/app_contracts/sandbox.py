@@ -57,6 +57,10 @@ class LocalProcessSandbox:
     def __init__(self, snapshot: Path, allowed_commands: set[str]) -> None:
         if not isinstance(snapshot, Path) or not snapshot.is_dir():
             raise SandboxError("snapshot must be a directory")
+        if not isinstance(allowed_commands, (set, frozenset)) or any(
+            not isinstance(name, str) or not name for name in allowed_commands
+        ):
+            raise SandboxError("allowed commands must be a set of non-empty names")
         _assert_no_symlinks(snapshot)
         self._root = Path(tempfile.mkdtemp(prefix="app-sandbox-"))
         self.snapshot = self._root / "snapshot"

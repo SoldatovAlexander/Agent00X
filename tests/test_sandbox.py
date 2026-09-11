@@ -49,6 +49,18 @@ class SandboxTests(unittest.TestCase):
                 backend.create(fixture, {"python3"})
             self.assertEqual(secret.read_text(encoding="utf-8"), "outside-canary-value")
 
+    def test_malformed_allowlist_denied_before_copy_or_execution(self):
+        backend = LocalProcessSandboxBackend()
+        for bad in (None, 123, "python3", ["python3"], {"python3", ""}, {123}, {None}):
+            with self.subTest(allowlist=bad):
+                with self.assertRaisesRegex(
+                    SandboxError, "allowed commands must be a set of non-empty names"
+                ):
+                    backend.create(self.fixture, bad)
+        with backend.create(self.fixture, {"python3"}) as sandbox:
+            result = sandbox.run(["python3", "-m", "unittest", "-q"])
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_non_allowlisted_command_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(SandboxError, "not allowlisted"):

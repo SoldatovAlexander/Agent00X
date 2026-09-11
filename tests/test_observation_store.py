@@ -357,6 +357,23 @@ class ObservationStoreTests(unittest.TestCase):
             store.check_result_causality(later_result)
         self.assertNotIn("Stored rationale", str(raised.exception))
 
+    def test_id_collision_cannot_legalize_self_as_predecessor(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["invocation_id"] = "invocation-store-demo-001"
+        intent["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(intent)
+        impostor = valid_event("event-store-demo-001", 1)
+        impostor["event_type"] = "tool_completed"
+        impostor["invocation_id"] = "invocation-store-demo-001"
+        with self.assertRaisesRegex(ContractValidationError, "unknown invocation reference") as raised:
+            store.check_result_causality(impostor)
+        self.assertNotIn("Stored rationale", str(raised.exception))
+        genuine = valid_event("event-store-demo-002", 1)
+        genuine["event_type"] = "tool_completed"
+        genuine["invocation_id"] = "invocation-store-demo-001"
+        self.assertEqual(store.check_result_causality(genuine), 0)
+
     def test_self_reference_is_denied(self):
         store = ObservationStore()
         lonely_result = valid_event("event-store-demo-001", 0)

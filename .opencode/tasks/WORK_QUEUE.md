@@ -3658,8 +3658,8 @@ Commit: ALLOWED
 Commit: ALLOWED
 
 ## EXP-150 — validate local sandbox command invocation shape
-Статус: REVIEW
-Результат Control Plane: CHANGES REQUESTED — в tests/test_sandbox.py дважды определён `test_malformed_invocation_denied_without_execution`; оставь одно определение и сохрани все его проверки. Production-код этой карточки не меняй.
+Статус: ACCEPTED
+Результат Control Plane: ACCEPTED — remediation commit ac9b59f удалил дублирующее определение теста; штатный suite зелёный.
 Цель: malformed argv and timeout values are denied before subprocess invocation.
 Гипотеза: strings, non-string argv members, booleans, and invalid timeout values must not cross the local process boundary.
 Зависит от: EXP-149

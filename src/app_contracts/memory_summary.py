@@ -39,7 +39,9 @@ def check_sources(summary: dict[str, Any]) -> None:
         raise ContractValidationError("summary: summary is malformed")
     try:
         refs = summary["source_refs"]
-        if not isinstance(refs, list):
+        if not isinstance(refs, list) or any(
+            not isinstance(ref, str) or not ref for ref in refs
+        ):
             raise ContractValidationError("summary: source refs are invalid")
         unique = len(set(refs)) == len(refs)
     except (KeyError, TypeError) as exc:

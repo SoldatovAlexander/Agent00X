@@ -15,6 +15,18 @@ from test_observer_contracts import valid_summary
 
 
 class MemorySummaryIntervalTests(unittest.TestCase):
+    def test_malformed_source_members_denied_without_values(self):
+        for bad_refs in ([123], [None], [True], [""], ["artifact://a", 42]):
+            with self.subTest(refs=bad_refs):
+                summary = valid_summary()
+                summary["source_refs"] = bad_refs
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^summary: source refs are invalid$"
+                ) as raised:
+                    check_sources(summary)
+                self.assertNotIn("artifact", str(raised.exception))
+        check_sources(valid_summary())
+
     def test_non_mapping_summary_denied_deterministically(self):
         for bad in (None, [], "summary", 42):
             with self.subTest(summary=type(bad).__name__):

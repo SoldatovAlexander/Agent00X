@@ -25,6 +25,16 @@ class PolicyConfig:
         ttl = self.decision_ttl_seconds
         if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
             raise ValueError("policy: decision TTL must be a positive integer")
+        if not isinstance(self.version, str) or not self.version:
+            raise ValueError("policy: version must be a non-empty string")
+        for name in ("allowed_repositories", "allowed_actuators"):
+            members = getattr(self, name)
+            if (
+                not isinstance(members, (set, frozenset))
+                or not members
+                or any(not isinstance(member, str) or not member for member in members)
+            ):
+                raise ValueError(f"policy: {name} must be a non-empty set of strings")
 
 
 def _require_digest(value: Any, message: str) -> str:

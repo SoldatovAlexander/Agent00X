@@ -384,6 +384,37 @@ class AuthorityTests(unittest.TestCase):
                         )
                     self.assertNotIn("approval-demo-001", str(raised.exception))
 
+    def _config_kwargs(self, **overrides):
+        kwargs = {
+            "version": "policy-1",
+            "allowed_repositories": frozenset({"github-installation/42/repository/1001"}),
+            "allowed_actuators": frozenset({"actuator-github-001"}),
+        }
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_malformed_config_identity_fails_at_construction(self):
+        for overrides in (
+            {"version": ""}, {"version": 123}, {"version": None},
+            {"allowed_repositories": set()}, {"allowed_repositories": None},
+            {"allowed_repositories": ["github-installation/42/repository/1001"]},
+            {"allowed_repositories": frozenset({123})},
+            {"allowed_actuators": set()}, {"allowed_actuators": "actuator-github-001"},
+            {"allowed_actuators": frozenset({""})},
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(ValueError):
+                    PolicyConfig(**self._config_kwargs(**overrides))
+        config = PolicyConfig(**self._config_kwargs())
+        decision = DeterministicPolicy(config).decide(
+            decision_id="decision-policy-010",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+
     def test_policy_unavailable_fails_closed(self):
         unavailable = DeterministicPolicy(self.config, available=False)
         with self.assertRaises(PolicyUnavailable):

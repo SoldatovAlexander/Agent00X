@@ -326,6 +326,25 @@ class RepositoryProcessTests(unittest.TestCase):
         )
         self.assertEqual(manifest_item.content, self.new_calculator)
 
+    def test_absolute_paths_denied_before_output(self):
+        sandbox, result = self.prepare()
+        for absolute in ("/etc/passwd", "/tmp/evil.py", str(sandbox.workspace / "calculator.py")):
+            with self.subTest(path=absolute):
+                with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={absolute: "evil"},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+                with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):
+                    build_publish_manifest(sandbox, result, {absolute: "evil"})
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
+        self.assertEqual([item.path for item in manifest], ["calculator.py"])
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

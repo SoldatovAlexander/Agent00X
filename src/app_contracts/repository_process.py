@@ -50,6 +50,13 @@ def prepare_change(
         raise ContractValidationError("change proposal is empty")
     if not isinstance(changes, dict):
         raise ContractValidationError("change proposal is malformed")
+    if (
+        isinstance(test_command, (str, bytes))
+        or not isinstance(test_command, (list, tuple))
+        or not test_command
+        or any(not isinstance(part, str) or not part for part in test_command)
+    ):
+        raise ContractValidationError("test command is malformed")
     for key in changes:
         if not isinstance(key, str) or not key:
             raise ContractValidationError("change proposal has invalid path")

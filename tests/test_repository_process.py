@@ -402,6 +402,32 @@ class RepositoryProcessTests(unittest.TestCase):
         manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
         self.assertEqual([item.path for item in manifest], ["calculator.py"])
 
+    def test_malformed_test_command_denied_before_writes(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        for bad in (None, 123, "python3 -m unittest", b"python3", [], [None], ["python3", 42]):
+            with self.subTest(command=type(bad).__name__):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^test command is malformed$"
+                ):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={"calculator.py": self.new_calculator},
+                        test_command=bad,
+                    )
+                self.assertEqual(
+                    (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+                )
+                self.assertEqual(
+                    sorted(path.name for path in sandbox.workspace.iterdir()),
+                    ["calculator.py", "test_calculator.py"],
+                )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

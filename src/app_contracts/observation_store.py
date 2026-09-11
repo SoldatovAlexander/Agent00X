@@ -86,7 +86,7 @@ class ObservationStore:
         if known is not None:
             if known == digest:
                 return self._position(event_id)
-            raise EventConflictError(f"event id conflict: {event_id}")
+            raise EventConflictError("event id conflict")
         self._events.append(copy.deepcopy(event))
         self._digests[event_id] = digest
         return len(self._events) - 1
@@ -139,7 +139,7 @@ class ObservationStore:
         if known is not None:
             if known == digest:
                 return self._checkpoint_position(checkpoint_id)
-            raise EventConflictError(f"checkpoint id conflict: {checkpoint_id}")
+            raise EventConflictError("checkpoint id conflict")
         self._checkpoints.append(copy.deepcopy(checkpoint))
         self._checkpoint_digests[checkpoint_id] = digest
         return len(self._checkpoints) - 1

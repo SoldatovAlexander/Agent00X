@@ -74,6 +74,23 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual(len(store), 1)
         self.assertEqual(len(store.events()), 1)
 
+    def test_conflict_errors_carry_no_caller_identifiers(self):
+        store = ObservationStore()
+        store.append(valid_event("event-caller-secret-001", 0))
+        store.record_checkpoint(valid_checkpoint(trigger_event_id="event-caller-secret-001"))
+        clashing_event = valid_event("event-caller-secret-001", 99)
+        with self.assertRaisesRegex(EventConflictError, "^event id conflict$") as event_raised:
+            store.append(clashing_event)
+        self.assertNotIn("caller-secret-001", str(event_raised.exception))
+        clashing_checkpoint = valid_checkpoint(trigger_event_id="event-caller-secret-001")
+        clashing_checkpoint["restore_mode"] = "none"
+        with self.assertRaisesRegex(EventConflictError, "^checkpoint id conflict$") as checkpoint_raised:
+            store.record_checkpoint(clashing_checkpoint)
+        self.assertNotIn("checkpoint-store-demo-001", str(checkpoint_raised.exception))
+        self.assertEqual(len(store.events()), 1)
+        self.assertEqual(len(store.checkpoints()), 1)
+        self.assertEqual(store.append(valid_event("event-caller-secret-001", 0)), 0)
+
     def test_duplicate_id_with_different_content_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event())

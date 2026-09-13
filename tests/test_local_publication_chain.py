@@ -626,32 +626,29 @@ class ComposedGatewayDenialTests(unittest.TestCase):
         }
 
     def _composed_publish(self, *, gateway_decision, chain, decision, grant_id, endpoint, factory_calls):
-        """Harness dispatcher: only a slow-path allow reaches broker/channel/endpoint.
-
-        A denied, degraded, or fast verdict stops the composed path before any
-        broker, channel, or endpoint use. Returns (receipt_or_None, broker).
-        """
+        """Exercise the production brokered boundary with a gateway verdict."""
 
         from app_contracts.broker import InMemoryCredentialBroker
-        from app_contracts.gateway import GatewayPath
         from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.validator import ContractValidationError
 
         broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
-        if not (gateway_decision.path is GatewayPath.SLOW and gateway_decision.allowed):
-            return None, broker
         actuator = BrokeredGitHubActuator(broker)
         grant = dict(chain["credential_use_grant"])
         grant["credential_grant_id"] = grant_id
-        return actuator.publish_pull_request(
-            actuator_request=chain["actuator_request"],
-            credential_grant=grant,
-            policy_decision=decision,
-            approval_valid=True,
-            gateway_decision=gateway_decision,
-            intent=chain["intent"],
-            now=NOW,
-            approval=chain["approval"],
-        ), broker
+        try:
+            return actuator.publish_pull_request(
+                actuator_request=chain["actuator_request"],
+                credential_grant=grant,
+                policy_decision=decision,
+                approval_valid=True,
+                gateway_decision=gateway_decision,
+                intent=chain["intent"],
+                now=NOW,
+                approval=chain["approval"],
+            ), broker
+        except ContractValidationError:
+            return None, broker
 
     def _allow_decision(self, chain, decision_id):
         from app_contracts.authority import DeterministicPolicy, PolicyConfig

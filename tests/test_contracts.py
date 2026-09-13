@@ -102,6 +102,22 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ContractValidationError):
             validate_chain(chain)
 
+    def test_non_boolean_taint_markers_denied_without_value(self):
+        for bad in ("yes", "", 1, 0, None, ["tainted"]):
+            with self.subTest(marker=type(bad).__name__):
+                chain = json.loads(json.dumps(self.chain))
+                chain["canonical_envelope"]["security"]["tainted"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^chain: taint marker is not a boolean$"
+                ) as raised:
+                    validate_chain(chain)
+                self.assertNotIn("process-demo-001", str(raised.exception))
+        tainted = json.loads(json.dumps(self.chain))
+        tainted["canonical_envelope"]["security"]["tainted"] = True
+        with self.assertRaisesRegex(ContractValidationError, "tainted envelope cannot authorize"):
+            validate_chain(tainted)
+        validate_chain(self.chain)
+
     def test_tainted_envelope_cannot_authorize(self):
         envelope = json.loads(json.dumps(self.chain["canonical_envelope"]))
         envelope["security"]["tainted"] = True

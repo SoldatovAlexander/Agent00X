@@ -52,6 +52,8 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
 
     if chain["canonical_envelope"]["correlation_id"] != chain["process_contract"]["process_id"]:
         raise ContractValidationError("chain: envelope correlation_id mismatch")
+    if not isinstance(chain["canonical_envelope"]["security"]["tainted"], bool):
+        raise ContractValidationError("chain: taint marker is not a boolean")
     if chain["canonical_envelope"]["security"]["tainted"]:
         raise ContractValidationError("chain: tainted envelope cannot authorize publication")
     if chain["task_contract"]["process_id"] != chain["process_contract"]["process_id"]:

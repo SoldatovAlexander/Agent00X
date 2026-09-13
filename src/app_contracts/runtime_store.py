@@ -114,7 +114,7 @@ class SQLiteProcessStore:
                     (process_id, ProcessState.RECEIVED.value, "{}", timestamp),
                 )
         except sqlite3.IntegrityError as exc:
-            raise ProcessStoreError(f"process already exists: {process_id}") from exc
+            raise ProcessStoreError("process already exists") from exc
         return self.get(process_id)
 
     def get(self, process_id: str) -> ProcessRecord:
@@ -125,7 +125,7 @@ class SQLiteProcessStore:
             (process_id,),
         ).fetchone()
         if row is None:
-            raise ProcessNotFound(process_id)
+            raise ProcessNotFound("process not found")
         return ProcessRecord(row["process_id"], ProcessState(row["state"]), row["version"], row["updated_at"])
 
     def advance(
@@ -145,7 +145,7 @@ class SQLiteProcessStore:
         ):
             raise VersionConflict("expected version is invalid")
         if current.version != expected_version:
-            raise VersionConflict(f"expected version {expected_version}, found {current.version}")
+            raise VersionConflict("version conflict")
         next_state = transition(current.state, target, evidence)
         timestamp = _timestamp(now)
         evidence_json = json.dumps(evidence.__dict__, sort_keys=True, separators=(",", ":"))
@@ -157,7 +157,7 @@ class SQLiteProcessStore:
                 (next_state.value, next_version, timestamp, process_id, expected_version),
             )
             if updated.rowcount != 1:
-                raise VersionConflict(f"concurrent update for {process_id}")
+                raise VersionConflict("concurrent update")
             self._connection.execute(
                 """INSERT INTO process_events
                    (process_id, sequence, previous_state, state, evidence_json, occurred_at)

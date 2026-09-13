@@ -11,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.runtime_store import ProcessNotFound, SQLiteProcessStore, VersionConflict
+from app_contracts.runtime_store import ProcessNotFound, ProcessStoreError, SQLiteProcessStore, VersionConflict
 from app_contracts.state_machine import InvalidTransition, ProcessState, TransitionEvidence
 from app_contracts.validator import ContractValidationError
 
@@ -394,6 +394,31 @@ class RuntimeStoreTests(unittest.TestCase):
             with self.assertRaises(ProcessNotFound):
                 store.audit_events("process-absent-001")
             self.assertEqual(store.get("process-durable-019").version, 0)
+
+    def test_lookup_and_conflict_errors_carry_no_identifiers(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-020")
+            with self.assertRaisesRegex(ProcessStoreError, "^process already exists$"):
+                store.create("process-durable-020")
+            with self.assertRaisesRegex(ProcessNotFound, "^process not found$") as missing:
+                store.get("process-caller-secret-001")
+            self.assertNotIn("caller-secret-001", str(missing.exception))
+            store.advance(
+                "process-durable-020",
+                ProcessState.SPECIFIED,
+                TransitionEvidence(contract_complete=True),
+                expected_version=0,
+            )
+            with self.assertRaisesRegex(VersionConflict, "^version conflict$") as stale:
+                store.advance(
+                    "process-durable-020",
+                    ProcessState.AUTHORIZED,
+                    TransitionEvidence(policy_allowed=True),
+                    expected_version=0,
+                )
+            self.assertNotIn("process-durable-020", str(stale.exception))
+            record = store.get("process-durable-020")
+            self.assertEqual((record.state, record.version), (ProcessState.SPECIFIED, 1))
 
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:

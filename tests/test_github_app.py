@@ -146,6 +146,35 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         ):
                             GitHubAppPublicationChannel(config, token, **{field: bad})
 
+    def test_malformed_channel_config_and_token_denied_without_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            calls = []
+            transports = {
+                "post_json": lambda *args: calls.append(args),
+                "get_json": lambda *args: calls.append(args),
+                "put_json": lambda *args: calls.append(args),
+            }
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            token = _InstallationToken("opaque", "future")
+            for bad_config in (None, "config", 42, {}):
+                with self.subTest(config=type(bad_config).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^GitHub actuator: channel config is invalid$"
+                    ):
+                        GitHubAppPublicationChannel(bad_config, token, **transports)
+            for bad_token in (None, "opaque-token-value", 42, {}):
+                with self.subTest(token=type(bad_token).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^GitHub actuator: channel token is invalid$"
+                    ) as raised:
+                        GitHubAppPublicationChannel(config, bad_token, **transports)
+                    self.assertNotIn("opaque-token-value", str(raised.exception))
+            self.assertEqual(calls, [])
+
     def test_publication_channel_posts_only_allowlisted_typed_request(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

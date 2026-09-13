@@ -227,6 +227,10 @@ class GitHubAppPublicationChannel:
     """Actuator-only channel for one typed GitHub pull-request operation."""
 
     def __init__(self, config: GitHubAppBrokerConfig, token: _InstallationToken, *, post_json=None, get_json=None, put_json=None) -> None:
+        if not isinstance(config, GitHubAppBrokerConfig):
+            raise ContractValidationError("GitHub actuator: channel config is invalid")
+        if not isinstance(token, _InstallationToken):
+            raise ContractValidationError("GitHub actuator: channel token is invalid")
         for name, transport in (("post_json", post_json), ("get_json", get_json), ("put_json", put_json)):
             if transport is not None and not callable(transport):
                 raise ContractValidationError("GitHub actuator: injected transport is not callable")

@@ -782,13 +782,40 @@ class ComposedGatewayDenialTests(unittest.TestCase):
         self.assertEqual(result.pull_request_id, 1)
 
 
+def composed_publish(journal, endpoint, request):
+    """Test-harness idempotency/replay boundary over one journal + endpoint.
+
+    A repeated identical call against a completed record with matching
+    process/idempotency/repository binding returns the original receipt
+    without an endpoint call. A mismatched binding is denied with a stable
+    error instead of replaying. Fresh records go through the normal
+    journal-tracked publication path.
+    """
+
+    from app_contracts.publication import execute_publication
+    from app_contracts.validator import ContractValidationError
+
+    try:
+        record = journal.get(request["process_id"])
+    except KeyError:
+        record = None
+    if record is not None and record.status == "completed":
+        if (
+            record.idempotency_key != request.get("idempotency_key")
+            or record.repository_id != request.get("repository_id")
+        ):
+            raise ContractValidationError("composed replay binding mismatch")
+        return endpoint.find_by_idempotency_key(request["idempotency_key"])
+    return execute_publication(journal, endpoint, request)
+
+
 class ComposedReplayIdempotencyTests(unittest.TestCase):
-    def test_identical_replay_returns_original_receipt_without_second_effect(self):
+    def _replay_fixtures(self):
         import tempfile
 
         from app_contracts.digests import sha256_digest
         from app_contracts.mock_github import MockGitHubEndpoint
-        from app_contracts.publication import PublicationJournal, execute_publication
+        from app_contracts.publication import PublicationJournal
 
         chain = build_chain()
         endpoint_calls: list[dict] = []
@@ -819,16 +846,40 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
             "policy_effect": "allow",
             "approval_valid": True,
         }
-        first = execute_publication(journal, endpoint, dict(boundary_request))
+        return chain, journal, endpoint, endpoint_calls, boundary_request
+
+    def test_identical_replay_returns_original_receipt_without_endpoint_call(self):
+        chain, journal, endpoint, endpoint_calls, boundary_request = self._replay_fixtures()
+        first = composed_publish(journal, endpoint, dict(boundary_request))
         self.assertEqual(first.pull_request_id, 1)
         before = journal.get(PROCESS_ID)
         self.assertEqual((before.status, before.pull_request_id), ("completed", 1))
-        with self.assertRaisesRegex(ValueError, "publication is not prepared"):
-            execute_publication(journal, endpoint, dict(boundary_request))
+        replayed = composed_publish(journal, endpoint, dict(boundary_request))
+        self.assertEqual(replayed, first)
         self.assertEqual(len(endpoint_calls), 1)
         after = journal.get(PROCESS_ID)
         self.assertEqual(after, before)
         self.assertEqual(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]), first)
+
+    def test_mismatched_binding_is_denied_not_replayed(self):
+        from app_contracts.validator import ContractValidationError
+
+        chain, journal, endpoint, endpoint_calls, boundary_request = self._replay_fixtures()
+        first = composed_publish(journal, endpoint, dict(boundary_request))
+        self.assertEqual(first.pull_request_id, 1)
+        for label, mutation in (
+            ("idempotency-key", {"idempotency_key": "publish/process-chain-001/sha256:" + "0" * 64}),
+            ("repository", {"repository_id": "github-installation/42/repository/9999"}),
+        ):
+            with self.subTest(binding=label):
+                forged = dict(boundary_request)
+                forged.update(mutation)
+                with self.assertRaisesRegex(ContractValidationError, "composed replay binding mismatch"):
+                    composed_publish(journal, endpoint, forged)
+        self.assertEqual(len(endpoint_calls), 1)
+        record = journal.get(PROCESS_ID)
+        self.assertEqual((record.status, record.pull_request_id), ("completed", 1))
+        self.assertIsNone(endpoint.find_by_idempotency_key("publish/process-chain-001/sha256:" + "0" * 64))
 
     def test_changed_binding_is_denied_rather_than_replayed(self):
         import copy

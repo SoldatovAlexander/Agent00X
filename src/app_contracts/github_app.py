@@ -310,6 +310,11 @@ class GitHubAppPublicationChannel:
             if not isinstance(content, str) or not isinstance(content_digest, str) or sha256_bytes(content.encode("utf-8")) != content_digest:
                 raise ContractValidationError("GitHub actuator: manifest content digest mismatch")
             validated.append((path, content))
+        seen_paths: set[str] = set()
+        for manifest_path, _manifest_content in validated:
+            if manifest_path in seen_paths:
+                raise ContractValidationError("GitHub actuator: manifest contains duplicate path")
+            seen_paths.add(manifest_path)
         branch_state = self.reconcile_branch(branch)
         if branch_state is None:
             raise GitHubAppBrokerError("GitHub branch outcome unknown; reconcile before retry")

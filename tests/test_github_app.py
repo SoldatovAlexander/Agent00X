@@ -752,6 +752,22 @@ class ManifestDigestTests(unittest.TestCase):
         self.assertEqual(result, "f" * 40)
         self.assertEqual([method for method, _ in calls], ["POST", "PUT"])
 
+    def test_duplicate_manifest_paths_rejected_before_any_provider_call(self):
+        from app_contracts.digests import sha256_bytes
+        calls = []
+        channel = self._recording_channel(calls)
+        first = "first content\n"
+        second = "second content\n"
+        files = [
+            PublishableFile("proof.txt", first, sha256_bytes(first.encode())),
+            PublishableFile("proof.txt", second, sha256_bytes(second.encode())),
+        ]
+        with self.assertRaisesRegex(ContractValidationError, "manifest contains duplicate path"):
+            channel.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=files,
+            )
+        self.assertEqual(calls, [])
+
 
 class MalformedReconciliationTests(unittest.TestCase):
     def _branch_channel(self, calls, branch_payload):

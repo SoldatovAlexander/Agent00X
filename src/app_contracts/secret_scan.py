@@ -41,7 +41,7 @@ def find_canary_surfaces(canary: str, surfaces: Mapping[str, Any]) -> list[str]:
 def assert_canary_absent(canary: str, surfaces: Mapping[str, Any]) -> None:
     leaked = find_canary_surfaces(canary, surfaces)
     if leaked:
-        raise CredentialLeakDetected(f"credential canary found in surfaces: {', '.join(leaked)}")
+        raise CredentialLeakDetected("credential canary found")
 
 
 def _serialize(value: Any) -> str:

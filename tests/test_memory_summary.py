@@ -27,6 +27,16 @@ class MemorySummaryIntervalTests(unittest.TestCase):
                 self.assertNotIn("artifact", str(raised.exception))
         check_sources(valid_summary())
 
+    def test_unhashable_source_members_denied_without_set_error(self):
+        for bad_refs in ([["artifact://a"]], [{"ref": "artifact://a"}], [["a"], ["a"]]):
+            with self.subTest(refs=bad_refs):
+                summary = valid_summary()
+                summary["source_refs"] = bad_refs
+                with self.assertRaises(ContractValidationError) as raised:
+                    check_sources(summary)
+                self.assertNotIsInstance(raised.exception, TypeError)
+        check_sources(valid_summary())
+
     def test_non_mapping_summary_denied_deterministically(self):
         for bad in (None, [], "summary", 42):
             with self.subTest(summary=type(bad).__name__):

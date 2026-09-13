@@ -15,7 +15,7 @@ harness Batch AA (раздел 5). External proof отсутствует и тр
 | 2. Approve | человек/Control Plane | approval фиксирует `staged_change_digest` и `approved_intent_digest` (canonical digest полного intent) | — | approval contract |
 | 3. Decide | policy: request + approval + staged + intent | `DeterministicPolicy.decide`: allow только при digest-bound approval; TTL 300s | — | policy decision (`evaluated_at`/`expires_at`) |
 | 4. Classify | gateway: envelope | `enforce`: SLOW allow; чувствительность/audit-gates до sink | audit event (sanitized) | `GatewayDecision`, audit record |
-| 5. Open channel | broker: credential grant | grant↔request digest, обязательный expiry (`now`), single-use, approval-bound intent — всё до открытия канала | grant → used (только после conforming channel) | channel handle (opaque, без credential value) |
+| 5. Open channel | broker: credential grant | `BrokeredGitHubActuator` сначала отклоняет malformed, deny/degraded и fast gateway verdict; только затем broker проверяет grant↔request digest, expiry (`now`), single-use и approval-bound intent до открытия канала | grant → used (только после conforming channel) | channel handle (opaque, без credential value) |
 | 6a. Publish (actuator) | actuator: decision + approval + intent + `now` | `publish_authorized_request`: expiry → approval → intent digest → decision/request match → branch/key → idempotency | — (только receipt; журнал не мутирует — отдельный путь) | receipt (`MockPullRequest`) |
 | 6b. Journal-tracked publish | journal + endpoint: prepared record + boundary request | `execute_publication`: `get` → `mark_attempting` → publish → `mark_completed`; collaborator-gates до мутации | journal: prepared → attempting → completed | receipt + record |
 | 7. Recover | journal + reconciliation lookup | `recover_publication`: completed/prepared возвращаются; attempting требует сверки; uncertain — никогда не retry автоматически | attempting → completed / reconciliation_required | record, recovery outcome |
@@ -69,6 +69,10 @@ positive path до `PR 1` + `completed`; `ComposedSwapDenialTests`,
 channel/endpoint вызовов; `ComposedReplayIdempotencyTests` — ровно один receipt
 и стабильный journal; `ComposedRecoveryMatrixTests` — recovery без слепого retry;
 `ComposedEvidenceRedactionTests` — bindings/reasons без credential-like значений.
+Порядок gateway-before-broker подтверждён локально в
+`tests/test_broker.py` (`BrokerTests.test_gateway_classification_matrix_crosses_broker_only_on_slow_allow`)
+и в composed catalog; это component-level enforcement, а не production
+orchestrator или journal-tracked actuator path.
 Чего он не доказывает: атомарность GitHub API, настоящий minting токенов,
 изоляцию backend, durability при crash, выдачу approval, clock sync. Это
 остаётся external proof и предметом отдельных карточек, не настоящей.

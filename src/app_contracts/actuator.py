@@ -42,6 +42,8 @@ def publish_authorized_request(
         raise ContractValidationError("actuator: approval is required")
     if approval_valid is not True:
         raise ContractValidationError("actuator: approval proof is invalid")
+    if not callable(getattr(endpoint, "publish_pull_request", None)):
+        raise ContractValidationError("actuator: endpoint is malformed")
     if not isinstance(actuator_request, dict):
         raise ContractValidationError("actuator: request is malformed")
     for field in (

@@ -450,6 +450,18 @@ class RuntimeStoreTests(unittest.TestCase):
             self.assertEqual(len(store.events("process-durable-021")), 1)
             self.assertEqual(store.audit_events("process-durable-021"), [])
 
+    def test_malformed_database_path_denied_without_file_or_connection(self):
+        before = sorted(entry.name for entry in Path(self.temp_dir.name).iterdir())
+        for bad in (None, 123, "", b"runtime.sqlite3", ["runtime.sqlite3"]):
+            with self.subTest(path=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ProcessStoreError, "^runtime: database path is invalid$"
+                ):
+                    SQLiteProcessStore(bad)
+        self.assertEqual(
+            sorted(entry.name for entry in Path(self.temp_dir.name).iterdir()), before
+        )
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

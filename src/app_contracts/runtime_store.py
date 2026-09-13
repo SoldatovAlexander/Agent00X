@@ -34,6 +34,14 @@ class ProcessRecord:
 
 class SQLiteProcessStore:
     def __init__(self, path: Path) -> None:
+        if isinstance(path, Path):
+            path_text: str | None = str(path)
+        elif isinstance(path, str):
+            path_text = path
+        else:
+            path_text = None
+        if not path_text:
+            raise ProcessStoreError("runtime: database path is invalid")
         self._connection = sqlite3.connect(path)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")

@@ -69,6 +69,10 @@ def _require_audit_shape(envelope: dict[str, Any]) -> None:
         section_value = envelope.get(section)
         if not isinstance(section_value, dict) or field not in section_value:
             raise ContractValidationError("gateway: envelope is malformed")
+    for section, field in _REQUIRED_AUDIT_FIELDS:
+        value = envelope[section][field]
+        if not isinstance(value, str) or not value:
+            raise ContractValidationError("gateway: envelope is malformed")
 _SLOW_PORTS = frozenset({"tool", "approval", "credential-operation"})
 _PRIVILEGE_PREFIXES = ("capability.", "identity.", "delegation.")
 

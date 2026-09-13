@@ -125,6 +125,47 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(denied.path, GatewayPath.DEGRADED)
         self.assertFalse(denied.allowed)
 
+    def test_malformed_audit_scalars_deny_without_sink_access(self):
+        sink_calls = []
+
+        class RecordingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                sink_calls.append((process_id, kwargs))
+
+        def audited_envelope():
+            request = envelope("repository.read")
+            request.update({
+                "correlation_id": "process-gateway-011",
+                "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+                "payload": {"content_digest": "sha256:" + "b" * 64},
+            })
+            return request
+
+        sink = RecordingSink()
+        bad_scalars = (None, 123, "", [], {})
+        for bad in bad_scalars:
+            request = audited_envelope()
+            request["correlation_id"] = bad
+            with self.subTest(field="correlation_id", value=repr(bad)):
+                decision = enforce(request, policy_available=True, audit_sink=sink)
+                self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                self.assertFalse(decision.allowed)
+                self.assertEqual(decision.reason_codes, ("malformed-envelope",))
+        for section, field in (("source", "principal_id"), ("payload", "content_digest")):
+            for bad in bad_scalars:
+                with self.subTest(field=f"{section}.{field}", value=repr(bad)):
+                    request = audited_envelope()
+                    request[section][field] = bad
+                    decision = enforce(request, policy_available=True, audit_sink=sink)
+                    self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                    self.assertFalse(decision.allowed)
+                    self.assertEqual(decision.reason_codes, ("malformed-envelope",))
+        self.assertEqual(sink_calls, [])
+        decision = enforce(audited_envelope(), policy_available=True, audit_sink=sink)
+        self.assertEqual(decision.path, GatewayPath.FAST)
+        self.assertTrue(decision.allowed)
+        self.assertEqual(len(sink_calls), 1)
+
     def test_deny_audit_record_has_stable_shape_without_payload(self):
         import json
         with tempfile.TemporaryDirectory(prefix="app-gateway-test-") as directory:

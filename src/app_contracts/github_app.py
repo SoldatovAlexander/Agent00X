@@ -358,6 +358,9 @@ class GitHubAppPublicationChannel:
         branch = request["branch"]
         if not isinstance(branch, str) or not branch.startswith("agent/process-") or len(branch) <= len("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        expected_key = f"publish/{branch.removeprefix('agent/')}/{request['staged_change_digest']}"
+        if request["idempotency_key"] != expected_key:
+            raise ContractValidationError("GitHub actuator: idempotency key does not match branch and digest")
         marker = f"<!-- agent-process-idempotency: {request['idempotency_key']} -->"
         existing = self._find_existing_pull_request(branch, marker)
         if existing is not None:

@@ -175,6 +175,42 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                     self.assertNotIn("opaque-token-value", str(raised.exception))
             self.assertEqual(calls, [])
 
+    def test_mismatched_idempotency_key_makes_zero_provider_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            calls = []
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: calls.append(("POST", url)),
+                get_json=lambda url, headers: calls.append(("GET", url)),
+            )
+            digest = "sha256:" + "a" * 64
+            base = {
+                "operation": "publish_pull_request",
+                "repository_id": "github-installation/456/repository/1001",
+                "branch": "agent/process-demo-001",
+                "staged_change_digest": digest,
+                "idempotency_key": f"publish/process-demo-001/{digest}",
+                "policy_effect": "allow",
+                "approval_valid": True,
+            }
+            mismatched = [
+                dict(base, idempotency_key=f"publish/process-demo-001/{'sha256:' + 'b' * 64}"),
+                dict(base, idempotency_key="publish/process-evil-001/" + digest),
+                dict(base, idempotency_key="stale-marker"),
+            ]
+            for request in mismatched:
+                with self.subTest(key=request["idempotency_key"]):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "idempotency key does not match"
+                    ):
+                        channel.publish_pull_request(request)
+            self.assertEqual(calls, [])
+
     def test_publication_channel_posts_only_allowlisted_typed_request(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

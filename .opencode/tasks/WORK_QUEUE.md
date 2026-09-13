@@ -2289,6 +2289,243 @@ Commit: ALLOWED
   `tests/test_local_publication_chain.py`; полный suite: 447 tests passed,
   1 skipped.
 
+## Этап Production boundary alignment — 1 batch, 8 карточек
+
+## Batch AB — gateway-before-broker enforcement
+
+Цель batch: убрать test-only обход из Batch AA и зафиксировать production
+порядок gateway → broker: denied/degraded/fast verdict не открывает private
+channel. Batch не создаёт orchestrator, не подключает сеть и не заявляет
+external proof.
+
+## EXP-256 — gate brokered actuator before broker open
+Статус: ACCEPTED
+Цель: перенести проверку gateway decision в `BrokeredGitHubActuator` до вызова broker.
+Гипотеза: отказанный, degraded или fast gateway verdict не должен расходовать grant, открывать channel factory или достигать endpoint.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: изменение gateway classifier, broker grant semantics, journal, GitHub API и network.
+Разрешённые пути:
+- src/app_contracts/github_actuator.py
+- tests/test_broker.py
+Критерии приёмки:
+- malformed, deny/degraded и fast gateway verdict дают stable `ContractValidationError` до `open_github_publication_channel`;
+- valid slow allow сохраняет существующую публикацию;
+- approval, decision и intent preflight сохраняют fail-closed порядок.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- исправляет порядок локальной component boundary, но не создаёт production composed journal path.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `db25ca0` перенёс malformed/deny/degraded/fast
+  gateway gate в `BrokeredGitHubActuator` до broker open. Regression test
+  подтверждает zero factory/opened-grant/endpoint effect для каждого refusal и
+  сохранение valid slow publication. Scope ограничен `github_actuator.py` и
+  `tests/test_broker.py`; полный suite: 448 tests passed, 1 skipped.
+
+## EXP-257 — matrix-test gateway refusal before broker factory
+Статус: ACCEPTED
+Цель: зафиксировать matrix tainted deny, policy-unavailable degraded и fast allow на brokered boundary.
+Гипотеза: только `SLOW + allowed` может пересечь broker boundary независимо от reason codes.
+Зависит от: EXP-256
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: gateway classification semantics и provider calls.
+Разрешённые пути:
+- tests/test_broker.py
+Критерии приёмки:
+- каждый непубликуемый verdict оставляет factory calls и `opened_grants` пустыми;
+- каждый case не создаёт endpoint receipt;
+- valid slow allow остаётся отдельно покрытым.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- test-only mock broker/endpoint.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `05fa02d` использует actual `classify` matrix
+  (tainted deny, policy-unavailable degraded, fast read и slow allow) на
+  brokered actuator. Только slow allow открывает factory/grant и публикует;
+  остальные verdict оставляют их пустыми. Scope ограничен
+  `tests/test_broker.py`; полный suite: 449 tests passed, 1 skipped.
+
+## EXP-258 — preserve grant lifecycle on gateway refusal
+Статус: ACCEPTED
+Цель: доказать, что pre-broker gateway refusal не помечает grant использованным и не меняет его lifecycle.
+Гипотеза: отказ до channel open не потребляет single-use capability.
+Зависит от: EXP-257
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: token minting, revoke и изменение broker state model.
+Разрешённые пути:
+- tests/test_broker.py
+Критерии приёмки:
+- после gateway refusal тот же valid grant доступен для одного subsequent valid slow allow;
+- subsequent valid use открывает ровно один channel и публикует ровно один receipt;
+- запрещённый case не показывает credential values.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- не доказывает внешний token lifecycle.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `c96ea6e` доказал, что denied gateway не
+  расходует grant: zero factory/opened-grant после refusal, затем тот же grant
+  открывает ровно один channel и возвращает один receipt на valid slow allow.
+  Scope ограничен `tests/test_broker.py`; полный suite: 450 tests passed,
+  1 skipped.
+
+## EXP-259 — pin brokered preflight precedence
+Статус: ACCEPTED
+Цель: закрепить, что invalid gateway verdict отсекается до malformed/expired grant processing и без broker detail leakage.
+Гипотеза: gateway denial нельзя превратить в oracle состояния grant или factory.
+Зависит от: EXP-256
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: изменение сообщений broker для valid gateway path.
+Разрешённые пути:
+- tests/test_broker.py
+Критерии приёмки:
+- deny gateway с malformed либо expired grant возвращает stable gateway error до factory;
+- ошибка не содержит grant/request identifiers или credential-like values;
+- valid slow path по-прежнему применяет обычную grant validation.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- only local error precedence.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `8ceadb7` закрепил gateway preflight precedence:
+  malformed и expired grant при degraded denial не достигают factory/broker и
+  возвращают только stable gateway error без identifiers. Scope ограничен
+  `tests/test_broker.py`; полный suite: 451 tests passed, 1 skipped.
+
+## EXP-260 — align composed harness with production gateway order
+Статус: ACCEPTED
+Цель: удалить test-only outer gateway gate из composed harness и направить denial cases через production brokered boundary.
+Гипотеза: Batch AA больше не должен моделировать свой порядок gateway/broker отдельно от компонента.
+Зависит от: EXP-258
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: новый production orchestrator, journal integration и external publication.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- tainted, degraded и audit-failure cases вызывают `BrokeredGitHubActuator` и дают zero factory/opened-grant/endpoint effect;
+- valid slow path сохраняет publication;
+- harness не содержит отдельного gateway-before-broker bypass helper.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- local composition остаётся test-only.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `51f7ad6` заменил composed harness outer gate
+  на actual `BrokeredGitHubActuator`. Tainted/degraded/fast cases теперь
+  проходят production boundary и остаются zero factory/opened-grant/endpoint;
+  valid slow allow публикует. Scope ограничен
+  `tests/test_local_publication_chain.py`; полный suite: 451 tests passed,
+  1 skipped.
+
+## EXP-261 — align adversarial catalog with production gateway order
+Статус: ACCEPTED
+Цель: перевести gateway/audit cases regression catalog с test-only boundary на actual brokered actuator.
+Гипотеза: catalog должен ловить регрессию production порядка, а не только поведения test glue.
+Зависит от: EXP-260
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: расширение catalog за текущие swaps/expiry/replay/recovery.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- каждый gateway/audit refusal использует actual brokered invocation и проверяет no factory/opened-grant/endpoint effect;
+- остальные catalog cases сохраняются;
+- нет credential values в diagnostics.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- catalog не является external security proof.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `4057969` заменил catalog test-only gateway
+  dispatch actual brokered invocation. Tainted, degraded и audit-failure
+  verdict подтверждают no factory/opened-grant/endpoint effect на production
+  component boundary. Scope ограничен `tests/test_local_publication_chain.py`;
+  полный suite: 451 tests passed, 1 skipped.
+
+## EXP-262 — reconcile local-chain specification with enforced order
+Статус: ACCEPTED
+Цель: описать production gateway-before-broker preflight и убрать ссылку на test-only обход как на требуемую защиту.
+Гипотеза: specification различает компонентное enforcement и всё ещё отсутствующий production journal composition.
+Зависит от: EXP-261
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: изменение архитектуры и claims о внешней публикации.
+Разрешённые пути:
+- docs/32-local-publication-chain-spec.md
+- docs/31-proof-boundary-traceability.md
+Критерии приёмки:
+- шаги gateway и broker фиксируют реальный порядок preflight;
+- явно сохранены ограничения про external proof и раздельные production actuator/journal paths;
+- добавлена точная ссылка на regression coverage.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- документы не являются доказательством provider semantics.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `4020831` зафиксировал actual
+  gateway-before-broker preflight в specification и traceability map, с
+  точной ссылкой на regression coverage и сохранёнными ограничениями external
+  proof/раздельных actuator-journal paths. Scope ограничен двумя разрешёнными
+  документами; полный suite: 451 tests passed, 1 skipped.
+
+## EXP-263 — reconcile operational status after batches AA and AB
+Статус: ACCEPTED
+Цель: обновить factual local evidence inventory после завершения composed harness и enforced gateway order.
+Гипотеза: README и implementation status не должны утверждать, что local chain не доказана, и не должны превращать local results в production claims.
+Зависит от: EXP-262
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: новые runtime components, GitHub calls и переписывание roadmap.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- documents distinguish completed local harness/component evidence from missing production orchestration and external proof;
+- test inventory is reconciled to the verified run recorded in task evidence;
+- no claim of GitHub API atomicity, token minting or backend isolation.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- operational status remains a local-evidence statement.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `f8b46ef` reconciled README and implementation
+  status with the accepted local composed harness and gateway-before-broker
+  enforcement. It preserves the distinction from production orchestration,
+  GitHub API atomicity, token minting and backend isolation. Scope ограничен
+  `README.md` и `docs/27-implementation-status.md`; полный suite: 451 tests
+  passed, 1 skipped.
+
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

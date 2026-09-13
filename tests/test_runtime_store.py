@@ -462,6 +462,34 @@ class RuntimeStoreTests(unittest.TestCase):
             sorted(entry.name for entry in Path(self.temp_dir.name).iterdir()), before
         )
 
+    def test_corrupt_stored_json_yields_stable_errors(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-022")
+            store.append_audit_event(
+                "process-durable-022", actor_id="agent-worker-001",
+                event_type="gateway.request", input_digest="sha256:" + "a" * 64,
+                result="allowed", reason_codes=("internal-read-only",),
+            )
+            with store._connection:
+                store._connection.execute(
+                    """INSERT INTO process_events
+                       (process_id, sequence, previous_state, state, evidence_json, occurred_at)
+                       VALUES (?, 1, 'received', 'specified', 'not-json{{{caller-secret-001', ?)""",
+                    ("process-durable-022", "2026-09-04T12:00:00Z"),
+                )
+                store._connection.execute(
+                    """INSERT INTO audit_events
+                       (process_id, actor_id, event_type, input_digest, result, reason_codes_json, occurred_at)
+                       VALUES (?, 'agent-worker-001', 'gateway.request', ?, 'denied', 'broken[[[caller-secret-002', ?)""",
+                    ("process-durable-022", "sha256:" + "b" * 64, "2026-09-04T12:00:00Z"),
+                )
+            with self.assertRaisesRegex(ProcessStoreError, "^runtime: stored event is corrupt$") as event_raised:
+                store.events("process-durable-022")
+            self.assertNotIn("caller-secret-001", str(event_raised.exception))
+            with self.assertRaisesRegex(ProcessStoreError, "^runtime: stored audit event is corrupt$") as audit_raised:
+                store.audit_events("process-durable-022")
+            self.assertNotIn("caller-secret-002", str(audit_raised.exception))
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

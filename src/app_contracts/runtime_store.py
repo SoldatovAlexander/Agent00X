@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 from .state_machine import ProcessState, TransitionEvidence, transition
 from .validator import ContractValidationError
@@ -181,17 +182,19 @@ class SQLiteProcessStore:
                FROM process_events WHERE process_id = ? ORDER BY sequence""",
             (process_id,),
         ).fetchall()
-        return [
-            {
-                "event_id": row["event_id"],
-                "sequence": row["sequence"],
-                "previous_state": row["previous_state"],
-                "state": row["state"],
-                "evidence": json.loads(row["evidence_json"]),
-                "occurred_at": row["occurred_at"],
-            }
-            for row in rows
-        ]
+        decoded = []
+        for row in rows:
+            decoded.append(
+                {
+                    "event_id": row["event_id"],
+                    "sequence": row["sequence"],
+                    "previous_state": row["previous_state"],
+                    "state": row["state"],
+                    "evidence": _decode_stored_json(row["evidence_json"], "event"),
+                    "occurred_at": row["occurred_at"],
+                }
+            )
+        return decoded
 
     def append_audit_event(
         self,
@@ -227,18 +230,20 @@ class SQLiteProcessStore:
                FROM audit_events WHERE process_id = ? ORDER BY event_id""",
             (process_id,),
         ).fetchall()
-        return [
-            {
-                "event_id": row["event_id"],
-                "actor_id": row["actor_id"],
-                "event_type": row["event_type"],
-                "input_digest": row["input_digest"],
-                "result": row["result"],
-                "reason_codes": json.loads(row["reason_codes_json"]),
-                "occurred_at": row["occurred_at"],
-            }
-            for row in rows
-        ]
+        decoded = []
+        for row in rows:
+            decoded.append(
+                {
+                    "event_id": row["event_id"],
+                    "actor_id": row["actor_id"],
+                    "event_type": row["event_type"],
+                    "input_digest": row["input_digest"],
+                    "result": row["result"],
+                    "reason_codes": _decode_stored_json(row["reason_codes_json"], "audit event"),
+                    "occurred_at": row["occurred_at"],
+                }
+            )
+        return decoded
 
     def close(self) -> None:
         self._connection.close()
@@ -265,6 +270,13 @@ def _validate_reason_codes(reason_codes: object) -> None:
         )
     ):
         raise ContractValidationError("audit: reason code is invalid")
+
+
+def _decode_stored_json(text: str, label: str) -> Any:
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise ProcessStoreError(f"runtime: stored {label} is corrupt") from exc
 
 
 def _timestamp(value: datetime | None) -> str:

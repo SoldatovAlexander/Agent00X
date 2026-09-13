@@ -367,6 +367,20 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.status, "prepared")
             self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
 
+    def test_malformed_request_process_id_denied_before_access(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            for bad in (None, 123, "", ["process-publication-001"]):
+                with self.subTest(process_id=type(bad).__name__):
+                    request = dict(self.request, process_id=bad)
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^publication: request value is invalid$"
+                    ):
+                        execute_publication(journal, self.endpoint, request)
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "prepared")
+            self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_malformed_request_values_denied_before_attempt(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

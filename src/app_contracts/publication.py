@@ -182,6 +182,9 @@ def execute_publication(
             raise ContractValidationError("publication: request value is invalid")
     if not isinstance(request["approval_valid"], bool):
         raise ContractValidationError("publication: request value is invalid")
+    process_id = request["process_id"]
+    if not isinstance(process_id, str) or not process_id:
+        raise ContractValidationError("publication: request value is invalid")
     record = journal.get(request["process_id"])
     if record.status != "prepared":
         raise ValueError("publication is not prepared")

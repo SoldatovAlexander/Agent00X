@@ -205,6 +205,9 @@ def recover_publication(
 
     if not callable(getattr(endpoint, "find_by_idempotency_key", None)):
         raise ContractValidationError("publication: collaborator is invalid")
+    for method in ("get", "mark_completed", "mark_reconciliation_required"):
+        if not callable(getattr(journal, method, None)):
+            raise ContractValidationError("publication: collaborator is invalid")
     record = journal.get(process_id)
     if record.status == "completed":
         return record

@@ -447,6 +447,30 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(recovered.pull_request_id, 1)
             self.assertEqual(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]).pull_request_id, 1)
 
+    def test_malformed_recovery_journal_denied_without_calls(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+
+            class NoGetEndpoint:
+                def __init__(self, calls):
+                    self._calls = calls
+
+                def find_by_idempotency_key(self, key):
+                    self._calls.append(key)
+                    return None
+
+            for bad_journal in (None, "journal", 42, object()):
+                with self.subTest(journal=type(bad_journal).__name__):
+                    calls = []
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^publication: collaborator is invalid$"
+                    ):
+                        recover_publication(bad_journal, NoGetEndpoint(calls), self.request["process_id"])
+                    self.assertEqual(calls, [])
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+
     def test_malformed_recovery_endpoint_leaves_attempting_record(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

@@ -212,5 +212,149 @@ class ComposedFixtureTests(unittest.TestCase):
         )
 
 
+def _prepare_adapter(sandbox, new_content: str):
+    """Adapter 1 — prepare: real scoped change on the fixture repository."""
+
+    from app_contracts.repository_process import prepare_change
+
+    return prepare_change(
+        sandbox,
+        process_id=PROCESS_ID,
+        task_id="task-chain-001",
+        repository_id=REPOSITORY_ID,
+        base_commit=BASE_COMMIT,
+        changes={"calculator.py": new_content},
+        test_command=["python3", "--version"],
+        now=NOW,
+    )
+
+
+def _approve_adapter(staged_change: dict, intent: dict):
+    """Adapter 2 — approval: validate the human approval artifact binding."""
+
+    from app_contracts.authority import validate_approval
+
+    approval = build_approval(staged_change, intent)
+    validate_approval(approval, staged_change, intent, policy_version="policy-1", now=NOW)
+    return approval
+
+
+def _decide_adapter(actuator_request: dict, approval: dict, staged_change: dict, intent: dict):
+    """Adapter 3 — policy: fresh allow decision for the exact triple."""
+
+    from app_contracts.authority import DeterministicPolicy, PolicyConfig
+
+    policy = DeterministicPolicy(PolicyConfig(
+        version="policy-1",
+        allowed_repositories=frozenset({REPOSITORY_ID}),
+        allowed_actuators=frozenset({"actuator-github-001"}),
+    ))
+    return policy.decide(
+        decision_id="decision-chain-001",
+        actuator_request=actuator_request,
+        approval=approval,
+        staged_change=staged_change,
+        intent=intent,
+        now=NOW,
+    )
+
+
+def _classify_adapter():
+    """Adapter 4 — gateway: slow-path allow for the publication operation."""
+
+    from app_contracts.gateway import GatewayPath, classify
+
+    decision = classify(
+        {
+            "intent": {"operation": "publish_pull_request", "risk_class": "low"},
+            "destination": {"port": "tool"},
+            "source": {"protocol": "internal"},
+            "security": {"tainted": False, "sensitivity": "internal"},
+        },
+        policy_available=True,
+    )
+    assert decision.path is GatewayPath.SLOW and decision.allowed
+    return decision
+
+
+def _open_adapter(grant: dict, actuator_request: dict):
+    """Adapter 5 — broker: open the single-use private channel."""
+
+    from app_contracts.broker import InMemoryCredentialBroker
+    from app_contracts.mock_github import MockGitHubEndpoint
+
+    endpoint = MockGitHubEndpoint()
+    broker = InMemoryCredentialBroker(lambda: endpoint)
+    return broker, endpoint, broker.open_github_publication_channel(grant, actuator_request, now=NOW)
+
+
+class ComposedPositivePathTests(unittest.TestCase):
+    def test_composed_path_reaches_exactly_one_receipt_and_completed_journal(self):
+        import tempfile
+
+        from app_contracts.actuator import publish_authorized_request
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal, execute_publication
+        from app_contracts.sandbox import LocalProcessSandboxBackend
+
+        directory = tempfile.TemporaryDirectory(prefix="app-chain-harness-")
+        self.addCleanup(directory.cleanup)
+        fixture = ROOT / "fixtures" / "repository" / "project"
+        original = (fixture / "calculator.py").read_text(encoding="utf-8")
+        sandbox = LocalProcessSandboxBackend().create(fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+
+        prepared = _prepare_adapter(sandbox, original + "\ndef extra():\n    return 1\n")
+        staged_change = prepared.staged_change
+        intent = build_intent(staged_change)
+        approval = _approve_adapter(staged_change, intent)
+        actuator_request = build_actuator_request(staged_change, intent)
+        grant = build_grant(actuator_request)
+        decision = _decide_adapter(actuator_request, approval, staged_change, intent)
+        self.assertEqual(decision["effect"], "allow")
+        gateway_decision = _classify_adapter()
+        broker, endpoint, channel = _open_adapter(grant, actuator_request)
+
+        first = publish_authorized_request(
+            channel, actuator_request, decision, approval_valid=True,
+            gateway_decision=gateway_decision, intent=intent, now=NOW, approval=approval,
+        )
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=intent["idempotency_key"],
+            request_digest=sha256_digest(actuator_request),
+            repository_id=REPOSITORY_ID,
+        )
+        boundary_request = {
+            "process_id": PROCESS_ID,
+            "operation": "publish_pull_request",
+            "repository_id": REPOSITORY_ID,
+            "branch": intent["branch_namespace"],
+            "staged_change_digest": intent["staged_change_digest"],
+            "idempotency_key": intent["idempotency_key"],
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        second = execute_publication(journal, channel, boundary_request)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.pull_request_id, 1)
+        record = journal.get(PROCESS_ID)
+        self.assertEqual(record.status, "completed")
+        self.assertEqual(record.idempotency_key, intent["idempotency_key"])
+        self.assertEqual(record.pull_request_id, 1)
+        self.assertEqual(
+            endpoint.find_by_idempotency_key(intent["idempotency_key"]), first
+        )
+        transcript = json.dumps({
+            "intent": intent, "approval": approval, "request": actuator_request,
+            "grant": grant, "decision_effect": decision["effect"],
+        })
+        for forbidden in ("token", "secret", "private", "bearer", "password"):
+            self.assertNotIn(forbidden, transcript)
+
+
 if __name__ == "__main__":
     unittest.main()

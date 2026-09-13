@@ -119,6 +119,23 @@ class ContractTests(unittest.TestCase):
                 self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
         validate_chain(self.chain)
 
+    def test_empty_binding_values_denied_without_payload(self):
+        victims = [
+            ("process_contract", "process_id"),
+            ("approval", "repository_id"),
+            ("intent", "staged_change_digest"),
+        ]
+        for name, field in victims:
+            with self.subTest(member=name):
+                chain = json.loads(json.dumps(self.chain))
+                chain[name][field] = ""
+                with self.assertRaisesRegex(
+                    ContractValidationError, f"^chain: {name} has empty binding value$"
+                ) as raised:
+                    validate_chain(chain)
+                self.assertNotIn("process-demo-001", str(raised.exception))
+        validate_chain(self.chain)
+
     def test_unhashable_binding_values_denied_without_details(self):
         victims = [
             ("staged_change", "process_id", ["process-demo-001"]),

@@ -132,6 +132,8 @@ def _binding_values(
         value = chain[name][field]
         if not isinstance(value, str):
             raise ContractValidationError(f"chain: {name} has non-string binding value")
+        if not value:
+            raise ContractValidationError(f"chain: {name} has empty binding value")
         values.add(value)
     return values
 

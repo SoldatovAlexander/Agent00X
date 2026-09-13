@@ -73,6 +73,18 @@ class LearningCorrectionVersionTests(unittest.TestCase):
                 self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
         check_version(valid_correction())
 
+    def test_malformed_correction_roots_denied_without_raw_error(self):
+        for bad in (None, ["correction"], "correction", 42, {("version", 1)}):
+            with self.subTest(root=type(bad).__name__):
+                with self.assertRaises(ContractValidationError) as raised:
+                    check_version(bad)
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
+        missing_version = valid_correction()
+        del missing_version["version"]
+        with self.assertRaisesRegex(ContractValidationError, "^correction: version is invalid$"):
+            check_version(missing_version)
+        check_version(valid_correction())
+
     def test_valid_correction_passes_unmutated(self):
         correction = valid_correction()
         correction["supersedes"] = "correction-observer-demo-000"

@@ -38,7 +38,7 @@ class MockGitHubEndpoint:
         for field in ("repository_id", "branch", "staged_change_digest", "idempotency_key"):
             if not isinstance(request[field], str) or not request[field]:
                 raise ContractValidationError("mock github: boundary field is invalid")
-        if not request["branch"].startswith("agent/"):
+        if not request["branch"].startswith("agent/") or len(request["branch"]) <= len("agent/"):
             raise ContractValidationError("mock github: branch is outside the agent namespace")
 
         expected_key = (

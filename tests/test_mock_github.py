@@ -169,6 +169,21 @@ class MockGitHubTests(unittest.TestCase):
                     endpoint.publish_pull_request(request)
                 self.assertIsNone(endpoint.find_by_idempotency_key(request["idempotency_key"]))
 
+    def test_bare_namespace_branch_makes_no_receipt(self):
+        digest = "sha256:" + "a" * 64
+        endpoint = MockGitHubEndpoint()
+        request = dict(
+            self.request,
+            branch="agent/",
+            staged_change_digest=digest,
+            idempotency_key=f"publish//{digest}",
+        )
+        with self.assertRaisesRegex(
+            ContractValidationError, "branch is outside the agent namespace"
+        ):
+            endpoint.publish_pull_request(request)
+        self.assertIsNone(endpoint.find_by_idempotency_key(f"publish//{digest}"))
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

@@ -385,7 +385,13 @@ class GitHubAppPublicationChannel:
             },
         )
         number, html_url = response.get("number"), response.get("html_url")
-        if not isinstance(number, int) or number < 1 or not isinstance(html_url, str) or not html_url.startswith("https://"):
+        if (
+            not isinstance(number, int)
+            or isinstance(number, bool)
+            or number < 1
+            or not isinstance(html_url, str)
+            or not html_url.startswith("https://")
+        ):
             raise GitHubAppBrokerError("GitHub pull-request response is missing required fields")
         return GitHubPullRequest(number, html_url, repository_id, branch, request["staged_change_digest"], request["idempotency_key"])
 

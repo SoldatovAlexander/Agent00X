@@ -211,6 +211,38 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         channel.publish_pull_request(request)
             self.assertEqual(calls, [])
 
+    def test_boolean_pull_request_number_denied_without_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            digest = "sha256:" + "a" * 64
+            request = {
+                "operation": "publish_pull_request",
+                "repository_id": "github-installation/456/repository/1001",
+                "branch": "agent/process-demo-001",
+                "staged_change_digest": digest,
+                "idempotency_key": f"publish/process-demo-001/{digest}",
+                "policy_effect": "allow",
+                "approval_valid": True,
+            }
+            for bad_number in (True, False, 0, -2, "7", None, 1.5):
+                with self.subTest(number=bad_number):
+                    channel = GitHubAppPublicationChannel(
+                        GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                        _InstallationToken("opaque", "future"),
+                        post_json=lambda url, headers, payload: {
+                            "number": bad_number,
+                            "html_url": "https://github.com/example/agent00x-sandbox/pull/7",
+                        },
+                        get_json=lambda url, headers: [],
+                    )
+                    with self.assertRaisesRegex(
+                        GitHubAppBrokerError, "missing required fields"
+                    ):
+                        channel.publish_pull_request(dict(request))
+
     def test_publication_channel_posts_only_allowlisted_typed_request(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

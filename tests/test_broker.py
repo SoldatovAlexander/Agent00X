@@ -174,6 +174,37 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(broker.opened_grants, ["credential-grant-demo-001"])
         self.assertNotIn("token", json.dumps(self.chain["credential_use_grant"]))
 
+    def test_gateway_refusal_precedes_grant_validation_without_leakage(self):
+        factory_calls = []
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        denied = GatewayDecision(GatewayPath.DEGRADED, False, ("policy-unavailable",))
+        expired = dict(self.chain["credential_use_grant"])
+        expired["expires_at"] = "2026-09-04T12:00:00Z"
+        cases = (
+            ("malformed", "grant-caller-secret-001"),
+            ("expired", expired),
+        )
+        for label, grant in cases:
+            with self.subTest(grant=label):
+                with self.assertRaisesRegex(ContractValidationError, "^actuator: gateway has not authorized slow path$") as raised:
+                    actuator.publish_pull_request(
+                        actuator_request=self.chain["actuator_request"],
+                        credential_grant=grant,
+                        policy_decision=self.decision,
+                        approval_valid=True,
+                        gateway_decision=denied,
+                        intent=self.chain["intent"],
+                        now=NOW,
+                        approval=self.chain["approval"],
+                    )
+                self.assertNotIn("caller-secret-001", str(raised.exception))
+                self.assertNotIn(self.chain["actuator_request"]["request_id"], str(raised.exception))
+        self.assertEqual(factory_calls, [])
+        self.assertEqual(broker.opened_grants, [])
+        self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
     def test_credential_grant_cannot_be_reused(self):
         self._publish()
         with self.assertRaisesRegex(ContractValidationError, "already used"):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import sqlite3
 
 from .mock_github import MockGitHubEndpoint, MockPullRequest
@@ -57,10 +58,12 @@ class PublicationJournal:
         key_parts = key_body.split("/")
         if len(key_parts) < 2 or any(part == "" for part in key_parts):
             raise ValueError("publication idempotency key is not canonical")
-        if not isinstance(repository_id, str) or not repository_id:
-            raise ValueError("publication repository is invalid")
         if not isinstance(request_digest, str) or not request_digest:
             raise ValueError("publication request digest is invalid")
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", request_digest) is None:
+            raise ValueError("publication request digest is not canonical")
+        if not isinstance(repository_id, str) or not repository_id:
+            raise ValueError("publication repository is invalid")
         try:
             existing = self.get(process_id)
         except KeyError:

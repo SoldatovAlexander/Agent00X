@@ -102,6 +102,22 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 journal.get("process-publication-009")
 
+    def test_non_canonical_request_digest_leaves_no_record(self):
+        with PublicationJournal(self.database) as journal:
+            for bad in ("not-a-digest", "sha256:xyz", "sha256:" + "a" * 63, "md5:" + "a" * 32, " SHA256:" + "A" * 64):
+                with self.subTest(digest=bad):
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication request digest is not canonical$"
+                    ):
+                        journal.prepare(
+                            "process-publication-013",
+                            idempotency_key=self.request["idempotency_key"],
+                            request_digest=bad,
+                            repository_id=self.request["repository_id"],
+                        )
+            with self.assertRaises(KeyError):
+                journal.get("process-publication-013")
+
     def test_malformed_request_digest_creates_no_record(self):
         with PublicationJournal(self.database) as journal:
             for bad in (None, 123, "", ["sha256:" + "b" * 64]):

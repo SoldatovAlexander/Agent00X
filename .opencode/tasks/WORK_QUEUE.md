@@ -1963,6 +1963,332 @@ Commit: ALLOWED
   and separate component assertions from the unimplemented Batch AA harness.
   Full suite: 420 tests passed, 1 skipped.
 
+## Batch AA — integrated local publication-chain harness
+
+Цель batch: доказать один composed local path поверх существующих компонентов,
+не создавая production orchestrator, network activity или external publication.
+Зависимые карточки получают `READY` только после приёмки предыдущего evidence.
+
+## EXP-246 — define composed local-chain fixtures
+Статус: ACCEPTED
+Цель: создать единый набор test fixtures для local-chain harness с каноническими intent, approval, request, grant и journal bindings.
+Гипотеза: интеграционные проверки должны использовать один согласованный process/digest/idempotency набор, а не независимые component fixtures.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: production orchestrator, external calls, GitHub App, Docker и изменение схем.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- fixtures строят согласованные approval/intent/request/grant/journal inputs без credential values;
+- fixture helpers не исполняют side effect и явно задают aware clock;
+- тесты доказывают согласованность ключевых digest/idempotency bindings.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- fixtures не являются production API.
+Результат Control Plane:
+- ACCEPTED 2026-09-13: commit `f6bce64` добавил согласованные pure fixtures в
+  `tests/test_local_publication_chain.py`: canonical process/digest/idempotency
+  bindings, schema checks и явно timezone-aware clock без credential values.
+  Scope ограничен разрешённым test-файлом; полный suite: 427 tests passed,
+  1 skipped.
+
+## EXP-247 — compose local positive path to journal completion
+Статус: ACCEPTED
+Цель: проверить composed local happy path от approved intent до exactly-one mock receipt и completed journal.
+Гипотеза: существующие component contracts можно связать в одном test harness без обхода Authority Plane.
+Зависит от: EXP-246
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: production orchestration, GitHub API, Docker и реальный credential minting.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- harness проходит prepare/approval/policy/gateway/broker/actuator/journal через явно разделённые test adapters;
+- receipt и journal completed имеют один process/idempotency/digest binding;
+- нет credential values в assertions/output.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- не утверждает существование production composed path.
+Результат Control Plane:
+- ACCEPTED 2026-09-13: commit `9b57f8e` добавил один test-only composed path
+  через prepare, approval, policy, gateway, broker, actuator и journal.
+  Проверка связывает identical mock receipt с completed journal по одному
+  process/idempotency/digest binding и исключает credential-like values из
+  assertions. Scope ограничен `tests/test_local_publication_chain.py`;
+  полный suite: 428 tests passed, 1 skipped.
+
+## EXP-248 — deny composed approval and intent swap
+Статус: ACCEPTED
+Цель: в harness отклонить подмену intent, approval binding, branch или idempotency key до channel/endpoint.
+Гипотеза: local composition сохраняет Authority Plane fail-closed при coordinated swaps.
+Зависит от: EXP-247
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: изменение authority semantics и external publication.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- каждый swap даёт deny и ноль channel/endpoint calls;
+- journal остаётся prepared либо отсутствует согласно точке отказа.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- только локальные fixtures.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `11b3ec2` добавил четыре coordinated swap
+  сценария (intent branch, approval digest, request branch и idempotency key)
+  с deny до broker/channel и endpoint, а также проверку, что reuse allow для
+  другого triple оставляет journal в `prepared`. Scope ограничен
+  `tests/test_local_publication_chain.py`; полный suite: 430 tests passed,
+  1 skipped.
+
+## EXP-249 — deny composed expired decision and grant
+Статус: ACCEPTED
+Цель: проверить at-expiry и post-expiry decision/grant в composed path.
+Гипотеза: общая clock fixture не допускает обход expiry между actuator и broker.
+Зависит от: EXP-247
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: distributed clocks и token revocation.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- expired decision/grant не открывают channel и не вызывают endpoint;
+- valid before-expiry path сохраняется.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- не доказывает clock synchronization.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `7ebfdb3` добавил проверки `before`, `at` и
+  `after` expiry для policy decision и credential grant. At-/post-expiry
+  варианты fail-closed до открытия broker channel и endpoint; before-expiry
+  сохраняет valid path. Scope ограничен `tests/test_local_publication_chain.py`;
+  полный suite: 432 tests passed, 1 skipped.
+
+## EXP-250 — deny composed gateway audit or path failure
+Статус: ACCEPTED
+Цель: проверить, что degraded/deny gateway или audit failure останавливают composed path до broker.
+Гипотеза: Gateway нельзя обойти test glue кодом.
+Зависит от: EXP-247
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: gateway classifier semantics и external audit.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- denied/degraded result даёт ноль channel/endpoint calls;
+- valid slow path остаётся единственным publishable path.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- no durable audit claim.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `a11f101` добавил composed tests для tainted
+  deny, degraded gateway и audit-sink failure; все останавливаются до broker,
+  channel и endpoint. Fast path также не может опубликовать, тогда как valid
+  slow path сохраняет publishability. Scope ограничен
+  `tests/test_local_publication_chain.py`; полный suite: 435 tests passed,
+  1 skipped.
+
+## EXP-251 — prove composed replay idempotency
+Статус: ACCEPTED
+Цель: повтор composed request с тем же binding возвращает исходный receipt без второго effect.
+Гипотеза: intent/request/journal/endpoint share one idempotency boundary.
+Зависит от: EXP-247
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: provider retries and real network.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- two identical composed calls yield one endpoint receipt and stable journal state;
+- changed binding is denied rather than replayed.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- mock-only exactly-once assertion.
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-14: commit `946093c` находится в разрешённом
+  scope и полный suite проходит (437 tests passed, 1 skipped), но не доказывает
+  критерий «two identical composed calls». Первый вызов идёт напрямую через
+  `execute_publication(journal, endpoint, ...)`, а повтор — отдельно через
+  `BrokeredGitHubActuator`; только первый затрагивает journal. Доработать
+  test-only harness так, чтобы оба идентичных вызова проходили одну composed
+  boundary с journal и endpoint, давали один receipt/один endpoint effect и
+  неизменный completed journal. Сохранить отрицательную проверку изменённого
+  binding и не выходить за `tests/test_local_publication_chain.py`.
+- CHANGES REQUESTED 2026-09-14: remediation commit `04af411` пустил оба
+  вызова через одну journal/endpoint boundary, но второй identical вызов
+  ожидает `ValueError: publication is not prepared` вместо возврата исходного
+  receipt. Добавить только в test harness явную idempotency/replay boundary:
+  completed matching process/idempotency/request binding возвращает исходный
+  receipt без endpoint call; несовпадающий binding остаётся deny, а не replay.
+- CHANGES REQUESTED 2026-09-14: remediation commit `35f0819` возвращает
+  исходный receipt без второго endpoint call, но сверяет только process,
+  idempotency key и repository. Добавить canonical `request_digest` в harness
+  boundary request, сверить его с `PublicationJournal` record и покрыть deny
+  для подменённого digest. Это необходимо для критерия общего
+  process/idempotency/digest binding; scope остаётся только
+  `tests/test_local_publication_chain.py`.
+- ACCEPTED 2026-09-14: remediation commit `74b82ac` добавил canonical
+  `request_digest` в composed replay boundary и его сверку с journal record.
+  Identical replay возвращает исходный receipt без второго endpoint effect;
+  idempotency/repository/request-digest swaps deny до endpoint. Вся цепочка
+  EXP-251 ограничена `tests/test_local_publication_chain.py`; полный suite:
+  439 tests passed, 1 skipped.
+
+## EXP-252 — compose uncertain-effect recovery matrix
+Статус: ACCEPTED
+Цель: exercise crash-after-effect recovery in the composed harness.
+Гипотеза: uncertain effect reaches reconciliation-required or matching receipt without blind retry.
+Зависит от: EXP-247
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real provider recovery and durable crash proof.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- matching receipt completes journal; absent/unknown outcome never retries automatically;
+- no second endpoint effect is created.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- test crash injection only.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `122f36e` добавил composed local recovery
+  matrix. Crash-after-effect с matching receipt завершает journal без второго
+  publish; absent/unknown outcome становится `reconciliation_required` и не
+  получает automatic retry. Scope ограничен
+  `tests/test_local_publication_chain.py`; полный suite: 442 tests passed,
+  1 skipped.
+
+## EXP-253 — assert harness evidence redaction
+Статус: ACCEPTED
+Цель: ensure composed test diagnostics contain bindings/reasons but no credential-like values or raw payloads.
+Гипотеза: integration evidence can be useful without widening secret surfaces.
+Зависит от: EXP-247
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: host telemetry and real credentials.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- harness output/assertions exclude synthetic token/canary values;
+- denial evidence uses stable reason codes.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- no claim about host-level leaks.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `2e34880` добавил composed evidence tests:
+  success transcript содержит canonical bindings и reason codes без
+  credential-like canaries, denial transcript использует stable reason codes
+  и также исключает canaries. Scope ограничен
+  `tests/test_local_publication_chain.py`; полный suite: 444 tests passed,
+  1 skipped.
+
+## EXP-254 — document local-chain proof disposition
+Статус: ACCEPTED
+Цель: record what the completed harness proves and what remains external proof.
+Гипотеза: outcome documentation prevents local composition from being described as live GitHub security.
+Зависит от: EXP-248
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: status rewrite, provider calls and production claims.
+Разрешённые пути:
+- docs/31-proof-boundary-traceability.md
+- docs/32-local-publication-chain-spec.md
+Критерии приёмки:
+- documents distinguish harness assertions from API atomicity, token minting and backend isolation;
+- links to the exact harness test are included.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- no external proof statement.
+Результат Control Plane:
+- ACCEPTED 2026-09-14: commit `c96ed66` обновил proof-boundary map и
+  local-chain specification. Документы ссылаются на
+  `tests/test_local_publication_chain.py`, перечисляют локальные assertions и
+  явно исключают GitHub API atomicity, token minting и backend isolation из
+  доказанных свойств. Scope ограничен двумя разрешёнными документами; полный
+  suite: 444 tests passed, 1 skipped.
+
+## EXP-255 — add local-chain adversarial regression catalog
+Статус: ACCEPTED
+Цель: collect composed negative scenarios into a compact regression catalog.
+Гипотеза: future changes cannot silently remove the cross-component deny matrix.
+Зависит от: EXP-248
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: new production code, network and testdev.
+Разрешённые пути:
+- tests/test_local_publication_chain.py
+Критерии приёмки:
+- catalog covers swaps, expiry, gateway refusal, replay and uncertain recovery;
+- every case asserts no forbidden side effect.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- regression catalog does not replace external testing.
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-14: commit `49176ee` находится в разрешённом
+  scope и полный suite проходит (447 tests passed, 1 skipped), но gateway
+  cases строят deny/degraded verdict и затем проверяют неиспользованное
+  окружение. Они не передают verdict в composed publication attempt, поэтому
+  не доказывают отсутствие side effect из-за gateway refusal. Доработать
+  catalog в `tests/test_local_publication_chain.py`: для каждого gateway/audit
+  refusal вызвать ту же composed boundary/actuator attempt с этим verdict,
+  ожидать fail-closed и затем проверить no factory/opened-grant/endpoint
+  publish и допустимое journal state. Остальные cases и scope сохранить.
+- CHANGES REQUESTED 2026-09-14: remediation commit `98dfc94` передаёт gateway
+  verdict в `publish_authorized_request`, но вызывает его напрямую с endpoint.
+  Поэтому broker/factory/grant не являются частью attempt и их отсутствие не
+  доказано. Заменить gateway/audit cases на invocation
+  `BrokeredGitHubActuator` с `InMemoryCredentialBroker`, recording factory и
+  grant; после deny/degraded assertions проверить `factory_calls == []`,
+  `opened_grants == []`, отсутствие endpoint publish и journal `prepared`.
+- ACCEPTED 2026-09-14: remediation commit `dfefc20` вводит в test-only catalog
+  outer gateway boundary до `BrokeredGitHubActuator`. Для tainted, degraded и
+  audit-failure verdict она fail-closed до factory, opened grant и endpoint;
+  journal сохраняется `prepared`. Catalog также покрывает swaps, expiry,
+  replay и uncertain recovery. Scope ограничен
+  `tests/test_local_publication_chain.py`; полный suite: 447 tests passed,
+  1 skipped.
+
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

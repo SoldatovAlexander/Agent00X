@@ -356,5 +356,133 @@ class ComposedPositivePathTests(unittest.TestCase):
             self.assertNotIn(forbidden, transcript)
 
 
+def _swap_variant(chain: dict[str, dict], kind: str) -> dict[str, dict]:
+    """Copy the composed fixtures with one coordinated swap applied."""
+
+    import copy
+
+    evil = copy.deepcopy(chain)
+    digest = evil["actuator_request"]["staged_change_digest"]
+    if kind == "intent-branch":
+        evil["intent"]["branch_namespace"] = "agent/process-evil-001"
+        evil["intent"]["idempotency_key"] = f"publish/process-evil-001/{digest}"
+    elif kind == "approval-digest":
+        evil["approval"]["approved_intent_digest"] = "sha256:" + "0" * 64
+    elif kind == "request-branch":
+        evil["actuator_request"]["branch_namespace"] = "agent/process-evil-001"
+        evil["actuator_request"]["idempotency_key"] = f"publish/process-evil-001/{digest}"
+    elif kind == "request-key":
+        evil["actuator_request"]["idempotency_key"] = f"publish/process-chain-001/{'sha256:' + '0' * 64}"
+    else:  # pragma: no cover - guarded by callers
+        raise AssertionError(f"unknown swap kind: {kind}")
+    evil_grant_source = evil["actuator_request"] if kind in ("request-branch", "request-key") else chain["actuator_request"]
+    evil["credential_use_grant"] = build_grant(evil_grant_source)
+    evil["credential_use_grant"]["credential_grant_id"] = f"credential-grant-evil-{kind}"
+    return evil
+
+
+class ComposedSwapDenialTests(unittest.TestCase):
+    def test_each_swap_denies_before_any_channel_or_endpoint_call(self):
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.validator import ContractValidationError
+
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        for kind in ("intent-branch", "approval-digest", "request-branch", "request-key"):
+            with self.subTest(swap=kind):
+                chain = build_chain()
+                evil = _swap_variant(chain, kind)
+                decision = policy.decide(
+                    decision_id=f"decision-evil-{kind}",
+                    actuator_request=evil["actuator_request"], approval=evil["approval"],
+                    staged_change=chain["staged_change"], intent=evil["intent"], now=NOW,
+                )
+                self.assertEqual(decision["effect"], "deny")
+                endpoint = MockGitHubEndpoint()
+                broker = InMemoryCredentialBroker(lambda: endpoint)
+                actuator = BrokeredGitHubActuator(broker)
+                with self.assertRaises(ContractValidationError):
+                    actuator.publish_pull_request(
+                        actuator_request=evil["actuator_request"],
+                        credential_grant=evil["credential_use_grant"],
+                        policy_decision=decision,
+                        approval_valid=True,
+                        gateway_decision=gateway,
+                        intent=evil["intent"],
+                        now=NOW,
+                        approval=evil["approval"],
+                    )
+                self.assertEqual(broker.opened_grants, [])
+                self.assertIsNone(endpoint.find_by_idempotency_key(evil["actuator_request"]["idempotency_key"]))
+                self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+
+    def test_reused_allow_with_evil_triple_leaves_journal_prepared(self):
+        import tempfile
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal
+        from app_contracts.validator import ContractValidationError
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id="decision-chain-002",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        evil = _swap_variant(chain, "request-branch")
+        digest = evil["actuator_request"]["staged_change_digest"]
+        evil["intent"]["branch_namespace"] = "agent/process-evil-001"
+        evil["intent"]["idempotency_key"] = f"publish/process-evil-001/{digest}"
+        evil["credential_use_grant"]["credential_grant_id"] = "credential-grant-evil-reuse-001"
+
+        directory = tempfile.TemporaryDirectory(prefix="app-chain-swap-")
+        self.addCleanup(directory.cleanup)
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            request_digest=sha256_digest(chain["actuator_request"]),
+            repository_id=REPOSITORY_ID,
+        )
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        with self.assertRaisesRegex(ContractValidationError, "approved intent digest mismatch"):
+            actuator.publish_pull_request(
+                actuator_request=evil["actuator_request"],
+                credential_grant=evil["credential_use_grant"],
+                policy_decision=decision,
+                approval_valid=True,
+                gateway_decision=gateway,
+                intent=evil["intent"],
+                now=NOW,
+                approval=chain["approval"],
+            )
+        self.assertEqual(broker.opened_grants, [])
+        self.assertEqual(journal.get(PROCESS_ID).status, "prepared")
+        self.assertIsNone(endpoint.find_by_idempotency_key(evil["actuator_request"]["idempotency_key"]))
+
+
 if __name__ == "__main__":
     unittest.main()

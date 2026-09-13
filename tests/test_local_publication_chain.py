@@ -782,5 +782,150 @@ class ComposedGatewayDenialTests(unittest.TestCase):
         self.assertEqual(result.pull_request_id, 1)
 
 
+class ComposedReplayIdempotencyTests(unittest.TestCase):
+    def _compose_once(self, suffix: str):
+        import tempfile
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal, execute_publication
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id=f"decision-chain-replay-{suffix}",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        grant = dict(chain["credential_use_grant"])
+        grant["credential_grant_id"] = f"credential-grant-replay-{suffix}"
+        directory = tempfile.TemporaryDirectory(prefix="app-chain-replay-")
+        self.addCleanup(directory.cleanup)
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            request_digest=sha256_digest(chain["actuator_request"]),
+            repository_id=REPOSITORY_ID,
+        )
+        boundary_request = {
+            "process_id": PROCESS_ID,
+            "operation": "publish_pull_request",
+            "repository_id": REPOSITORY_ID,
+            "branch": chain["intent"]["branch_namespace"],
+            "staged_change_digest": chain["intent"]["staged_change_digest"],
+            "idempotency_key": chain["intent"]["idempotency_key"],
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        receipt = execute_publication(journal, endpoint, boundary_request)
+        env = {
+            "chain": chain, "decision": decision, "gateway": gateway,
+            "endpoint": endpoint, "journal": journal, "receipt": receipt,
+        }
+        return env
+
+    def test_identical_replay_returns_original_receipt_without_second_effect(self):
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+
+        env = self._compose_once("first")
+        chain, endpoint, journal = env["chain"], env["endpoint"], env["journal"]
+        before = journal.get(PROCESS_ID)
+        self.assertEqual((before.status, before.pull_request_id), ("completed", 1))
+
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        grant = dict(chain["credential_use_grant"])
+        grant["credential_grant_id"] = "credential-grant-replay-second"
+        replayed = actuator.publish_pull_request(
+            actuator_request=chain["actuator_request"],
+            credential_grant=grant,
+            policy_decision=env["decision"],
+            approval_valid=True,
+            gateway_decision=env["gateway"],
+            intent=chain["intent"],
+            now=NOW,
+            approval=chain["approval"],
+        )
+        self.assertEqual(replayed, env["receipt"])
+        self.assertEqual(replayed.pull_request_id, 1)
+        after = journal.get(PROCESS_ID)
+        self.assertEqual(after, before)
+        self.assertEqual(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]), env["receipt"])
+
+    def test_changed_binding_is_denied_rather_than_replayed(self):
+        import copy
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.validator import ContractValidationError
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        digest = chain["actuator_request"]["staged_change_digest"]
+        variants = {
+            "branch": {"branch_namespace": "agent/process-evil-001",
+                       "idempotency_key": f"publish/process-evil-001/{digest}"},
+            "key": {"idempotency_key": f"publish/process-chain-001/{'sha256:' + '0' * 64}"},
+        }
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        for label, mutation in variants.items():
+            with self.subTest(binding=label):
+                evil_request = copy.deepcopy(chain["actuator_request"])
+                evil_request.update(mutation)
+                evil_intent = copy.deepcopy(chain["intent"])
+                if label == "branch":
+                    evil_intent.update(mutation)
+                decision = policy.decide(
+                    decision_id=f"decision-chain-replay-{label}",
+                    actuator_request=evil_request, approval=chain["approval"],
+                    staged_change=chain["staged_change"], intent=evil_intent, now=NOW,
+                )
+                self.assertEqual(decision["effect"], "deny")
+                endpoint = MockGitHubEndpoint()
+                broker = InMemoryCredentialBroker(lambda: endpoint)
+                actuator = BrokeredGitHubActuator(broker)
+                grant = copy.deepcopy(chain["credential_use_grant"])
+                grant["credential_grant_id"] = f"credential-grant-replay-{label}"
+                grant["request_digest"] = sha256_digest(evil_request)
+                with self.assertRaises(ContractValidationError):
+                    actuator.publish_pull_request(
+                        actuator_request=evil_request,
+                        credential_grant=grant,
+                        policy_decision=decision,
+                        approval_valid=True,
+                        gateway_decision=gateway,
+                        intent=evil_intent,
+                        now=NOW,
+                        approval=chain["approval"],
+                    )
+                self.assertEqual(broker.opened_grants, [])
+                self.assertIsNone(endpoint.find_by_idempotency_key(evil_request["idempotency_key"]))
+                self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+
+
 if __name__ == "__main__":
     unittest.main()

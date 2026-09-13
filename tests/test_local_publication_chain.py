@@ -803,6 +803,7 @@ def composed_publish(journal, endpoint, request):
         if (
             record.idempotency_key != request.get("idempotency_key")
             or record.repository_id != request.get("repository_id")
+            or record.request_digest != request.get("request_digest")
         ):
             raise ContractValidationError("composed replay binding mismatch")
         return endpoint.find_by_idempotency_key(request["idempotency_key"])
@@ -843,6 +844,7 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
             "branch": chain["intent"]["branch_namespace"],
             "staged_change_digest": chain["intent"]["staged_change_digest"],
             "idempotency_key": chain["intent"]["idempotency_key"],
+            "request_digest": sha256_digest(chain["actuator_request"]),
             "policy_effect": "allow",
             "approval_valid": True,
         }
@@ -880,6 +882,22 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
         record = journal.get(PROCESS_ID)
         self.assertEqual((record.status, record.pull_request_id), ("completed", 1))
         self.assertIsNone(endpoint.find_by_idempotency_key("publish/process-chain-001/sha256:" + "0" * 64))
+
+    def test_tampered_request_digest_is_denied_without_endpoint_call(self):
+        from app_contracts.validator import ContractValidationError
+
+        chain, journal, endpoint, endpoint_calls, boundary_request = self._replay_fixtures()
+        first = composed_publish(journal, endpoint, dict(boundary_request))
+        self.assertEqual(first.pull_request_id, 1)
+        forged = dict(boundary_request)
+        forged["request_digest"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(ContractValidationError, "composed replay binding mismatch") as raised:
+            composed_publish(journal, endpoint, forged)
+        self.assertEqual(len(endpoint_calls), 1)
+        record = journal.get(PROCESS_ID)
+        self.assertEqual((record.status, record.pull_request_id), ("completed", 1))
+        self.assertEqual(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]), first)
+        self.assertNotIn(chain["approval"]["approval_id"], str(raised.exception))
 
     def test_changed_binding_is_denied_rather_than_replayed(self):
         import copy

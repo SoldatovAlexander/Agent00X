@@ -24,8 +24,8 @@ def find_canary_surfaces(canary: str, surfaces: Mapping[str, Any]) -> list[str]:
     if not isinstance(surfaces, dict):
         raise ValueError("surfaces must be a mapping")
     for name in surfaces:
-        if not isinstance(name, str):
-            raise ValueError("surface name must be a string")
+        if not isinstance(name, str) or not name:
+            raise ValueError("surface name must be a non-empty string")
     found: list[str] = []
     for name, value in surfaces.items():
         try:

@@ -24,6 +24,13 @@ class SandboxTests(unittest.TestCase):
             self.assertIn("test_add", result.stderr)
             self.assertNotEqual(sandbox.workspace.resolve(), self.fixture.resolve())
 
+    def test_empty_snapshot_path_denied_without_workspace(self):
+        backend = LocalProcessSandboxBackend()
+        with self.assertRaisesRegex(SandboxError, "^snapshot must be a directory$"):
+            backend.create(Path(""), {"python3"})
+        with backend.create(self.fixture, {"python3"}) as sandbox:
+            self.assertTrue((sandbox.workspace / "calculator.py").exists())
+
     def test_malformed_snapshot_root_denied_without_sandbox(self):
         import tempfile
         backend = LocalProcessSandboxBackend()

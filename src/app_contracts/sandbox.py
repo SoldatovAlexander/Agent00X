@@ -55,7 +55,7 @@ class LocalProcessSandbox:
     network_isolated = False
 
     def __init__(self, snapshot: Path, allowed_commands: set[str]) -> None:
-        if not isinstance(snapshot, Path) or not snapshot.is_dir():
+        if not isinstance(snapshot, Path) or str(snapshot) in ("", ".") or not snapshot.is_dir():
             raise SandboxError("snapshot must be a directory")
         if not isinstance(allowed_commands, (set, frozenset)) or any(
             not isinstance(name, str) or not name for name in allowed_commands

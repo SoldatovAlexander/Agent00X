@@ -1077,5 +1077,134 @@ class ComposedRecoveryMatrixTests(unittest.TestCase):
         self.assertEqual(len(endpoint_calls), 1)
 
 
+FORBIDDEN_CANARIES = (
+    "canary-token-ABC123",
+    "secret-canary-value-456",
+    "bearer-canary-789",
+)
+
+
+class ComposedEvidenceRedactionTests(unittest.TestCase):
+    def _transcript(self, **fields):
+        return json.dumps(fields, sort_keys=True)
+
+    def test_success_evidence_carries_bindings_but_no_credential_like_values(self):
+        import tempfile
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal, execute_publication
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id="decision-chain-evidence",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        grant = dict(chain["credential_use_grant"])
+        grant["credential_grant_id"] = "credential-grant-evidence-001"
+        receipt = actuator.publish_pull_request(
+            actuator_request=chain["actuator_request"],
+            credential_grant=grant,
+            policy_decision=decision,
+            approval_valid=True,
+            gateway_decision=gateway,
+            intent=chain["intent"],
+            now=NOW,
+            approval=chain["approval"],
+        )
+        directory = tempfile.TemporaryDirectory(prefix="app-chain-evidence-")
+        self.addCleanup(directory.cleanup)
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            request_digest=sha256_digest(chain["actuator_request"]),
+            repository_id=REPOSITORY_ID,
+        )
+        boundary_request = {
+            "process_id": PROCESS_ID,
+            "operation": "publish_pull_request",
+            "repository_id": REPOSITORY_ID,
+            "branch": chain["intent"]["branch_namespace"],
+            "staged_change_digest": chain["intent"]["staged_change_digest"],
+            "idempotency_key": chain["intent"]["idempotency_key"],
+            "request_digest": sha256_digest(chain["actuator_request"]),
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        journal_receipt = execute_publication(journal, endpoint, boundary_request)
+        record = journal.get(PROCESS_ID)
+        evidence = self._transcript(
+            process_id=PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            staged_change_digest=chain["intent"]["staged_change_digest"],
+            approved_intent_digest=chain["approval"]["approved_intent_digest"],
+            decision_effect=decision["effect"],
+            decision_reasons=decision["reason_codes"],
+            receipt_id=receipt.pull_request_id,
+            journal_receipt_id=journal_receipt.pull_request_id,
+            journal_status=record.status,
+        )
+        for required in (
+            PROCESS_ID,
+            chain["intent"]["idempotency_key"],
+            chain["intent"]["staged_change_digest"],
+            chain["approval"]["approved_intent_digest"],
+            "allow",
+            "completed",
+        ):
+            self.assertIn(required, evidence)
+        for code in decision["reason_codes"]:
+            self.assertIn(code, evidence)
+        for canary in FORBIDDEN_CANARIES:
+            self.assertNotIn(canary, evidence)
+
+    def test_denial_evidence_uses_stable_reasons_without_credential_like_values(self):
+        import copy
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.validator import ContractValidationError
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        evil_intent = copy.deepcopy(chain["intent"])
+        evil_intent["branch_namespace"] = "agent/process-evil-001"
+        decision = policy.decide(
+            decision_id="decision-chain-evidence-deny",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=evil_intent, now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        evidence = self._transcript(
+            process_id=PROCESS_ID,
+            decision_effect=decision["effect"],
+            decision_reasons=decision["reason_codes"],
+        )
+        self.assertIn("deny", evidence)
+        for code in decision["reason_codes"]:
+            self.assertIn(code, evidence)
+        for canary in FORBIDDEN_CANARIES:
+            self.assertNotIn(canary, evidence)
+
+
 if __name__ == "__main__":
     unittest.main()

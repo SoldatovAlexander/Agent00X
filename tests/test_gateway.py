@@ -332,6 +332,22 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(decision.reason_codes, ("malformed-envelope",))
         self.assertEqual(calls, [])
 
+    def test_malformed_sink_yields_stable_degraded_deny(self):
+        request = envelope("repository.read")
+        request.update({
+            "correlation_id": "process-gateway-007",
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "payload": {"content_digest": "sha256:" + "e" * 64},
+        })
+        for bad in (None, "sink", 42, object(), {"append_audit_event": "yes"}):
+            with self.subTest(sink=type(bad).__name__):
+                try:
+                    decision = enforce(request, policy_available=True, audit_sink=bad)
+                except (TypeError, AttributeError) as exc:
+                    self.fail(f"raw sink error escaped: {exc!r}")
+                self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                self.assertFalse(decision.allowed)
+
     def test_malformed_envelope_denied_with_zero_sink_calls(self):
         calls = []
 

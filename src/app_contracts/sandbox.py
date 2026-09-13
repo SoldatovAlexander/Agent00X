@@ -110,7 +110,10 @@ class LocalProcessSandbox:
         if self._closed:
             return
         _make_tree_owner_writable(self._root)
-        shutil.rmtree(self._root)
+        try:
+            shutil.rmtree(self._root)
+        except FileNotFoundError:
+            pass
         self._closed = True
 
     def __enter__(self) -> "LocalProcessSandbox":

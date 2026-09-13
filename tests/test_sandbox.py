@@ -81,6 +81,23 @@ class SandboxTests(unittest.TestCase):
             result = sandbox.run(["python3", "--version"])
             self.assertEqual(result.returncode, 0)
 
+    def test_close_is_idempotent_without_raw_errors(self):
+        import shutil
+        from app_contracts.sandbox import _make_tree_owner_writable
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        root = sandbox._root
+        sandbox.close()
+        self.assertTrue(sandbox._closed)
+        sandbox.close()
+        sandbox.close()
+        self.assertFalse(root.exists())
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        root = sandbox._root
+        _make_tree_owner_writable(root)
+        shutil.rmtree(root)
+        sandbox.close()
+        self.assertTrue(sandbox._closed)
+
     def test_non_allowlisted_command_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(SandboxError, "not allowlisted"):

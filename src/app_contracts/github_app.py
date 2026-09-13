@@ -408,7 +408,13 @@ class GitHubAppPublicationChannel:
             if not isinstance(item, dict) or marker not in item.get("body", ""):
                 continue
             number, html_url = item.get("number"), item.get("html_url")
-            if not (isinstance(number, int) and number > 0 and isinstance(html_url, str) and html_url.startswith("https://")):
+            if not (
+                isinstance(number, int)
+                and not isinstance(number, bool)
+                and number > 0
+                and isinstance(html_url, str)
+                and html_url.startswith("https://")
+            ):
                 raise GitHubAppBrokerError("GitHub pull-request entry is malformed")
             return number, html_url
         return None

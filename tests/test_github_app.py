@@ -91,6 +91,34 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(GitHubAppConfigurationError, "https"):
                 GitHubAppBrokerConfig.from_environment(environment)
 
+    def test_malformed_reconciled_entry_yields_unknown_without_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            digest = "sha256:" + "a" * 64
+            key = f"publish/process-demo-001/{digest}"
+            marker = f"<!-- agent-process-idempotency: {key} -->"
+            for bad_number in (True, False, 0, -1, "9", None, 2.5):
+                with self.subTest(number=bad_number):
+                    channel = GitHubAppPublicationChannel(
+                        GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                        _InstallationToken("opaque", "future"),
+                        post_json=lambda *args: self.fail("malformed entry must not trigger POST"),
+                        get_json=lambda url, headers: [{
+                            "number": bad_number,
+                            "html_url": "https://github.com/example/agent00x-sandbox/pull/9",
+                            "body": marker,
+                        }],
+                    )
+                    self.assertIsNone(
+                        channel.reconcile_pull_request(
+                            branch="agent/process-demo-001", idempotency_key=key,
+                            staged_change_digest=digest,
+                        )
+                    )
+
     def test_malformed_direct_request_makes_zero_provider_calls(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

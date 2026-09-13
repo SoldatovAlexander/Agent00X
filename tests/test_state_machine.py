@@ -120,6 +120,24 @@ class StateMachineTests(unittest.TestCase):
         self.assertEqual(state, ProcessState.EXECUTING)
         self.assertIsInstance(state, ProcessState)
 
+    def test_non_boolean_evidence_flags_denied_without_transition(self):
+        for kwargs in (
+            {"contract_complete": 1},
+            {"contract_complete": "yes"},
+            {"policy_allowed": [True]},
+            {"artifact_digest": None},
+            {"verification_passed": 1.0},
+        ):
+            with self.subTest(evidence=kwargs):
+                with self.assertRaisesRegex(
+                    InvalidTransition, "^transition evidence flags must be boolean$"
+                ):
+                    transition(ProcessState.RECEIVED, ProcessState.SPECIFIED, TransitionEvidence(**kwargs))
+        state = transition(
+            ProcessState.RECEIVED, ProcessState.SPECIFIED, TransitionEvidence(contract_complete=True)
+        )
+        self.assertEqual(state, ProcessState.SPECIFIED)
+
     def test_unknown_shortcut_is_rejected(self):
         with self.assertRaisesRegex(InvalidTransition, "is not allowed"):
             transition(ProcessState.RECEIVED, ProcessState.APPLYING, TransitionEvidence())

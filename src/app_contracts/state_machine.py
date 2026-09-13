@@ -62,9 +62,24 @@ class TransitionEvidence:
     postcondition_verified: bool = False
 
 
+_EVIDENCE_FLAGS = (
+    "contract_complete",
+    "policy_allowed",
+    "artifact_digest",
+    "verification_passed",
+    "staged_digest",
+    "approval_valid",
+    "receipt_present",
+    "postcondition_verified",
+)
+
+
 def transition(current: ProcessState, target: ProcessState, evidence: TransitionEvidence) -> ProcessState:
     if not isinstance(evidence, TransitionEvidence):
         raise InvalidTransition("transition evidence is invalid")
+    for flag in _EVIDENCE_FLAGS:
+        if not isinstance(getattr(evidence, flag), bool):
+            raise InvalidTransition("transition evidence flags must be boolean")
     if not isinstance(current, ProcessState):
         raise InvalidTransition("transition current state is invalid")
     if not isinstance(target, ProcessState):

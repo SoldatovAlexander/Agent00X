@@ -25,3 +25,16 @@ cross-plane security. В каждой строке явно разделены �
 Что карта не утверждает: production Authority Plane, сквозную публикацию,
 изоляцию backend, полноту истории, отсутствие утечек вне покрытых поверхностей.
 Число тестов (420) — мера покрытия, а не доказательство границ доверия.
+
+## Disposition локального harness (EXP-246—253)
+
+Harness `tests/test_local_publication_chain.py` доказывает только локальную
+композицию на mock/in-memory/ephemeral doubles: `ComposedFixtureTests`
+(связность bindings), `ComposedPositivePathTests` (positive path до `PR 1` и
+`completed`), `ComposedSwapDenialTests` / `ComposedExpiryDenialTests` /
+`ComposedGatewayDenialTests` (deny без channel/endpoint вызовов),
+`ComposedReplayIdempotencyTests` (ровно один receipt, журнал стабилен),
+`ComposedRecoveryMatrixTests` (recovery без слепого retry),
+`ComposedEvidenceRedactionTests` (bindings/reasons без credential-like значений).
+Явно не доказаны и требуют отдельных external proof card: атомарность GitHub
+API, настоящий minting токенов, изоляция backend. Детали сценария — документ 32.

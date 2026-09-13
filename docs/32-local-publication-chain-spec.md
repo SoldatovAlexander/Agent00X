@@ -49,17 +49,26 @@ harness Batch AA (раздел 5). External proof отсутствует и тр
 mock-транспорте, in-memory broker и SQLite/ephemeral journal): prepare/manifest,
 равенство approval digest, policy deny/expiry, gateway routing/gates, broker
 binding/expiry/single-use, actuator gates, состояния journal/recovery, adapter
-reconcile/encoding/namespace. Композиция шагов 1–7 одним прогоном не покрыта
-(см. раздел 5). Отдельных external proof card требуют: настоящий mint/revoke
-токенов, семантика и атомарность GitHub API, изоляция backend, durability при
-crash, выдача approval как доверенный вход, поведение при рассинхронизации
-часов. Число тестов — мера покрытия, а не доказательство границ доверия.
+reconcile/encoding/namespace. Композиция шагов 1–7 покрыта harness-тестами
+`tests/test_local_publication_chain.py` (см. раздел 5). Отдельных external proof
+card требуют: настоящий mint/revoke токенов, семантика и атомарность GitHub API,
+изоляция backend, durability при crash, выдача approval как доверенный вход,
+поведение при рассинхронизации часов. Число тестов — мера покрытия, а не
+доказательство границ доверия.
 
-## 5. Целевой integrated harness Batch AA (не реализован)
+## 5. Integrated harness Batch AA (реализован как test-only)
 
-Один локальный прогон, прогоняющий общие фикстуры через шаги 1–7: один и тот же
-canonical intent digest в approval/policy/actuator/broker, один idempotency key
-в intent/request/journal/receipt, завершение journal `completed` вместе с
-совпадающим receipt. Негативные композиции: злая тройка end-to-end, просроченные
-decision/grant end-to-end, crash mid-chain с последующим recovery. Harness не
-существует; его реализация — предмет Batch AA, не настоящей карточки.
+Harness `tests/test_local_publication_chain.py` прогоняет общие фикстуры через
+шаги 1–7: один и тот же canonical intent digest в approval/policy/actuator/broker,
+один idempotency key в intent/request/journal/receipt, завершение journal
+`completed` вместе с совпадающим receipt. Что именно он доказывает (только
+локально, на mock/in-memory/ephemeral doubles):
+`ComposedFixtureTests` — согласованность bindings; `ComposedPositivePathTests` —
+positive path до `PR 1` + `completed`; `ComposedSwapDenialTests`,
+`ComposedExpiryDenialTests`, `ComposedGatewayDenialTests` — deny-композиции без
+channel/endpoint вызовов; `ComposedReplayIdempotencyTests` — ровно один receipt
+и стабильный journal; `ComposedRecoveryMatrixTests` — recovery без слепого retry;
+`ComposedEvidenceRedactionTests` — bindings/reasons без credential-like значений.
+Чего он не доказывает: атомарность GitHub API, настоящий minting токенов,
+изоляцию backend, durability при crash, выдачу approval, clock sync. Это
+остаётся external proof и предметом отдельных карточек, не настоящей.

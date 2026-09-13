@@ -58,6 +58,7 @@
 | `26-mvp-contract-catalog.md` | Семантика реализованных M0-контрактов | Реализовано частично, 0.1 |
 | `27-implementation-status.md` | Реализация, тесты, ограничения и gates | Единственный оперативный статус 1.1 |
 | `31-proof-boundary-traceability.md` | Матрица «свойство → local evidence → непроверенная граница → следующий эксперимент» | Производна от документа 27; local evidence отделено от external proof |
+| `32-local-publication-chain-spec.md` | Contract-level сценарий local publication chain: positive/negative paths, stop conditions | Основа Batch AA; external publication не разрешает |
 
 ## Управление решениями
 

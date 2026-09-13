@@ -130,6 +130,22 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         channel.publish_pull_request(request)
             self.assertEqual(calls, [])
 
+    def test_non_callable_injected_transports_rejected_before_any_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            token = _InstallationToken("opaque", "future")
+            for field in ("post_json", "get_json", "put_json"):
+                for bad in ("transport", 42, {"get": 1}, ["get"]):
+                    with self.subTest(field=field, transport=type(bad).__name__):
+                        with self.assertRaisesRegex(
+                            ContractValidationError, "injected transport is not callable"
+                        ):
+                            GitHubAppPublicationChannel(config, token, **{field: bad})
+
     def test_publication_channel_posts_only_allowlisted_typed_request(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

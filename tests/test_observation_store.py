@@ -522,6 +522,42 @@ class PreDispatchGateTests(unittest.TestCase):
         self.assertEqual([event["event_id"] for event in store.events()], ["event-store-demo-001"])
         self.assertEqual(len(store.checkpoints()), 0)
 
+    def test_malformed_store_collaborator_writes_nothing(self):
+        calls: list[str] = []
+
+        class StoreWithoutAppend:
+            def record_checkpoint(self, checkpoint):
+                calls.append("record_checkpoint")
+
+        class StoreWithoutRecord:
+            def append(self, event):
+                calls.append("append")
+
+        class StoreWithDeadMethods:
+            record_checkpoint = "not-a-method"
+            append = 42
+
+        for bad in (
+            None,
+            "store",
+            42,
+            object(),
+            StoreWithoutAppend(),
+            StoreWithoutRecord(),
+            StoreWithDeadMethods(),
+        ):
+            with self.subTest(store=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    PreDispatchError, "^pre-dispatch gate refused: store is invalid$"
+                ):
+                    run_gated_dispatch(
+                        bad,
+                        checkpoint=valid_checkpoint(),
+                        intent_event=valid_event("event-store-demo-002", 1),
+                        dispatch=lambda: calls.append("dispatched"),
+                    )
+        self.assertEqual(calls, [])
+
     def test_injected_store_failure_blocks_dispatch(self):
         store = FailingStore()
         ObservationStore.append(store, valid_event("event-store-demo-001", 0))

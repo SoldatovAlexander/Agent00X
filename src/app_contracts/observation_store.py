@@ -49,9 +49,15 @@ def run_gated_dispatch(
 
     The ``dispatch`` callable runs only after both writes succeed. Any store
     failure raises PreDispatchError without starting the side effect.
-    A non-callable dispatch target is refused before any write.
+    A malformed store collaborator or a non-callable dispatch target is
+    refused before any record call or dispatch execution.
     """
 
+    if (
+        not callable(getattr(store, "record_checkpoint", None))
+        or not callable(getattr(store, "append", None))
+    ):
+        raise PreDispatchError("pre-dispatch gate refused: store is invalid")
     if not callable(dispatch):
         raise PreDispatchError("pre-dispatch gate refused: dispatch is not callable")
     try:

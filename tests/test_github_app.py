@@ -310,6 +310,40 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         channel.publish_verified_files(**kwargs)
             self.assertEqual(calls, [])
 
+    def test_whitespace_padded_manifest_paths_make_zero_calls(self):
+        from app_contracts.digests import sha256_bytes
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            key_path.write_text("unused", encoding="utf-8")
+            key_path.chmod(0o600)
+            from app_contracts.github_app import GitHubAppPublicationChannel
+            calls = []
+            channel = GitHubAppPublicationChannel(
+                GitHubAppBrokerConfig.from_environment(self._environment(key_path)),
+                _InstallationToken("opaque", "future"),
+                post_json=lambda url, headers, payload: calls.append(("POST", url)),
+                get_json=lambda url, headers: calls.append(("GET", url)),
+                put_json=lambda url, headers, payload: calls.append(("PUT", url)),
+            )
+            staged = {
+                "repository_id": "github-installation/456/repository/1001",
+                "base_commit": "a" * 40,
+                "patch_digest": "sha256:" + "b" * 64,
+            }
+            content = "verified content\n"
+            for bad_path in (" proof.txt", "proof.txt ", "\tproof.txt", "proof.txt\n"):
+                with self.subTest(path=repr(bad_path)):
+                    forged = PublishableFile(
+                        bad_path, content, sha256_bytes(content.encode())
+                    )
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "manifest path is unsafe"
+                    ):
+                        channel.publish_verified_files(
+                            branch="agent/process-demo-001", staged_change=staged, files=[forged],
+                        )
+            self.assertEqual(calls, [])
+
     def test_verified_manifest_creates_scoped_branch_and_contents_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

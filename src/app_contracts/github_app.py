@@ -323,7 +323,7 @@ class GitHubAppPublicationChannel:
         validated: list[tuple[str, str]] = []
         for file in files:
             path, content, content_digest = getattr(file, "path", None), getattr(file, "content", None), getattr(file, "content_digest", None)
-            if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+            if not isinstance(path, str) or not path or path != path.strip() or path.startswith("/") or ".." in path.split("/"):
                 raise ContractValidationError("GitHub actuator: manifest path is unsafe")
             if not isinstance(content, str) or not isinstance(content_digest, str) or sha256_bytes(content.encode("utf-8")) != content_digest:
                 raise ContractValidationError("GitHub actuator: manifest content digest mismatch")

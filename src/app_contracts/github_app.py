@@ -137,6 +137,11 @@ class GitHubAppInstallationTokenMinter:
             raise GitHubAppBrokerError("GitHub App token expiry is invalid") from exc
         if parsed_expiry.tzinfo is None:
             raise GitHubAppBrokerError("GitHub App token expiry is invalid")
+        now = self._now()
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise GitHubAppBrokerError("GitHub App clock is invalid")
+        if parsed_expiry <= now.astimezone(timezone.utc):
+            raise GitHubAppBrokerError("GitHub App token is expired")
         return _InstallationToken(token, expires_at)
 
     def _app_jwt(self) -> str:

@@ -420,6 +420,36 @@ class RuntimeStoreTests(unittest.TestCase):
             record = store.get("process-durable-020")
             self.assertEqual((record.state, record.version), (ProcessState.SPECIFIED, 1))
 
+    def test_falsy_explicit_clock_denied_on_all_write_paths(self):
+        with SQLiteProcessStore(self.database) as store:
+            for bad in (0, "", [], {}, False):
+                with self.subTest(now=type(bad).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^runtime: timestamp must be timezone-aware$"
+                    ):
+                        store.create("process-durable-021", now=bad)
+            with self.assertRaises(ProcessNotFound):
+                store.get("process-durable-021")
+            record = store.create("process-durable-021")
+            for bad in (0, ""):
+                with self.subTest(now=type(bad).__name__):
+                    with self.assertRaises(ContractValidationError):
+                        store.advance(
+                            "process-durable-021",
+                            ProcessState.SPECIFIED,
+                            TransitionEvidence(contract_complete=True),
+                            expected_version=0, now=bad,
+                        )
+                    with self.assertRaises(ContractValidationError):
+                        store.append_audit_event(
+                            "process-durable-021", actor_id="agent-worker-001",
+                            event_type="gateway.request", input_digest="sha256:" + "f" * 64,
+                            result="denied", reason_codes=("denied",), now=bad,
+                        )
+            self.assertEqual(store.get("process-durable-021").version, 0)
+            self.assertEqual(len(store.events("process-durable-021")), 1)
+            self.assertEqual(store.audit_events("process-durable-021"), [])
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

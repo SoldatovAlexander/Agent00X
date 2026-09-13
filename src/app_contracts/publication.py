@@ -163,6 +163,7 @@ def execute_publication(
     if (
         not callable(getattr(journal, "get", None))
         or not callable(getattr(journal, "mark_attempting", None))
+        or not callable(getattr(journal, "mark_completed", None))
         or not callable(getattr(endpoint, "publish_pull_request", None))
     ):
         raise ContractValidationError("publication: collaborator is invalid")

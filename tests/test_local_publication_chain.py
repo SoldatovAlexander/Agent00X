@@ -614,5 +614,173 @@ class ComposedExpiryDenialTests(unittest.TestCase):
                     self.assertNotIn(grant["request_digest"], str(raised.exception))
 
 
+class ComposedGatewayDenialTests(unittest.TestCase):
+    def _valid_envelope(self, **security_overrides):
+        security = {"tainted": False, "sensitivity": "internal"}
+        security.update(security_overrides)
+        return {
+            "intent": {"operation": "publish_pull_request", "risk_class": "low"},
+            "destination": {"port": "tool"},
+            "source": {"protocol": "internal"},
+            "security": security,
+        }
+
+    def _composed_publish(self, *, gateway_decision, chain, decision, grant_id, endpoint, factory_calls):
+        """Harness dispatcher: only a slow-path allow reaches broker/channel/endpoint.
+
+        A denied, degraded, or fast verdict stops the composed path before any
+        broker, channel, or endpoint use. Returns (receipt_or_None, broker).
+        """
+
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.gateway import GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+
+        broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+        if not (gateway_decision.path is GatewayPath.SLOW and gateway_decision.allowed):
+            return None, broker
+        actuator = BrokeredGitHubActuator(broker)
+        grant = dict(chain["credential_use_grant"])
+        grant["credential_grant_id"] = grant_id
+        return actuator.publish_pull_request(
+            actuator_request=chain["actuator_request"],
+            credential_grant=grant,
+            policy_decision=decision,
+            approval_valid=True,
+            gateway_decision=gateway_decision,
+            intent=chain["intent"],
+            now=NOW,
+            approval=chain["approval"],
+        ), broker
+
+    def _allow_decision(self, chain, decision_id):
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id=decision_id,
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        return decision
+
+    def test_gateway_deny_and_degraded_stop_before_broker(self):
+        from app_contracts.gateway import GatewayPath, classify
+        from app_contracts.mock_github import MockGitHubEndpoint
+
+        chain = build_chain()
+        decision = self._allow_decision(chain, "decision-chain-gateway")
+        cases = {
+            "tainted-deny": classify(self._valid_envelope(tainted=True), policy_available=True),
+            "degraded-deny": classify(self._valid_envelope(), policy_available=False),
+        }
+        for label, gateway_decision in cases.items():
+            with self.subTest(gateway=label):
+                self.assertFalse(gateway_decision.allowed)
+                self.assertNotEqual(gateway_decision.path, GatewayPath.FAST)
+                calls: list[str] = []
+                endpoint = MockGitHubEndpoint()
+                result, broker = self._composed_publish(
+                    gateway_decision=gateway_decision, chain=chain, decision=decision,
+                    grant_id=f"credential-grant-gateway-{label}", endpoint=endpoint,
+                    factory_calls=calls,
+                )
+                self.assertIsNone(result)
+                self.assertEqual(calls, [])
+                self.assertEqual(broker.opened_grants, [])
+                self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+
+    def test_audit_failure_stops_before_broker_with_journal_prepared(self):
+        import tempfile
+
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayPath, enforce
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal
+
+        class FailingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                raise RuntimeError("injected sink failure")
+
+        chain = build_chain()
+        decision = self._allow_decision(chain, "decision-chain-audit")
+        request = self._valid_envelope()
+        request.update({
+            "correlation_id": PROCESS_ID,
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "payload": {"content_digest": "sha256:" + "e" * 64},
+        })
+        gateway_decision = enforce(request, policy_available=True, audit_sink=FailingSink())
+        self.assertEqual(gateway_decision.path, GatewayPath.DEGRADED)
+        self.assertFalse(gateway_decision.allowed)
+
+        directory = tempfile.TemporaryDirectory(prefix="app-chain-gateway-")
+        self.addCleanup(directory.cleanup)
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            request_digest=sha256_digest(chain["actuator_request"]),
+            repository_id=REPOSITORY_ID,
+        )
+        calls: list[str] = []
+        endpoint = MockGitHubEndpoint()
+        result, broker = self._composed_publish(
+            gateway_decision=gateway_decision, chain=chain, decision=decision,
+            grant_id="credential-grant-gateway-audit", endpoint=endpoint,
+            factory_calls=calls,
+        )
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])
+        self.assertEqual(broker.opened_grants, [])
+        self.assertEqual(journal.get(PROCESS_ID).status, "prepared")
+        self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+
+    def test_fast_path_cannot_publish_valid_slow_path_can(self):
+        from app_contracts.gateway import GatewayPath, classify
+        from app_contracts.mock_github import MockGitHubEndpoint
+
+        chain = build_chain()
+        decision = self._allow_decision(chain, "decision-chain-paths")
+        fast = classify(
+            {
+                "intent": {"operation": "repository.read", "risk_class": "low"},
+                "destination": {"port": "data"},
+                "source": {"protocol": "internal"},
+                "security": {"tainted": False, "sensitivity": "internal"},
+            },
+            policy_available=True,
+        )
+        self.assertEqual((fast.path, fast.allowed), (GatewayPath.FAST, True))
+        calls: list[str] = []
+        endpoint = MockGitHubEndpoint()
+        result, broker = self._composed_publish(
+            gateway_decision=fast, chain=chain, decision=decision,
+            grant_id="credential-grant-fast-path", endpoint=endpoint,
+            factory_calls=calls,
+        )
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])
+        self.assertEqual(broker.opened_grants, [])
+        slow = classify(self._valid_envelope(), policy_available=True)
+        self.assertEqual((slow.path, slow.allowed), (GatewayPath.SLOW, True))
+        calls = []
+        endpoint = MockGitHubEndpoint()
+        result, broker = self._composed_publish(
+            gateway_decision=slow, chain=chain, decision=decision,
+            grant_id="credential-grant-slow-path", endpoint=endpoint,
+            factory_calls=calls,
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.pull_request_id, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -958,5 +958,124 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
                 self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
 
 
+class ComposedRecoveryMatrixTests(unittest.TestCase):
+    def _boundary_request(self, chain):
+        return {
+            "process_id": PROCESS_ID,
+            "operation": "publish_pull_request",
+            "repository_id": REPOSITORY_ID,
+            "branch": chain["intent"]["branch_namespace"],
+            "staged_change_digest": chain["intent"]["staged_change_digest"],
+            "idempotency_key": chain["intent"]["idempotency_key"],
+            "request_digest": sha256_digest(chain["actuator_request"]),
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+
+    def _journal(self, directory_name: str):
+        import tempfile
+
+        from app_contracts.publication import PublicationJournal
+
+        directory = tempfile.TemporaryDirectory(prefix=directory_name)
+        self.addCleanup(directory.cleanup)
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        return journal
+
+    def _prepare_journal(self, journal, chain):
+        from app_contracts.digests import sha256_digest
+
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            request_digest=sha256_digest(chain["actuator_request"]),
+            repository_id=REPOSITORY_ID,
+        )
+
+    def test_crash_after_effect_recovers_to_completed_without_second_publish(self):
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import (
+            PublicationRecoveryRequired,
+            SimulatedCrash,
+            execute_publication,
+            recover_publication,
+        )
+
+        chain = build_chain()
+        endpoint_calls: list[dict] = []
+
+        class RecordingEndpoint(MockGitHubEndpoint):
+            def publish_pull_request(self, request):
+                endpoint_calls.append(request)
+                return super().publish_pull_request(request)
+
+        endpoint = RecordingEndpoint()
+        journal = self._journal("app-chain-crash-")
+        self._prepare_journal(journal, chain)
+        with self.assertRaises(SimulatedCrash):
+            execute_publication(journal, endpoint, self._boundary_request(chain), crash_after_external_effect=True)
+        self.assertEqual(len(endpoint_calls), 1)
+        self.assertEqual(journal.get(PROCESS_ID).status, "attempting")
+        record = recover_publication(journal, endpoint, PROCESS_ID)
+        self.assertEqual((record.status, record.pull_request_id), ("completed", 1))
+        self.assertEqual(len(endpoint_calls), 1)
+        self.assertEqual(
+            endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]).pull_request_id, 1
+        )
+        settled = recover_publication(journal, endpoint, PROCESS_ID)
+        self.assertEqual((settled.status, settled.pull_request_id), ("completed", 1))
+        self.assertEqual(len(endpoint_calls), 1)
+        self.assertEqual(journal.get(PROCESS_ID).status, "completed")
+
+    def test_absent_outcome_never_retries_automatically(self):
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationRecoveryRequired, recover_publication
+
+        chain = build_chain()
+        endpoint_calls: list[dict] = []
+
+        class RecordingEndpoint(MockGitHubEndpoint):
+            def publish_pull_request(self, request):
+                endpoint_calls.append(request)
+                return super().publish_pull_request(request)
+
+        endpoint = RecordingEndpoint()
+        journal = self._journal("app-chain-absent-")
+        self._prepare_journal(journal, chain)
+        journal.mark_attempting(PROCESS_ID)
+        with self.assertRaises(PublicationRecoveryRequired):
+            recover_publication(journal, endpoint, PROCESS_ID)
+        self.assertEqual(journal.get(PROCESS_ID).status, "reconciliation_required")
+        self.assertEqual(endpoint_calls, [])
+        with self.assertRaises(PublicationRecoveryRequired):
+            recover_publication(journal, endpoint, PROCESS_ID)
+        self.assertEqual(journal.get(PROCESS_ID).status, "reconciliation_required")
+        self.assertEqual(endpoint_calls, [])
+        self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+
+    def test_matching_receipt_completes_attempting_journal(self):
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import execute_publication, recover_publication
+
+        chain = build_chain()
+        endpoint_calls: list[dict] = []
+
+        class RecordingEndpoint(MockGitHubEndpoint):
+            def publish_pull_request(self, request):
+                endpoint_calls.append(request)
+                return super().publish_pull_request(request)
+
+        endpoint = RecordingEndpoint()
+        journal = self._journal("app-chain-match-")
+        self._prepare_journal(journal, chain)
+        receipt = execute_publication(journal, endpoint, self._boundary_request(chain))
+        self.assertEqual(receipt.pull_request_id, 1)
+        self.assertEqual(len(endpoint_calls), 1)
+        record = recover_publication(journal, endpoint, PROCESS_ID)
+        self.assertEqual((record.status, record.pull_request_id), ("completed", 1))
+        self.assertEqual(len(endpoint_calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

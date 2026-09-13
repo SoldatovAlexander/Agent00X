@@ -197,7 +197,10 @@ def _validate_delegation(parent: dict[str, Any], child: dict[str, Any]) -> None:
         (child, "actions"), (child, "resources"),
         (parent, "delegable_actions"), (parent, "resources"),
     ):
-        if not isinstance(holder[field], (list, tuple)):
+        members = holder[field]
+        if not isinstance(members, (list, tuple)) or any(
+            not isinstance(member, str) or not member for member in members
+        ):
             raise ContractValidationError(f"chain: delegation {field} is malformed")
     for field in ("remaining_delegation_depth", "max_delegation_depth"):
         holder = child if field == "remaining_delegation_depth" else parent

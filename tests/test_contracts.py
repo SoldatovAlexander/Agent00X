@@ -214,6 +214,27 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "^chain: delegation remaining_delegation_depth is malformed$"):
             validate_chain(chain)
 
+    def test_malformed_delegation_members_denied_without_payload(self):
+        victims = [
+            ("child", "actions", [{"write": True}]),
+            ("child", "resources", [["repo"]]),
+            ("child", "actions", [None]),
+            ("child", "actions", [""]),
+            ("parent", "delegable_actions", [{"write": True}]),
+            ("parent", "resources", [42]),
+        ]
+        for side, field, bad in victims:
+            with self.subTest(side=side, field=field):
+                chain = json.loads(json.dumps(self.chain))
+                holder = chain["delegation_receipt"] if side == "child" else chain["capability_grant"]
+                holder[field] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, f"^chain: delegation {field} is malformed$"
+                ) as raised:
+                    validate_chain(chain)
+                self.assertNotIn("process-demo-001", str(raised.exception))
+        validate_chain(self.chain)
+
     def test_delegation_cannot_expand_actions(self):
         chain = json.loads(json.dumps(self.chain))
         chain["delegation_receipt"]["actions"].append("workspace.patch")

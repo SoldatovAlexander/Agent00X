@@ -79,6 +79,8 @@ class MockGitHubEndpoint:
 
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ContractValidationError("mock github: lookup key is invalid")
+        if not idempotency_key.startswith("publish/") or len(idempotency_key) <= len("publish/"):
+            raise ContractValidationError("mock github: lookup key is outside the publication namespace")
         if repository_id is not None and (
             not isinstance(repository_id, str) or not repository_id
         ):

@@ -126,6 +126,18 @@ class MockGitHubTests(unittest.TestCase):
                     endpoint.publish_pull_request(bad)
                 self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
 
+    def test_out_of_namespace_lookup_keys_disclose_nothing(self):
+        original = self.endpoint.publish_pull_request(self.request)
+        for bad in ("anything", "x", "PUBLISH/process-demo-001/key", "publish/", "other/publish/a/b"):
+            with self.subTest(key=bad):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "lookup key is outside the publication namespace"
+                ):
+                    self.endpoint.find_by_idempotency_key(bad)
+        self.assertEqual(
+            self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]), original
+        )
+
     def test_malformed_lookup_inputs_fail_without_receipt_change(self):
         original = self.endpoint.publish_pull_request(self.request)
         for bad_key in (None, 123, "", ["key"]):

@@ -102,6 +102,8 @@ class InMemoryCredentialBroker:
     opened_grants: list[str]
 
     def __init__(self, channel_factory: Any) -> None:
+        if not callable(channel_factory):
+            raise ContractValidationError("broker: channel factory is invalid")
         self._channel_factory = channel_factory
         self.opened_grants = []
         self._used_grants: set[str] = set()

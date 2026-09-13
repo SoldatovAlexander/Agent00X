@@ -317,6 +317,14 @@ class BrokerTests(unittest.TestCase):
         self.assertIs(channel, self.endpoint)
         self.assertEqual(broker.opened_grants, ["credential-grant-demo-001"])
 
+    def test_non_callable_factory_rejected_at_construction(self):
+        for bad in (None, 123, "factory", {}, ["factory"]):
+            with self.subTest(factory=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^broker: channel factory is invalid$"
+                ):
+                    InMemoryCredentialBroker(bad)
+
     def test_grant_cannot_be_used_for_mutated_request(self):
         self.chain["actuator_request"]["body_artifact_ref"] = "artifact://pr/mutated/body"
         with self.assertRaisesRegex(ContractValidationError, "request digest mismatch"):

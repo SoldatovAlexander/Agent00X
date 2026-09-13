@@ -204,6 +204,42 @@ class RepositoryProcessTests(unittest.TestCase):
                     ["calculator.py", "test_calculator.py"],
                 )
 
+    def test_malformed_preparation_clocks_denied_before_workspace_writes(self):
+        original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
+        naive = datetime(2026, 9, 4, 12, 0)
+        for bad in (False, 0, "", "2026-09-04T12:00:00Z", 123, naive, (2026, 9, 4)):
+            with self.subTest(now=repr(bad)):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                with self.assertRaisesRegex(
+                    ContractValidationError, "preparation timestamp must be timezone-aware"
+                ):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={"calculator.py": self.new_calculator},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                        now=bad,
+                    )
+                self.assertEqual(
+                    (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"), original
+                )
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        result = prepare_change(
+            sandbox,
+            process_id="process-m1-demo",
+            task_id="task-m1-demo",
+            repository_id="github-installation/42/repository/1001",
+            base_commit="a" * 40,
+            changes={"calculator.py": self.new_calculator},
+            test_command=["python3", "-m", "unittest", "-v"],
+        )
+        self.assertEqual(result.verification_report["verdict"], "pass")
+
     def test_conflicting_duplicate_path_leaves_workspace_unchanged(self):
         original = (self.fixture / "calculator.py").read_text(encoding="utf-8")
         sandbox = self.backend.create(self.fixture, {"python3"})

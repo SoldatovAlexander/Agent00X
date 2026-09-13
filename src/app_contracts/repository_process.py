@@ -68,7 +68,12 @@ def prepare_change(
     for key in changes:
         if not isinstance(key, str) or not key:
             raise ContractValidationError("change proposal has invalid path")
-    timestamp = now or datetime.now(timezone.utc)
+    if now is None:
+        timestamp = datetime.now(timezone.utc)
+    elif not isinstance(now, datetime) or now.tzinfo is None:
+        raise ContractValidationError("preparation timestamp must be timezone-aware")
+    else:
+        timestamp = now
     changed_paths: list[str] = []
     patch_parts: list[str] = []
     source_digests: list[str] = []

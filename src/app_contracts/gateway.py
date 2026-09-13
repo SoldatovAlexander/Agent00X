@@ -35,6 +35,8 @@ def _require_envelope_shape(envelope: dict[str, Any]) -> None:
             raise ContractValidationError("gateway: envelope is malformed")
     if not isinstance(envelope["security"]["tainted"], bool):
         raise ContractValidationError("gateway: envelope is malformed")
+    if not isinstance(envelope["security"]["sensitivity"], str) or not envelope["security"]["sensitivity"]:
+        raise ContractValidationError("gateway: envelope is malformed")
 
 
 class GatewayAuditSink(Protocol):

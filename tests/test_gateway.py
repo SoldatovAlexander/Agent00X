@@ -82,6 +82,41 @@ class GatewayTests(unittest.TestCase):
                     for code in decision.reason_codes:
                         self.assertNotIn(operation[:20], code)
 
+    def test_malformed_sensitivity_uses_malformed_envelope_deny_without_audit(self):
+        for bad in (None, 123, "", [], {}):
+            with self.subTest(sensitivity=repr(bad)):
+                request = envelope("repository.read")
+                request["security"]["sensitivity"] = bad
+                with self.assertRaisesRegex(ContractValidationError, "gateway: envelope is malformed"):
+                    classify(request, policy_available=True)
+        with tempfile.TemporaryDirectory(prefix="app-gateway-test-") as directory:
+            with SQLiteProcessStore(Path(directory) / "runtime.sqlite3") as store:
+                store.create("process-gateway-010")
+                for bad in (None, 123, "", [], {}):
+                    with self.subTest(sensitivity=repr(bad)):
+                        request = envelope("repository.read")
+                        request["security"]["sensitivity"] = bad
+                        request.update({
+                            "correlation_id": "process-gateway-010",
+                            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+                            "payload": {"content_digest": "sha256:" + "b" * 64},
+                        })
+                        decision = enforce(request, policy_available=True, audit_sink=store)
+                        self.assertEqual(decision.path, GatewayPath.DEGRADED)
+                        self.assertFalse(decision.allowed)
+                        self.assertEqual(decision.reason_codes, ("malformed-envelope",))
+                self.assertEqual(store.audit_events("process-gateway-010"), [])
+        for sensitivity, path in (
+            ("internal", GatewayPath.FAST),
+            ("public", GatewayPath.FAST),
+            ("confidential", GatewayPath.SLOW),
+            ("restricted", GatewayPath.SLOW),
+        ):
+            with self.subTest(sensitivity=sensitivity):
+                request = envelope("repository.read")
+                request["security"]["sensitivity"] = sensitivity
+                self.assertEqual(classify(request, policy_available=True).path, path)
+
     def test_policy_unavailable_allows_only_read_only_allowlist(self):
         allowed = classify(envelope("workspace.read"), policy_available=False)
         denied = classify(envelope("publish_pull_request", port="tool"), policy_available=False)

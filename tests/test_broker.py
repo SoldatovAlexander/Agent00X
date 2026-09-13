@@ -140,6 +140,40 @@ class BrokerTests(unittest.TestCase):
                     self.assertEqual(broker.opened_grants, [])
                     self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
 
+    def test_gateway_refusal_does_not_consume_grant_before_valid_slow_use(self):
+        factory_calls = []
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        denied = GatewayDecision(GatewayPath.SLOW, False, ("tainted-content",))
+        with self.assertRaisesRegex(ContractValidationError, "gateway has not authorized slow path"):
+            actuator.publish_pull_request(
+                actuator_request=self.chain["actuator_request"],
+                credential_grant=self.chain["credential_use_grant"],
+                policy_decision=self.decision,
+                approval_valid=True,
+                gateway_decision=denied,
+                intent=self.chain["intent"],
+                now=NOW,
+                approval=self.chain["approval"],
+            )
+        self.assertEqual(factory_calls, [])
+        self.assertEqual(broker.opened_grants, [])
+        receipt = actuator.publish_pull_request(
+            actuator_request=self.chain["actuator_request"],
+            credential_grant=self.chain["credential_use_grant"],
+            policy_decision=self.decision,
+            approval_valid=True,
+            gateway_decision=self.gateway,
+            intent=self.chain["intent"],
+            now=NOW,
+            approval=self.chain["approval"],
+        )
+        self.assertEqual(receipt.pull_request_id, 1)
+        self.assertEqual(factory_calls, ["factory"])
+        self.assertEqual(broker.opened_grants, ["credential-grant-demo-001"])
+        self.assertNotIn("token", json.dumps(self.chain["credential_use_grant"]))
+
     def test_credential_grant_cannot_be_reused(self):
         self._publish()
         with self.assertRaisesRegex(ContractValidationError, "already used"):

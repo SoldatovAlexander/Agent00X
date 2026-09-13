@@ -783,35 +783,22 @@ class ComposedGatewayDenialTests(unittest.TestCase):
 
 
 class ComposedReplayIdempotencyTests(unittest.TestCase):
-    def _compose_once(self, suffix: str):
+    def test_identical_replay_returns_original_receipt_without_second_effect(self):
         import tempfile
 
-        from app_contracts.authority import DeterministicPolicy, PolicyConfig
-        from app_contracts.broker import InMemoryCredentialBroker
         from app_contracts.digests import sha256_digest
-        from app_contracts.gateway import GatewayDecision, GatewayPath
-        from app_contracts.github_actuator import BrokeredGitHubActuator
         from app_contracts.mock_github import MockGitHubEndpoint
         from app_contracts.publication import PublicationJournal, execute_publication
 
         chain = build_chain()
-        policy = DeterministicPolicy(PolicyConfig(
-            version="policy-1",
-            allowed_repositories=frozenset({REPOSITORY_ID}),
-            allowed_actuators=frozenset({"actuator-github-001"}),
-        ))
-        decision = policy.decide(
-            decision_id=f"decision-chain-replay-{suffix}",
-            actuator_request=chain["actuator_request"], approval=chain["approval"],
-            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
-        )
-        self.assertEqual(decision["effect"], "allow")
-        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
-        endpoint = MockGitHubEndpoint()
-        broker = InMemoryCredentialBroker(lambda: endpoint)
-        actuator = BrokeredGitHubActuator(broker)
-        grant = dict(chain["credential_use_grant"])
-        grant["credential_grant_id"] = f"credential-grant-replay-{suffix}"
+        endpoint_calls: list[dict] = []
+
+        class RecordingEndpoint(MockGitHubEndpoint):
+            def publish_pull_request(self, request):
+                endpoint_calls.append(request)
+                return super().publish_pull_request(request)
+
+        endpoint = RecordingEndpoint()
         directory = tempfile.TemporaryDirectory(prefix="app-chain-replay-")
         self.addCleanup(directory.cleanup)
         journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
@@ -832,41 +819,16 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
             "policy_effect": "allow",
             "approval_valid": True,
         }
-        receipt = execute_publication(journal, endpoint, boundary_request)
-        env = {
-            "chain": chain, "decision": decision, "gateway": gateway,
-            "endpoint": endpoint, "journal": journal, "receipt": receipt,
-        }
-        return env
-
-    def test_identical_replay_returns_original_receipt_without_second_effect(self):
-        from app_contracts.broker import InMemoryCredentialBroker
-        from app_contracts.github_actuator import BrokeredGitHubActuator
-
-        env = self._compose_once("first")
-        chain, endpoint, journal = env["chain"], env["endpoint"], env["journal"]
+        first = execute_publication(journal, endpoint, dict(boundary_request))
+        self.assertEqual(first.pull_request_id, 1)
         before = journal.get(PROCESS_ID)
         self.assertEqual((before.status, before.pull_request_id), ("completed", 1))
-
-        broker = InMemoryCredentialBroker(lambda: endpoint)
-        actuator = BrokeredGitHubActuator(broker)
-        grant = dict(chain["credential_use_grant"])
-        grant["credential_grant_id"] = "credential-grant-replay-second"
-        replayed = actuator.publish_pull_request(
-            actuator_request=chain["actuator_request"],
-            credential_grant=grant,
-            policy_decision=env["decision"],
-            approval_valid=True,
-            gateway_decision=env["gateway"],
-            intent=chain["intent"],
-            now=NOW,
-            approval=chain["approval"],
-        )
-        self.assertEqual(replayed, env["receipt"])
-        self.assertEqual(replayed.pull_request_id, 1)
+        with self.assertRaisesRegex(ValueError, "publication is not prepared"):
+            execute_publication(journal, endpoint, dict(boundary_request))
+        self.assertEqual(len(endpoint_calls), 1)
         after = journal.get(PROCESS_ID)
         self.assertEqual(after, before)
-        self.assertEqual(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]), env["receipt"])
+        self.assertEqual(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]), first)
 
     def test_changed_binding_is_denied_rather_than_replayed(self):
         import copy

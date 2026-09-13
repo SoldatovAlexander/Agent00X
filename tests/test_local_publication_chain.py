@@ -484,5 +484,135 @@ class ComposedSwapDenialTests(unittest.TestCase):
         self.assertIsNone(endpoint.find_by_idempotency_key(evil["actuator_request"]["idempotency_key"]))
 
 
+class ComposedExpiryDenialTests(unittest.TestCase):
+    def _fresh_setup(self, grant_id: str):
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id="decision-chain-expiry",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        grant = dict(chain["credential_use_grant"])
+        grant["credential_grant_id"] = grant_id
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        return chain, decision, gateway, endpoint, broker, actuator, grant
+
+    def _attempt(self, actuator, **kwargs):
+        return actuator.publish_pull_request(**kwargs)
+
+    def test_expired_decision_denies_before_channel_or_endpoint(self):
+        from datetime import timedelta
+
+        from app_contracts.validator import ContractValidationError
+
+        chain, decision, gateway, _, _, _, _ = self._fresh_setup("unused")
+        expires_at = datetime.fromisoformat(decision["expires_at"].replace("Z", "+00:00"))
+        for label, moment, ok in (
+            ("before", expires_at - timedelta(seconds=1), True),
+            ("at", expires_at, False),
+            ("after", expires_at + timedelta(seconds=1), False),
+        ):
+            with self.subTest(when=label):
+                chain, decision, gateway, endpoint, broker, actuator, grant = self._fresh_setup(
+                    f"credential-grant-decision-{label}"
+                )
+                grant["expires_at"] = "2026-09-04T13:00:00Z"
+                expires_at = datetime.fromisoformat(decision["expires_at"].replace("Z", "+00:00"))
+                moment = {
+                    "before": expires_at - timedelta(seconds=1),
+                    "at": expires_at,
+                    "after": expires_at + timedelta(seconds=1),
+                }[label]
+                if ok:
+                    result = self._attempt(
+                        actuator,
+                        actuator_request=chain["actuator_request"],
+                        credential_grant=grant,
+                        policy_decision=decision,
+                        approval_valid=True,
+                        gateway_decision=gateway,
+                        intent=chain["intent"],
+                        now=moment,
+                        approval=chain["approval"],
+                    )
+                    self.assertEqual(result.pull_request_id, 1)
+                else:
+                    with self.assertRaisesRegex(ContractValidationError, "decision: expired") as raised:
+                        self._attempt(
+                            actuator,
+                            actuator_request=chain["actuator_request"],
+                            credential_grant=grant,
+                            policy_decision=decision,
+                            approval_valid=True,
+                            gateway_decision=gateway,
+                            intent=chain["intent"],
+                            now=moment,
+                            approval=chain["approval"],
+                        )
+                    self.assertEqual(broker.opened_grants, [])
+                    self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+                    self.assertNotIn(chain["approval"]["approval_id"], str(raised.exception))
+
+    def test_expired_grant_denies_before_channel_or_endpoint(self):
+        from datetime import timedelta
+
+        from app_contracts.validator import ContractValidationError
+
+        grant_expiry = datetime.fromisoformat("2026-09-04T12:11:00+00:00")
+        for label, moment, ok in (
+            ("before", grant_expiry - timedelta(seconds=1), True),
+            ("at", grant_expiry, False),
+            ("after", grant_expiry + timedelta(seconds=1), False),
+        ):
+            with self.subTest(when=label):
+                chain, decision, gateway, endpoint, broker, actuator, grant = self._fresh_setup(
+                    f"credential-grant-expiry-{label}"
+                )
+                if ok:
+                    result = self._attempt(
+                        actuator,
+                        actuator_request=chain["actuator_request"],
+                        credential_grant=grant,
+                        policy_decision=decision,
+                        approval_valid=True,
+                        gateway_decision=gateway,
+                        intent=chain["intent"],
+                        now=moment,
+                        approval=chain["approval"],
+                    )
+                    self.assertEqual(result.pull_request_id, 1)
+                else:
+                    with self.assertRaisesRegex(ContractValidationError, "credential grant expired") as raised:
+                        self._attempt(
+                            actuator,
+                            actuator_request=chain["actuator_request"],
+                            credential_grant=grant,
+                            policy_decision=decision,
+                            approval_valid=True,
+                            gateway_decision=gateway,
+                            intent=chain["intent"],
+                            now=moment,
+                            approval=chain["approval"],
+                        )
+                    self.assertEqual(broker.opened_grants, [])
+                    self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
+                    self.assertNotIn(grant["request_digest"], str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

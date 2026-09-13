@@ -543,6 +543,23 @@ class RepositoryProcessTests(unittest.TestCase):
                         test_command=["python3", "-m", "unittest", "-v"],
                     )
 
+    def test_malformed_manifest_sandbox_denied_without_output(self):
+        sandbox, result = self.prepare()
+
+        class NoWorkspaceSandbox:
+            snapshot = Path("/nonexistent-snapshot")
+
+        for bad in (None, "sandbox", 42, NoWorkspaceSandbox()):
+            with self.subTest(sandbox=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^manifest sandbox is malformed$"
+                ):
+                    build_publish_manifest(
+                        bad, result, {"calculator.py": self.new_calculator}
+                    )
+        manifest = build_publish_manifest(sandbox, result, {"calculator.py": self.new_calculator})
+        self.assertEqual([item.path for item in manifest], ["calculator.py"])
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

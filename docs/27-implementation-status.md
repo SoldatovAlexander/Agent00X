@@ -114,3 +114,38 @@ local preparation существуют; M2/M3 не завершены; M4 отл
 воспроизводимой команды запуска, списка оставшихся ограничений и ссылки на
 соответствующую гипотезу/ADR. Happy-path демонстрация, число документов или
 одна успешная внешняя операция не превращаются в доказательство соседних свойств.
+
+## 9. Evidence inventory (EXP-241, сверка 2026-09-13)
+
+Инвентаризация собрана исполнителем по карточке EXP-241 и не меняет выводы
+разделов 1–8: сверка статуса — предмет EXP-242. Уровни — по шкале раздела 2.
+
+Штатная проверка, выполненная при сборе:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+```
+
+Результат 2026-09-13: **420 тестов, все прошли, 1 пропущен**. Пропущен
+штатный opt-in Docker integration test (требует `RUN_DOCKER_SANDBOX_TESTS=1`,
+доступный Docker daemon и образ). Результат подтверждает только свойства,
+покрытые тестами, на текущей машине; число тестов не является доказательством
+изоляции, сквозной публикации или end-to-end безопасности.
+
+| Область | Артефакты | Evidence (commit) | Уровень |
+|---|---|---|---|
+| Базовые контракты | 16 исходных JSON Schema в `schemas/`, fixtures, `digests.py`, `validator.py`, `state_machine.py` | История `git log`, chain/contract-тесты | Реализовано и unit-tested |
+| Observer R0-контракты | `observation-event`, `checkpoint`, `learning-correction`, `memory-summary` schemas + `test_observer_contracts.py` (итого 20 схем, 19 test-файлов) | `ea4fd5a` (EXP-004) и follow-up commits, включая `f734226` (EXP-008) | Реализовано и unit-tested на уровне контрактов; collector, отчёты и учебные ветки отсутствуют |
+| Reference preparation и manifest binding | `repository_process.py`, `PreparedChange.verified_contents`, regression-тесты подмены | `e98cce3` (EXP-002), принят Control Plane | Unit-tested; нарушение п.1 раздела 6 имеет remediation evidence, сверка статуса — EXP-242 |
+| Policy/authority gate | `authority.py` (`DeterministicPolicy`, привязка digest), regression-тесты подмены | `274fbdc` (EXP-003), принят Control Plane | Unit-tested; нарушение п.2 раздела 6 имеет remediation evidence, сверка статуса — EXP-242 |
+| Durable state и mock publication | `runtime_store.py` (SQLite transitions/audit), `publication.py` (journal/reconciliation), mock boundary, recovery-тесты | Batch-коммиты EXP-010—EXP-015 и далее (см. `git log`) | Реализовано и unit-tested, включая негативные и recovery-сценарии |
+| Gateway/Broker/Actuator boundary hardening | Fail-closed проверки типов, digest, expiry, idempotency и привязок в `gateway.py`, `broker.py`, `actuator.py`, `github_actuator.py`, `mock_github.py`, `github_app.py` + regression-тесты | Batch-коммиты EXP-021—EXP-230 (см. `git log`; EXP-231 и новее на 2026-09-13 не приняты Control Plane) | Реализовано и unit-tested локально; production Authority Plane не связан |
+| GitHub App | Исторические branch/PR spikes на allowlisted репозитории | Без изменений с раздела 5 | Spike |
+| Observer runtime, обучение, LLM Worker | Отсутствуют как код | Без изменений | Спроектировано / Не реализовано |
+
+Открытые границы сквозной цепи (без изменений по существу, см. раздел 6):
+п.1–2 имеют remediation evidence (сверка — EXP-242); п.3 (неатомарная GitHub-публикация), п.4 (изоляция local backend/Docker) и п.5 (неполнота истории) остаются открытыми; сквозная цепочка approval → policy → manifest → Broker → journal → recovery не доказана как единое целое; Docker-интеграция — только opt-in.
+
+Ближайшее проверяемое свойство: соответствие разделов 1–8 настоящего inventory
+(предмет EXP-242). Настоящий inventory не является security certification
+и не доказывает external publication.

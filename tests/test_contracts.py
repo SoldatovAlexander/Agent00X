@@ -539,6 +539,23 @@ class SchemaIdTests(unittest.TestCase):
         self.assertEqual(sha256_bytes(bytearray(b"content")), expected)
         self.assertEqual(sha256_bytes(memoryview(b"content")), expected)
 
+    def test_malformed_numeric_constraints_denied_before_instance(self):
+        cases = (
+            ("minimum", {"type": "integer"}, 7),
+            ("minLength", {"type": "string"}, "value"),
+            ("maxLength", {"type": "string"}, "value"),
+            ("minItems", {"type": "array"}, [1]),
+        )
+        for keyword, base, instance in cases:
+            for bad in ("5", None, [1], True, {"n": 1}):
+                with self.subTest(keyword=keyword, bound=bad):
+                    schema = dict(base, **{keyword: bad})
+                    with self.assertRaisesRegex(RuntimeError, f"invalid schema declaration.*{keyword} must be a number"):
+                        validate_schema(schema)
+                    with self.assertRaisesRegex(RuntimeError, f"invalid schema declaration.*{keyword} must be a number"):
+                        validate(instance, schema)
+        validate(7, {"type": "integer", "minimum": 0})
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

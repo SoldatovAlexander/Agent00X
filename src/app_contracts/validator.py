@@ -64,6 +64,13 @@ def validate_schema(schema: Any, path: str = "$") -> None:
         raise RuntimeError(
             f"invalid schema declaration at {path}: unsupported type {schema['type']!r}"
         )
+    for keyword in ("minimum", "minLength", "maxLength", "minItems"):
+        if keyword in schema:
+            bound = schema[keyword]
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                raise RuntimeError(
+                    f"invalid schema declaration at {path}: {keyword} must be a number"
+                )
     if "items" in schema:
         validate_schema(schema["items"], f"{path}[]")
 

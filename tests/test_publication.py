@@ -132,6 +132,28 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 journal.get("process-publication-010")
 
+    def test_malformed_recovery_process_id_makes_no_endpoint_call(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+
+            class CountingEndpoint:
+                def __init__(self):
+                    self.calls = []
+
+                def find_by_idempotency_key(self, key):
+                    self.calls.append(key)
+                    return None
+
+            endpoint = CountingEndpoint()
+            for bad in (None, 123, "", ["process-publication-001"]):
+                with self.subTest(process_id=type(bad).__name__):
+                    with self.assertRaises(ValueError) as raised:
+                        recover_publication(journal, endpoint, bad)
+                    self.assertNotIsInstance(raised.exception, (TypeError, AttributeError, KeyError))
+            self.assertEqual(endpoint.calls, [])
+            self.assertEqual(journal.get(self.request["process_id"]).status, "attempting")
+
     def test_malformed_read_identifiers_denied_without_mutation(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

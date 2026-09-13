@@ -505,6 +505,19 @@ class SchemaIdTests(unittest.TestCase):
                     validate("anything", schema)
         validate("anything", {"type": "string"})
 
+    def test_malformed_byte_inputs_denied_without_representation(self):
+        from app_contracts.digests import sha256_bytes
+        for bad in ("text", "caller-secret-001", None, 42, {"data": "x"}, ["x"]):
+            with self.subTest(value=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ValueError, "^canonical digest input is not bytes$"
+                ) as raised:
+                    sha256_bytes(bad)
+                self.assertNotIn("caller-secret-001", str(raised.exception))
+        expected = sha256_bytes(b"content")
+        self.assertEqual(sha256_bytes(bytearray(b"content")), expected)
+        self.assertEqual(sha256_bytes(memoryview(b"content")), expected)
+
     def test_duplicate_schema_id_is_detected(self):
         with self.assertRaisesRegex(ValueError, "duplicate \\$id"):
             check_schema_ids({

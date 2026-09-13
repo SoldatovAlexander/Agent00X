@@ -33,5 +33,7 @@ def sha256_digest(value: Any) -> str:
 
 
 def sha256_bytes(value: bytes) -> str:
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise ValueError("canonical digest input is not bytes")
     return "sha256:" + hashlib.sha256(value).hexdigest()
 

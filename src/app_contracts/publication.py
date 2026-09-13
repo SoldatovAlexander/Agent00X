@@ -210,5 +210,5 @@ def recover_publication(
             journal.mark_completed(process_id, external)
             return journal.get(process_id)
         journal.mark_reconciliation_required(process_id)
-        raise PublicationRecoveryRequired(process_id)
-    raise PublicationRecoveryRequired(process_id)
+        raise PublicationRecoveryRequired("publication recovery required")
+    raise PublicationRecoveryRequired("publication recovery required")

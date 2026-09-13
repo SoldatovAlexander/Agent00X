@@ -381,13 +381,31 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.status, "attempting")
             self.assertIsNone(record.pull_request_id)
 
+    def test_recovery_required_error_carries_no_identifier(self):
+        with PublicationJournal(self.database) as journal:
+            journal.prepare(
+                "process-caller-secret-001",
+                idempotency_key=self.request["idempotency_key"],
+                request_digest="sha256:" + "b" * 64,
+                repository_id=self.request["repository_id"],
+            )
+            journal.mark_attempting("process-caller-secret-001")
+            with self.assertRaisesRegex(
+                PublicationRecoveryRequired, "^publication recovery required$"
+            ) as raised:
+                recover_publication(journal, self.endpoint, "process-caller-secret-001")
+            self.assertNotIn("caller-secret-001", str(raised.exception))
+            self.assertEqual(
+                journal.get("process-caller-secret-001").status, "reconciliation_required"
+            )
+
     def test_repeated_unknown_recovery_creates_no_side_effect_and_leaks_nothing(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)
             journal.mark_attempting(self.request["process_id"])
             with self.assertRaises(PublicationRecoveryRequired) as first:
                 recover_publication(journal, self.endpoint, self.request["process_id"])
-            self.assertEqual(first.exception.args, (self.request["process_id"],))
+            self.assertEqual(first.exception.args, ("publication recovery required",))
             for _ in range(2):
                 with self.assertRaises(PublicationRecoveryRequired):
                     recover_publication(journal, self.endpoint, self.request["process_id"])

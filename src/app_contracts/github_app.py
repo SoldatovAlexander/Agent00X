@@ -243,7 +243,7 @@ class GitHubAppPublicationChannel:
         retry; it never implies permission to repeat a side effect blindly.
         """
 
-        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+        if not isinstance(branch, str) or not branch.startswith("agent/process-") or len(branch) <= len("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
         url = urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/ref/heads/{branch}")
         try:
@@ -267,7 +267,7 @@ class GitHubAppPublicationChannel:
         is known. None is an explicit unknown outcome, not a missing receipt.
         """
 
-        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+        if not isinstance(branch, str) or not branch.startswith("agent/process-") or len(branch) <= len("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ContractValidationError("GitHub actuator: idempotency key is invalid")
@@ -300,7 +300,7 @@ class GitHubAppPublicationChannel:
             raise ContractValidationError("GitHub actuator: staged change base commit is invalid")
         if not isinstance(patch_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", patch_digest):
             raise ContractValidationError("GitHub actuator: staged change patch digest is invalid")
-        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+        if not isinstance(branch, str) or not branch.startswith("agent/process-") or len(branch) <= len("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
         validated: list[tuple[str, str]] = []
         for file in files:
@@ -343,7 +343,7 @@ class GitHubAppPublicationChannel:
         if request["policy_effect"] != "allow" or request["approval_valid"] is not True:
             raise ContractValidationError("GitHub actuator: authority proof is invalid")
         branch = request["branch"]
-        if not isinstance(branch, str) or not branch.startswith("agent/process-"):
+        if not isinstance(branch, str) or not branch.startswith("agent/process-") or len(branch) <= len("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
         marker = f"<!-- agent-process-idempotency: {request['idempotency_key']} -->"
         existing = self._find_existing_pull_request(branch, marker)

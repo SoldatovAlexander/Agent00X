@@ -1032,5 +1032,61 @@ class ContentPathEncodingTests(unittest.TestCase):
                 self.assertEqual(calls, [])
 
 
+class BareProcessBranchTests(unittest.TestCase):
+    def _recording_channel(self, calls):
+        from app_contracts.github_app import GitHubAppPublicationChannel
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        key_path = Path(directory.name) / "github-app.pem"
+        key_path.write_text("unused", encoding="utf-8")
+        key_path.chmod(0o600)
+        environment = {
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        }
+        return GitHubAppPublicationChannel(
+            GitHubAppBrokerConfig.from_environment(environment),
+            _InstallationToken("opaque", "future"),
+            post_json=lambda url, headers, payload: calls.append(("POST", url)),
+            get_json=lambda url, headers: calls.append(("GET", url)),
+            put_json=lambda url, headers, payload: calls.append(("PUT", url)),
+        )
+
+    def test_bare_process_branch_prefix_rejected_before_any_provider_call(self):
+        from app_contracts.digests import sha256_bytes
+        content = "verified content\n"
+        staged_change = {
+            "repository_id": "github-installation/456/repository/1001",
+            "base_commit": "a" * 40,
+            "patch_digest": "sha256:" + "b" * 64,
+        }
+        digest = "sha256:" + "c" * 64
+        key = f"publish/process-demo-001/{digest}"
+        files = [PublishableFile("proof.txt", content, sha256_bytes(content.encode()))]
+        request = {
+            "operation": "publish_pull_request",
+            "repository_id": "github-installation/456/repository/1001",
+            "branch": "agent/process-",
+            "staged_change_digest": digest,
+            "idempotency_key": key,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        calls = []
+        channel = self._recording_channel(calls)
+        with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
+            channel.reconcile_branch("agent/process-")
+        with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
+            channel.reconcile_pull_request(branch="agent/process-", idempotency_key=key, staged_change_digest=digest)
+        with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
+            channel.publish_verified_files(branch="agent/process-", staged_change=staged_change, files=files)
+        with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
+            channel.publish_pull_request(request)
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

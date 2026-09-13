@@ -1348,25 +1348,83 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
                 self._assert_quiet(env)
 
     def test_catalog_gateway_stops(self):
-        from app_contracts.gateway import GatewayPath, classify, enforce
+        import tempfile
 
-        for label, verdict in (
-            ("tainted-deny", classify(
+        from app_contracts.actuator import publish_authorized_request
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayPath, classify, enforce
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal
+        from app_contracts.validator import ContractValidationError
+
+        class FailingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                raise RuntimeError("injected sink failure")
+
+        audited = {
+            "intent": {"operation": "publish_pull_request", "risk_class": "low"},
+            "destination": {"port": "tool"},
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "security": {"tainted": False, "sensitivity": "internal"},
+            "correlation_id": PROCESS_ID,
+            "payload": {"content_digest": "sha256:" + "e" * 64},
+        }
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id="decision-catalog-gateway",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        self.assertEqual(decision["effect"], "allow")
+        cases = {
+            "tainted-deny": classify(
                 {"intent": {"operation": "publish_pull_request", "risk_class": "low"},
                  "destination": {"port": "tool"}, "source": {"protocol": "internal"},
                  "security": {"tainted": True, "sensitivity": "internal"}},
-                policy_available=True)),
-            ("degraded-deny", classify(
+                policy_available=True),
+            "degraded-deny": classify(
                 {"intent": {"operation": "publish_pull_request", "risk_class": "low"},
                  "destination": {"port": "tool"}, "source": {"protocol": "internal"},
                  "security": {"tainted": False, "sensitivity": "internal"}},
-                policy_available=False)),
-        ):
+                policy_available=False),
+            "audit-failure-degraded": enforce(audited, policy_available=True, audit_sink=FailingSink()),
+        }
+        for label, verdict in cases.items():
             with self.subTest(case=label):
-                env = self._env(label)
                 self.assertFalse(verdict.allowed)
-                self.assertNotEqual(verdict.path, GatewayPath.FAST)
-                self._assert_quiet(env)
+                publish_calls: list[dict] = []
+
+                class RecordingEndpoint(MockGitHubEndpoint):
+                    def publish_pull_request(self, request):
+                        publish_calls.append(request)
+                        return super().publish_pull_request(request)
+
+                endpoint = RecordingEndpoint()
+                directory = tempfile.TemporaryDirectory(prefix="app-chain-catalog-gw-")
+                self.addCleanup(directory.cleanup)
+                journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+                self.addCleanup(journal.close)
+                journal.prepare(
+                    PROCESS_ID,
+                    idempotency_key=chain["intent"]["idempotency_key"],
+                    request_digest=sha256_digest(chain["actuator_request"]),
+                    repository_id=REPOSITORY_ID,
+                )
+                with self.assertRaises(ContractValidationError):
+                    publish_authorized_request(
+                        endpoint, chain["actuator_request"], decision, approval_valid=True,
+                        gateway_decision=verdict, intent=chain["intent"], now=NOW,
+                        approval=chain["approval"],
+                    )
+                self.assertEqual(publish_calls, [])
+                self.assertEqual(journal.get(PROCESS_ID).status, "prepared")
+                self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
 
         class FailingSink:
             def append_audit_event(self, process_id, **kwargs):

@@ -1206,5 +1206,217 @@ class ComposedEvidenceRedactionTests(unittest.TestCase):
             self.assertNotIn(canary, evidence)
 
 
+class AdversarialRegressionCatalogTests(unittest.TestCase):
+    """Compact catalog pinning the cross-component deny matrix.
+
+    Forbidden side effects, asserted in every case: no channel factory
+    calls, no opened grants, no endpoint publish calls, no journal mutation
+    past the failure point, and no leaked receipt.
+    """
+
+    def _env(self, suffix, grant_expiry="2026-09-04T12:11:00Z"):
+        import tempfile
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
+        from app_contracts.digests import sha256_digest
+        from app_contracts.gateway import GatewayDecision, GatewayPath
+        from app_contracts.github_actuator import BrokeredGitHubActuator
+        from app_contracts.mock_github import MockGitHubEndpoint
+        from app_contracts.publication import PublicationJournal
+
+        chain = build_chain()
+        policy = DeterministicPolicy(PolicyConfig(
+            version="policy-1",
+            allowed_repositories=frozenset({REPOSITORY_ID}),
+            allowed_actuators=frozenset({"actuator-github-001"}),
+        ))
+        decision = policy.decide(
+            decision_id=f"decision-catalog-{suffix}",
+            actuator_request=chain["actuator_request"], approval=chain["approval"],
+            staged_change=chain["staged_change"], intent=chain["intent"], now=NOW,
+        )
+        factory_calls: list[str] = []
+        publish_calls: list[dict] = []
+
+        class RecordingEndpoint(MockGitHubEndpoint):
+            def publish_pull_request(self, request):
+                publish_calls.append(request)
+                return super().publish_pull_request(request)
+
+        endpoint = RecordingEndpoint()
+        broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        grant = dict(chain["credential_use_grant"])
+        grant["credential_grant_id"] = f"credential-grant-catalog-{suffix}"
+        grant["expires_at"] = grant_expiry
+        gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        directory = tempfile.TemporaryDirectory(prefix="app-chain-catalog-")
+        self.addCleanup(directory.cleanup)
+        journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
+        self.addCleanup(journal.close)
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=chain["intent"]["idempotency_key"],
+            request_digest=sha256_digest(chain["actuator_request"]),
+            repository_id=REPOSITORY_ID,
+        )
+        return {
+            "chain": chain, "decision": decision, "gateway": gateway,
+            "endpoint": endpoint, "broker": broker, "actuator": actuator,
+            "grant": grant, "journal": journal,
+            "factory_calls": factory_calls, "publish_calls": publish_calls,
+        }
+
+    def _assert_quiet(self, env):
+        self.assertEqual(env["factory_calls"], [])
+        self.assertEqual(env["broker"].opened_grants, [])
+        self.assertEqual(env["publish_calls"], [])
+        self.assertEqual(env["journal"].get(PROCESS_ID).status, "prepared")
+        self.assertIsNone(
+            env["endpoint"].find_by_idempotency_key(env["chain"]["intent"]["idempotency_key"])
+        )
+
+    def test_catalog_swap_and_expiry_denials(self):
+        import copy
+
+        from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.validator import ContractValidationError
+
+        digest = build_chain()["actuator_request"]["staged_change_digest"]
+        swaps = {
+            "swap-intent-branch": ("intent", {"branch_namespace": "agent/process-evil-001",
+                                             "idempotency_key": f"publish/process-evil-001/{digest}"}),
+            "swap-approval-digest": ("approval", {"approved_intent_digest": "sha256:" + "0" * 64}),
+            "swap-request-branch": ("request", {"branch_namespace": "agent/process-evil-001",
+                                               "idempotency_key": f"publish/process-evil-001/{digest}"}),
+            "swap-request-key": ("request", {"idempotency_key": "publish/process-chain-001/sha256:" + "0" * 64}),
+        }
+        for label, (target, mutation) in swaps.items():
+            with self.subTest(case=label):
+                env = self._env(label)
+                evil = copy.deepcopy(env["chain"])
+                if target == "intent":
+                    evil["intent"].update(mutation)
+                elif target == "approval":
+                    evil["approval"].update(mutation)
+                else:
+                    evil["actuator_request"].update(mutation)
+                policy = DeterministicPolicy(PolicyConfig(
+                    version="policy-1",
+                    allowed_repositories=frozenset({REPOSITORY_ID}),
+                    allowed_actuators=frozenset({"actuator-github-001"}),
+                ))
+                decision = policy.decide(
+                    decision_id=f"decision-catalog-{label}",
+                    actuator_request=evil["actuator_request"], approval=evil["approval"],
+                    staged_change=evil["staged_change"], intent=evil["intent"], now=NOW,
+                )
+                self.assertEqual(decision["effect"], "deny")
+                with self.assertRaises(ContractValidationError):
+                    env["actuator"].publish_pull_request(
+                        actuator_request=evil["actuator_request"],
+                        credential_grant=env["grant"],
+                        policy_decision=decision,
+                        approval_valid=True,
+                        gateway_decision=env["gateway"],
+                        intent=evil["intent"],
+                        now=NOW,
+                        approval=evil["approval"],
+                    )
+                self._assert_quiet(env)
+
+        for label, moment, pattern in (
+            ("expired-decision", "2026-09-04T12:12:00+00:00", "decision: expired"),
+            ("expired-grant", "2026-09-04T12:11:00+00:00", "credential grant expired"),
+        ):
+            with self.subTest(case=label):
+                env = self._env(label, grant_expiry="2026-09-04T13:00:00Z"
+                                if label == "expired-decision" else "2026-09-04T12:11:00Z")
+                when = datetime.fromisoformat(moment)
+                with self.assertRaisesRegex(ContractValidationError, pattern):
+                    env["actuator"].publish_pull_request(
+                        actuator_request=env["chain"]["actuator_request"],
+                        credential_grant=env["grant"],
+                        policy_decision=env["decision"],
+                        approval_valid=True,
+                        gateway_decision=env["gateway"],
+                        intent=env["chain"]["intent"],
+                        now=when,
+                        approval=env["chain"]["approval"],
+                    )
+                self._assert_quiet(env)
+
+    def test_catalog_gateway_stops(self):
+        from app_contracts.gateway import GatewayPath, classify, enforce
+
+        for label, verdict in (
+            ("tainted-deny", classify(
+                {"intent": {"operation": "publish_pull_request", "risk_class": "low"},
+                 "destination": {"port": "tool"}, "source": {"protocol": "internal"},
+                 "security": {"tainted": True, "sensitivity": "internal"}},
+                policy_available=True)),
+            ("degraded-deny", classify(
+                {"intent": {"operation": "publish_pull_request", "risk_class": "low"},
+                 "destination": {"port": "tool"}, "source": {"protocol": "internal"},
+                 "security": {"tainted": False, "sensitivity": "internal"}},
+                policy_available=False)),
+        ):
+            with self.subTest(case=label):
+                env = self._env(label)
+                self.assertFalse(verdict.allowed)
+                self.assertNotEqual(verdict.path, GatewayPath.FAST)
+                self._assert_quiet(env)
+
+        class FailingSink:
+            def append_audit_event(self, process_id, **kwargs):
+                raise RuntimeError("injected sink failure")
+
+        env = self._env("audit-failure")
+        request = {
+            "intent": {"operation": "publish_pull_request", "risk_class": "low"},
+            "destination": {"port": "tool"},
+            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
+            "security": {"tainted": False, "sensitivity": "internal"},
+            "correlation_id": PROCESS_ID,
+            "payload": {"content_digest": "sha256:" + "e" * 64},
+        }
+        verdict = enforce(request, policy_available=True, audit_sink=FailingSink())
+        self.assertEqual((verdict.path, verdict.allowed), (GatewayPath.DEGRADED, False))
+        self._assert_quiet(env)
+
+    def test_catalog_replay_and_uncertain_recovery(self):
+        from app_contracts.publication import execute_publication, recover_publication
+        from app_contracts.publication import PublicationRecoveryRequired
+
+        env = self._env("replay")
+        chain = env["chain"]
+        boundary_request = {
+            "process_id": PROCESS_ID,
+            "operation": "publish_pull_request",
+            "repository_id": REPOSITORY_ID,
+            "branch": chain["intent"]["branch_namespace"],
+            "staged_change_digest": chain["intent"]["staged_change_digest"],
+            "idempotency_key": chain["intent"]["idempotency_key"],
+            "request_digest": env["journal"].get(PROCESS_ID).request_digest,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        first = composed_publish(env["journal"], env["endpoint"], dict(boundary_request))
+        self.assertEqual(first.pull_request_id, 1)
+        replayed = composed_publish(env["journal"], env["endpoint"], dict(boundary_request))
+        self.assertEqual(replayed, first)
+        self.assertEqual(len(env["publish_calls"]), 1)
+        self.assertEqual(env["journal"].get(PROCESS_ID).status, "completed")
+
+        env = self._env("uncertain")
+        env["journal"].mark_attempting(PROCESS_ID)
+        with self.assertRaises(PublicationRecoveryRequired):
+            recover_publication(env["journal"], env["endpoint"], PROCESS_ID)
+        self.assertEqual(env["journal"].get(PROCESS_ID).status, "reconciliation_required")
+        self.assertEqual(env["factory_calls"], [])
+        self.assertEqual(env["publish_calls"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

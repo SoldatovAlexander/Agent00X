@@ -493,6 +493,26 @@ class RepositoryProcessTests(unittest.TestCase):
                         original,
                     )
 
+    def test_malformed_sandbox_denied_before_writes_or_execution(self):
+        class NoRunSandbox:
+            snapshot = Path("/nonexistent-snapshot")
+            workspace = Path("/nonexistent-workspace")
+
+        for bad in (None, "sandbox", 42, NoRunSandbox()):
+            with self.subTest(sandbox=type(bad).__name__):
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^preparation sandbox is malformed$"
+                ):
+                    prepare_change(
+                        bad,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={"calculator.py": self.new_calculator},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

@@ -46,6 +46,12 @@ def prepare_change(
 ) -> PreparedChange:
     """Apply scoped text replacements and produce verified immutable artifacts."""
 
+    if (
+        not isinstance(getattr(sandbox, "snapshot", None), Path)
+        or not isinstance(getattr(sandbox, "workspace", None), Path)
+        or not callable(getattr(sandbox, "run", None))
+    ):
+        raise ContractValidationError("preparation sandbox is malformed")
     if not changes:
         raise ContractValidationError("change proposal is empty")
     if not isinstance(changes, dict):

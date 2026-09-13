@@ -131,6 +131,13 @@ def prepare_change(
         raise ContractValidationError("generated patch is empty")
 
     test_result = sandbox.run(test_command)
+    if (
+        isinstance(getattr(test_result, "returncode", None), bool)
+        or not isinstance(getattr(test_result, "returncode", None), int)
+        or not isinstance(getattr(test_result, "stdout", None), str)
+        or not isinstance(getattr(test_result, "stderr", None), str)
+    ):
+        raise ContractValidationError("test result is malformed")
     test_status = "passed" if test_result.returncode == 0 else "failed"
     report_payload = (test_result.stdout + "\n" + test_result.stderr).encode("utf-8")
     patch_digest = sha256_bytes(patch.encode("utf-8"))

@@ -513,6 +513,36 @@ class RepositoryProcessTests(unittest.TestCase):
                         test_command=["python3", "-m", "unittest", "-v"],
                     )
 
+    def test_malformed_command_result_denied_without_staged_result(self):
+        from types import SimpleNamespace
+        malformed = [
+            None,
+            SimpleNamespace(returncode="0", stdout="", stderr=""),
+            SimpleNamespace(returncode=None, stdout="", stderr=""),
+            SimpleNamespace(returncode=True, stdout="", stderr=""),
+            SimpleNamespace(returncode=0, stdout=None, stderr=""),
+            SimpleNamespace(returncode=0, stdout="", stderr=123),
+            SimpleNamespace(returncode=0, stdout=""),
+            "passed",
+        ]
+        for bad in malformed:
+            with self.subTest(result=type(bad).__name__):
+                sandbox = self.backend.create(self.fixture, {"python3"})
+                self.addCleanup(sandbox.close)
+                sandbox.run = lambda *args, **kwargs: bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^test result is malformed$"
+                ):
+                    prepare_change(
+                        sandbox,
+                        process_id="process-m1-demo",
+                        task_id="task-m1-demo",
+                        repository_id="github-installation/42/repository/1001",
+                        base_commit="a" * 40,
+                        changes={"calculator.py": self.new_calculator},
+                        test_command=["python3", "-m", "unittest", "-v"],
+                    )
+
     def test_path_traversal_is_rejected(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
             with self.assertRaisesRegex(ContractValidationError, "unsafe relative path"):

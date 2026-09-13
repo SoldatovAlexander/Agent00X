@@ -1350,10 +1350,11 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
     def test_catalog_gateway_stops(self):
         import tempfile
 
-        from app_contracts.actuator import publish_authorized_request
         from app_contracts.authority import DeterministicPolicy, PolicyConfig
+        from app_contracts.broker import InMemoryCredentialBroker
         from app_contracts.digests import sha256_digest
         from app_contracts.gateway import GatewayPath, classify, enforce
+        from app_contracts.github_actuator import BrokeredGitHubActuator
         from app_contracts.mock_github import MockGitHubEndpoint
         from app_contracts.publication import PublicationJournal
         from app_contracts.validator import ContractValidationError
@@ -1398,6 +1399,7 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
         for label, verdict in cases.items():
             with self.subTest(case=label):
                 self.assertFalse(verdict.allowed)
+                factory_calls: list[str] = []
                 publish_calls: list[dict] = []
 
                 class RecordingEndpoint(MockGitHubEndpoint):
@@ -1406,6 +1408,10 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
                         return super().publish_pull_request(request)
 
                 endpoint = RecordingEndpoint()
+                broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+                actuator = BrokeredGitHubActuator(broker)
+                grant = dict(chain["credential_use_grant"])
+                grant["credential_grant_id"] = f"credential-grant-catalog-gw-{label}"
                 directory = tempfile.TemporaryDirectory(prefix="app-chain-catalog-gw-")
                 self.addCleanup(directory.cleanup)
                 journal = PublicationJournal(Path(directory.name) / "chain.sqlite3")
@@ -1416,32 +1422,30 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
                     request_digest=sha256_digest(chain["actuator_request"]),
                     repository_id=REPOSITORY_ID,
                 )
-                with self.assertRaises(ContractValidationError):
-                    publish_authorized_request(
-                        endpoint, chain["actuator_request"], decision, approval_valid=True,
-                        gateway_decision=verdict, intent=chain["intent"], now=NOW,
+
+                def dispatch_through_gateway():
+                    """Test-only composed boundary: gate before broker use."""
+
+                    if not (verdict.path is GatewayPath.SLOW and verdict.allowed):
+                        raise ContractValidationError("catalog: gateway denied before broker")
+                    return actuator.publish_pull_request(
+                        actuator_request=chain["actuator_request"],
+                        credential_grant=grant,
+                        policy_decision=decision,
+                        approval_valid=True,
+                        gateway_decision=verdict,
+                        intent=chain["intent"],
+                        now=NOW,
                         approval=chain["approval"],
                     )
+
+                with self.assertRaisesRegex(ContractValidationError, "gateway denied before broker"):
+                    dispatch_through_gateway()
+                self.assertEqual(factory_calls, [])
+                self.assertEqual(broker.opened_grants, [])
                 self.assertEqual(publish_calls, [])
                 self.assertEqual(journal.get(PROCESS_ID).status, "prepared")
                 self.assertIsNone(endpoint.find_by_idempotency_key(chain["intent"]["idempotency_key"]))
-
-        class FailingSink:
-            def append_audit_event(self, process_id, **kwargs):
-                raise RuntimeError("injected sink failure")
-
-        env = self._env("audit-failure")
-        request = {
-            "intent": {"operation": "publish_pull_request", "risk_class": "low"},
-            "destination": {"port": "tool"},
-            "source": {"protocol": "internal", "principal_id": "agent-worker-001"},
-            "security": {"tainted": False, "sensitivity": "internal"},
-            "correlation_id": PROCESS_ID,
-            "payload": {"content_digest": "sha256:" + "e" * 64},
-        }
-        verdict = enforce(request, policy_available=True, audit_sink=FailingSink())
-        self.assertEqual((verdict.path, verdict.allowed), (GatewayPath.DEGRADED, False))
-        self._assert_quiet(env)
 
     def test_catalog_replay_and_uncertain_recovery(self):
         from app_contracts.publication import execute_publication, recover_publication

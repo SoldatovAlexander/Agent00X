@@ -490,6 +490,20 @@ class RuntimeStoreTests(unittest.TestCase):
                 store.audit_events("process-durable-022")
             self.assertNotIn("caller-secret-002", str(audit_raised.exception))
 
+    def test_corrupt_state_value_denied_without_row_content(self):
+        with SQLiteProcessStore(self.database) as store:
+            store.create("process-durable-023")
+            with store._connection:
+                store._connection.execute(
+                    "UPDATE processes SET state = 'caller-secret-001' WHERE process_id = ?",
+                    ("process-durable-023",),
+                )
+            with self.assertRaisesRegex(
+                ProcessStoreError, "^runtime: stored state is corrupt$"
+            ) as raised:
+                store.get("process-durable-023")
+            self.assertNotIn("caller-secret-001", str(raised.exception))
+
     def test_event_table_rejects_update_and_delete(self):
         with SQLiteProcessStore(self.database) as store:
             store.create("process-durable-004")

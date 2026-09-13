@@ -135,7 +135,11 @@ class SQLiteProcessStore:
         ).fetchone()
         if row is None:
             raise ProcessNotFound("process not found")
-        return ProcessRecord(row["process_id"], ProcessState(row["state"]), row["version"], row["updated_at"])
+        try:
+            state = ProcessState(row["state"])
+        except ValueError as exc:
+            raise ProcessStoreError("runtime: stored state is corrupt") from exc
+        return ProcessRecord(row["process_id"], state, row["version"], row["updated_at"])
 
     def advance(
         self,

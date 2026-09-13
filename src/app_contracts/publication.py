@@ -53,6 +53,10 @@ class PublicationJournal:
             raise ValueError("publication process ID is invalid")
         if not isinstance(idempotency_key, str) or not idempotency_key:
             raise ValueError("publication idempotency key is invalid")
+        key_body = idempotency_key[len("publish/"):] if idempotency_key.startswith("publish/") else ""
+        key_parts = key_body.split("/")
+        if len(key_parts) < 2 or any(part == "" for part in key_parts):
+            raise ValueError("publication idempotency key is not canonical")
         if not isinstance(repository_id, str) or not repository_id:
             raise ValueError("publication repository is invalid")
         if not isinstance(request_digest, str) or not request_digest:

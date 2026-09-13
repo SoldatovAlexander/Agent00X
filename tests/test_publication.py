@@ -170,6 +170,22 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 journal.get("process-absent-009")
 
+    def test_non_canonical_idempotency_key_leaves_no_record(self):
+        with PublicationJournal(self.database) as journal:
+            for bad in ("anything", "publish/", "publish/onlybranch", "other/a/b", "publish//x"):
+                with self.subTest(key=bad):
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication idempotency key is not canonical$"
+                    ):
+                        journal.prepare(
+                            "process-publication-012",
+                            idempotency_key=bad,
+                            request_digest="sha256:" + "b" * 64,
+                            repository_id=self.request["repository_id"],
+                        )
+            with self.assertRaises(KeyError):
+                journal.get("process-publication-012")
+
     def test_identical_prepare_replay_returns_existing_record(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

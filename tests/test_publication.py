@@ -253,6 +253,35 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.status, "attempting")
             self.assertIsNone(record.pull_request_id)
 
+    def test_malformed_receipt_scalars_leave_attempting_state(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            cases = [
+                {"branch": None}, {"branch": 123}, {"branch": ""},
+                {"staged_change_digest": None}, {"staged_change_digest": 42},
+                {"staged_change_digest": ""},
+            ]
+            for override in cases:
+                with self.subTest(override=override):
+                    fields = {
+                        "pull_request_id": 7,
+                        "repository_id": self.request["repository_id"],
+                        "branch": self.request["branch"],
+                        "staged_change_digest": self.request["staged_change_digest"],
+                        "idempotency_key": self.request["idempotency_key"],
+                    }
+                    fields.update(override)
+                    with self.assertRaisesRegex(
+                        ValueError, "^publication receipt is invalid$"
+                    ):
+                        journal.mark_completed(
+                            self.request["process_id"], MockPullRequest(**fields)
+                        )
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertIsNone(record.pull_request_id)
+
     def test_malformed_receipt_root_leaves_attempt_untouched(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

@@ -112,11 +112,9 @@ class PublicationJournal:
         if isinstance(receipt_id, bool) or not isinstance(receipt_id, int) or receipt_id < 1:
             raise ValueError("publication receipt is invalid")
         branch, digest = pull_request.branch, pull_request.staged_change_digest
-        expected_key = (
-            f"publish/{branch.removeprefix('agent/')}/{digest}"
-            if isinstance(branch, str) and isinstance(digest, str)
-            else None
-        )
+        if not isinstance(branch, str) or not branch or not isinstance(digest, str) or not digest:
+            raise ValueError("publication receipt is invalid")
+        expected_key = f"publish/{branch.removeprefix('agent/')}/{digest}"
         if (
             expected_key != record.idempotency_key
             or pull_request.repository_id != record.repository_id

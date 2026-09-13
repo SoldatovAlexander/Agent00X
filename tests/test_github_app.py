@@ -428,6 +428,40 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                         channel.reconcile_pull_request(**kwargs)
             self.assertEqual(calls, [])
 
+    def test_minter_rejects_malformed_injected_seams(self):
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "github-app.pem"
+            generated = __import__("subprocess").run(
+                ["openssl", "genrsa", "-out", str(key_path), "2048"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr)
+            key_path.chmod(0o600)
+            config = GitHubAppBrokerConfig.from_environment(self._environment(key_path))
+            grant = {
+                "credential_class": "github-app-installation",
+                "installation_id": 456,
+                "permissions": ["contents:write"],
+            }
+            for bad_transport in (123, "post", []):
+                with self.subTest(transport=type(bad_transport).__name__):
+                    with self.assertRaisesRegex(GitHubAppBrokerError, "post transport is invalid"):
+                        GitHubAppInstallationTokenMinter(config, post_json=bad_transport)
+            for bad_clock in (123, "now"):
+                with self.subTest(clock=type(bad_clock).__name__):
+                    with self.assertRaisesRegex(GitHubAppBrokerError, "clock is invalid"):
+                        GitHubAppInstallationTokenMinter(config, now=bad_clock)
+            calls = []
+            for bad_moment in (datetime(2026, 9, 4, 12, 0), None, 123):
+                with self.subTest(moment=bad_moment):
+                    minter = GitHubAppInstallationTokenMinter(
+                        config, post_json=lambda *args: calls.append(args),
+                        now=lambda: bad_moment,
+                    )
+                    with self.assertRaisesRegex(GitHubAppBrokerError, "clock is invalid"):
+                        minter.mint(grant)
+            self.assertEqual(calls, [])
+
     def test_minter_rejects_duplicate_permissions_without_exchange(self):
         with tempfile.TemporaryDirectory() as directory:
             key_path = Path(directory) / "github-app.pem"

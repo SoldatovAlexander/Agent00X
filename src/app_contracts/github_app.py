@@ -99,6 +99,10 @@ class GitHubAppInstallationTokenMinter:
 
     def __init__(self, config: GitHubAppBrokerConfig, *, post_json=None, now=None) -> None:
         self._config = config
+        if post_json is not None and not callable(post_json):
+            raise GitHubAppBrokerError("GitHub App post transport is invalid")
+        if now is not None and not callable(now):
+            raise GitHubAppBrokerError("GitHub App clock is invalid")
         self._post_json = post_json or _post_json
         self._now = now or (lambda: datetime.now(timezone.utc))
 
@@ -139,6 +143,8 @@ class GitHubAppInstallationTokenMinter:
         if shutil.which("openssl") is None:
             raise GitHubAppBrokerError("GitHub App Broker requires openssl for RS256 signing")
         now = self._now()
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise GitHubAppBrokerError("GitHub App clock is invalid")
         header = _base64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
         payload = _base64url(json.dumps({
             "iat": int((now - timedelta(seconds=60)).timestamp()),

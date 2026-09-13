@@ -196,6 +196,19 @@ class MockGitHubTests(unittest.TestCase):
             endpoint.publish_pull_request(request)
         self.assertIsNone(endpoint.find_by_idempotency_key(f"publish//{digest}"))
 
+    def test_malformed_digest_segments_make_no_receipt(self):
+        for bad_digest in ("not-a-digest", "sha256:xyz", "sha256:" + "a" * 63, "md5:" + "a" * 32, "a" * 64):
+            with self.subTest(digest=bad_digest):
+                endpoint = MockGitHubEndpoint()
+                request = dict(
+                    self.request,
+                    staged_change_digest=bad_digest,
+                    idempotency_key=f"publish/process-demo-001/{bad_digest}",
+                )
+                with self.assertRaisesRegex(ContractValidationError, "^mock github: digest is malformed$"):
+                    endpoint.publish_pull_request(request)
+                self.assertIsNone(endpoint.find_by_idempotency_key(f"publish/process-demo-001/{bad_digest}"))
+
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")
         with self.assertRaisesRegex(ContractValidationError, "idempotency key"):

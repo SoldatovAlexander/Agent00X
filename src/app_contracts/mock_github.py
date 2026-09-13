@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from .validator import ContractValidationError
@@ -40,6 +41,8 @@ class MockGitHubEndpoint:
                 raise ContractValidationError("mock github: boundary field is invalid")
         if not request["branch"].startswith("agent/") or len(request["branch"]) <= len("agent/"):
             raise ContractValidationError("mock github: branch is outside the agent namespace")
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", request["staged_change_digest"]) is None:
+            raise ContractValidationError("mock github: digest is malformed")
 
         expected_key = (
             f"publish/{request['branch'].removeprefix('agent/')}/"

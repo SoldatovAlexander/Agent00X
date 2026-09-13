@@ -1420,12 +1420,8 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
                     repository_id=REPOSITORY_ID,
                 )
 
-                def dispatch_through_gateway():
-                    """Test-only composed boundary: gate before broker use."""
-
-                    if not (verdict.path is GatewayPath.SLOW and verdict.allowed):
-                        raise ContractValidationError("catalog: gateway denied before broker")
-                    return actuator.publish_pull_request(
+                with self.assertRaisesRegex(ContractValidationError, "gateway has not authorized slow path"):
+                    actuator.publish_pull_request(
                         actuator_request=chain["actuator_request"],
                         credential_grant=grant,
                         policy_decision=decision,
@@ -1435,9 +1431,6 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
                         now=NOW,
                         approval=chain["approval"],
                     )
-
-                with self.assertRaisesRegex(ContractValidationError, "gateway denied before broker"):
-                    dispatch_through_gateway()
                 self.assertEqual(factory_calls, [])
                 self.assertEqual(broker.opened_grants, [])
                 self.assertEqual(publish_calls, [])

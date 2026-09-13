@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.authority import DeterministicPolicy, PolicyConfig
 from app_contracts.broker import InMemoryCredentialBroker
-from app_contracts.gateway import GatewayDecision, GatewayPath
+from app_contracts.gateway import GatewayDecision, GatewayPath, classify
 from app_contracts.github_actuator import BrokeredGitHubActuator
 from app_contracts.mock_github import MockGitHubEndpoint
 from app_contracts.validator import ContractValidationError
@@ -85,6 +85,60 @@ class BrokerTests(unittest.TestCase):
                 self.assertEqual(factory_calls, [])
                 self.assertEqual(broker.opened_grants, [])
                 self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
+    def test_gateway_classification_matrix_crosses_broker_only_on_slow_allow(self):
+        write_envelope = {
+            "intent": {"operation": "publish_pull_request", "risk_class": "low"},
+            "destination": {"port": "tool"},
+            "source": {"protocol": "internal"},
+            "security": {"tainted": False, "sensitivity": "internal"},
+        }
+        cases = (
+            ("tainted-deny", classify({**write_envelope, "security": {"tainted": True, "sensitivity": "internal"}}, policy_available=True), False),
+            ("policy-unavailable", classify(write_envelope, policy_available=False), False),
+            ("fast-read", classify({
+                "intent": {"operation": "repository.read", "risk_class": "low"},
+                "destination": {"port": "data"},
+                "source": {"protocol": "internal"},
+                "security": {"tainted": False, "sensitivity": "internal"},
+            }, policy_available=True), False),
+            ("slow-allow", classify(write_envelope, policy_available=True), True),
+        )
+        for label, verdict, publishable in cases:
+            with self.subTest(gateway=label):
+                factory_calls = []
+                endpoint = MockGitHubEndpoint()
+                broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+                actuator = BrokeredGitHubActuator(broker)
+                if publishable:
+                    receipt = actuator.publish_pull_request(
+                        actuator_request=self.chain["actuator_request"],
+                        credential_grant=self.chain["credential_use_grant"],
+                        policy_decision=self.decision,
+                        approval_valid=True,
+                        gateway_decision=verdict,
+                        intent=self.chain["intent"],
+                        now=NOW,
+                        approval=self.chain["approval"],
+                    )
+                    self.assertEqual(receipt.pull_request_id, 1)
+                    self.assertEqual(factory_calls, ["factory"])
+                    self.assertEqual(broker.opened_grants, ["credential-grant-demo-001"])
+                else:
+                    with self.assertRaisesRegex(ContractValidationError, "gateway"):
+                        actuator.publish_pull_request(
+                            actuator_request=self.chain["actuator_request"],
+                            credential_grant=self.chain["credential_use_grant"],
+                            policy_decision=self.decision,
+                            approval_valid=True,
+                            gateway_decision=verdict,
+                            intent=self.chain["intent"],
+                            now=NOW,
+                            approval=self.chain["approval"],
+                        )
+                    self.assertEqual(factory_calls, [])
+                    self.assertEqual(broker.opened_grants, [])
+                    self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
 
     def test_credential_grant_cannot_be_reused(self):
         self._publish()

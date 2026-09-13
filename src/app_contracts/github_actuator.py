@@ -8,7 +8,7 @@ from typing import Any
 from .actuator import publish_authorized_request
 from .authority import check_decision_usable, check_intent_approved
 from .broker import CredentialBroker
-from .gateway import GatewayDecision
+from .gateway import GatewayDecision, GatewayPath
 from .mock_github import MockPullRequest
 from .validator import ContractValidationError
 
@@ -45,6 +45,13 @@ class BrokeredGitHubActuator:
         # swap of request, intent, or grant never reaches the broker/provider
         # boundary.
         check_intent_approved(intent, approval)
+        # Gateway routing is also a pre-broker gate. A denied, degraded, fast,
+        # or malformed verdict must not open a private provider channel just to
+        # be rejected later by the generic actuator boundary.
+        if not isinstance(gateway_decision, GatewayDecision):
+            raise ContractValidationError("actuator: gateway decision is malformed")
+        if not gateway_decision.allowed or gateway_decision.path is not GatewayPath.SLOW:
+            raise ContractValidationError("actuator: gateway has not authorized slow path")
         # The broker validates grant/request binding and grant lifetime
         # before any provider call; use time is always forwarded so expiry
         # is enforced on every broker opening path.

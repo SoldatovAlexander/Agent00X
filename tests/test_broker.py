@@ -58,6 +58,34 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(self.broker.opened_grants, ["credential-grant-demo-001"])
         self.assertNotIn("token", self.chain["credential_use_grant"])
 
+    def test_brokered_gateway_rejection_is_refused_before_channel_open(self):
+        factory_calls = []
+        endpoint = MockGitHubEndpoint()
+        broker = InMemoryCredentialBroker(lambda: factory_calls.append("factory") or endpoint)
+        actuator = BrokeredGitHubActuator(broker)
+        cases = (
+            ("malformed", None, "gateway decision is malformed"),
+            ("deny", GatewayDecision(GatewayPath.SLOW, False, ("tainted-content",)), "gateway has not authorized slow path"),
+            ("degraded", GatewayDecision(GatewayPath.DEGRADED, False, ("policy-unavailable",)), "gateway has not authorized slow path"),
+            ("fast", GatewayDecision(GatewayPath.FAST, True, ("internal-read-only",)), "gateway has not authorized slow path"),
+        )
+        for label, verdict, error in cases:
+            with self.subTest(gateway=label):
+                with self.assertRaisesRegex(ContractValidationError, error):
+                    actuator.publish_pull_request(
+                        actuator_request=self.chain["actuator_request"],
+                        credential_grant=self.chain["credential_use_grant"],
+                        policy_decision=self.decision,
+                        approval_valid=True,
+                        gateway_decision=verdict,
+                        intent=self.chain["intent"],
+                        now=NOW,
+                        approval=self.chain["approval"],
+                    )
+                self.assertEqual(factory_calls, [])
+                self.assertEqual(broker.opened_grants, [])
+                self.assertIsNone(endpoint.find_by_idempotency_key(self.chain["intent"]["idempotency_key"]))
+
     def test_credential_grant_cannot_be_reused(self):
         self._publish()
         with self.assertRaisesRegex(ContractValidationError, "already used"):

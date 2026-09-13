@@ -160,8 +160,10 @@ def execute_publication(
         "operation", "repository_id", "branch", "staged_change_digest",
         "idempotency_key", "policy_effect", "approval_valid",
     }
-    if not callable(getattr(journal, "mark_attempting", None)) or not callable(
-        getattr(endpoint, "publish_pull_request", None)
+    if (
+        not callable(getattr(journal, "get", None))
+        or not callable(getattr(journal, "mark_attempting", None))
+        or not callable(getattr(endpoint, "publish_pull_request", None))
     ):
         raise ContractValidationError("publication: collaborator is invalid")
     if (

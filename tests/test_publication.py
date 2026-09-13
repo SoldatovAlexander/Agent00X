@@ -301,6 +301,41 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(record.status, "prepared")
             self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
 
+    def test_partial_journal_missing_get_denied_without_mutation_or_call(self):
+        endpoint_calls: list[dict] = []
+
+        class RecordingEndpoint(MockGitHubEndpoint):
+            def publish_pull_request(self, request):
+                endpoint_calls.append(request)
+                return super().publish_pull_request(request)
+
+        endpoint = RecordingEndpoint()
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+
+            class JournalWithoutGet:
+                def __init__(self, delegate: PublicationJournal) -> None:
+                    self._delegate = delegate
+
+                def mark_attempting(self, process_id: str) -> None:
+                    self._delegate.mark_attempting(process_id)
+
+            class JournalWithDeadGet:
+                get = "not-a-method"
+
+                def mark_attempting(self, process_id: str) -> None: ...
+
+            for partial in (JournalWithoutGet(journal), JournalWithDeadGet()):
+                with self.subTest(journal=type(partial).__name__):
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^publication: collaborator is invalid$"
+                    ):
+                        execute_publication(partial, endpoint, dict(self.request))
+            self.assertEqual(endpoint_calls, [])
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "prepared")
+            self.assertIsNone(endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
     def test_malformed_request_values_denied_before_attempt(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

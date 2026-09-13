@@ -187,6 +187,41 @@ class BrokerTests(unittest.TestCase):
         )
         self.assertEqual(calls, ["factory"])
 
+    def test_malformed_expiry_offsets_denied_before_factory(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory"))
+        now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+        for bad_expiry in (
+            "2026-09-04T12:11:00+99:99",
+            "2026-09-04T12:11:00z",
+            "tomorrow",
+            "2026-13-01T00:00:00Z",
+            123,
+            None,
+            "",
+        ):
+            with self.subTest(expiry=bad_expiry):
+                grant = dict(self.chain["credential_use_grant"])
+                grant["expires_at"] = bad_expiry
+                with self.assertRaises(ContractValidationError) as raised:
+                    broker.open_github_publication_channel(
+                        grant, self.chain["actuator_request"], now=now,
+                    )
+                self.assertNotIsInstance(raised.exception, (TypeError, AttributeError))
+                self.assertNotIn("2026-09-04", str(raised.exception))
+        self.assertEqual(calls, [])
+
+    def test_aware_offset_expiry_compares_in_utc(self):
+        calls = []
+        broker = InMemoryCredentialBroker(lambda: calls.append("factory") or self.endpoint)
+        now = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
+        grant = dict(self.chain["credential_use_grant"])
+        grant["expires_at"] = "2026-09-04T12:11:00-04:00"
+        broker.open_github_publication_channel(
+            grant, self.chain["actuator_request"], now=now,
+        )
+        self.assertEqual(calls, ["factory"])
+
     def test_expired_or_malformed_grant_never_reaches_factory(self):
         calls = []
         broker = InMemoryCredentialBroker(lambda: calls.append("factory") or self.endpoint)

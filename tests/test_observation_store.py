@@ -255,6 +255,24 @@ class ObservationStoreTests(unittest.TestCase):
         self.assertEqual(cursor, 0)
         self.assertIsInstance(cursor, int)
 
+    def test_non_string_invocation_reference_rejected_before_scan(self):
+        store = ObservationStore()
+        intent = valid_event("event-store-demo-001", 0)
+        intent["invocation_id"] = "invocation-store-demo-001"
+        intent["rationale"] = "Stored rationale must never leak through rejection."
+        store.append(intent)
+        for bad in (123, True, ["invocation-store-demo-001"], {"ref": 1}):
+            with self.subTest(reference=type(bad).__name__):
+                result = valid_event("event-store-demo-002", 1)
+                result["event_type"] = "tool_completed"
+                result["invocation_id"] = bad
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^\\$\\.invocation_id: expected string$"
+                ) as raised:
+                    store.check_result_causality(result)
+                self.assertNotIn("Stored rationale", str(raised.exception))
+        self.assertEqual(len(store.events()), 1)
+
     def test_result_without_invocation_reference_is_rejected(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

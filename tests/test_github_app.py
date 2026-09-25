@@ -29,6 +29,122 @@ from app_contracts.github_actuator import BrokeredGitHubActuator
 from app_contracts.validator import ContractValidationError
 
 
+# EXP-264: deterministic provider transcript fixtures (data only).
+#
+# Three outcome classes for branch/file/PR reconciliation seams:
+# - confirmed absence (explicit not-found signal, no receipt);
+# - matching receipt (well-formed existing provider evidence);
+# - unknown/malformed transport result (must resolve before any retry).
+# Fixtures are plain literals/factories: they hold no credential values
+# and never invoke transport callables.
+
+
+_FIXTURE_BRANCH = "agent/process-demo-001"
+_FIXTURE_DIGEST = "sha256:" + "c" * 64
+_FIXTURE_IDEMPOTENCY_KEY = f"publish/process-demo-001/{_FIXTURE_DIGEST}"
+_FIXTURE_MARKER = f"<!-- agent-process-idempotency: {_FIXTURE_IDEMPOTENCY_KEY} -->"
+_FIXTURE_PR_URL = "https://github.com/example/agent00x-sandbox/pull/13"
+_FIXTURE_COMMIT_SHA = "e" * 40
+
+
+class ProviderTranscriptFixtures:
+    """Data-only mock provider transcripts for reconciliation outcomes."""
+
+    @staticmethod
+    def absent_branch_error() -> FileNotFoundError:
+        return FileNotFoundError("confirmed 404: absent branch")
+
+    @staticmethod
+    def matching_branch_payload(branch: str = _FIXTURE_BRANCH) -> dict[str, str]:
+        return {"ref": f"refs/heads/{branch}"}
+
+    @staticmethod
+    def unknown_branch_payloads() -> tuple[object, ...]:
+        return (None, "ok", 42, [], {"unexpected": "shape"})
+
+    @staticmethod
+    def absent_pr_payload() -> list[dict[str, object]]:
+        return []
+
+    @staticmethod
+    def matching_pr_payload(
+        number: int = 13,
+        url: str = _FIXTURE_PR_URL,
+        marker: str = _FIXTURE_MARKER,
+    ) -> list[dict[str, object]]:
+        return [{"number": number, "html_url": url, "body": marker}]
+
+    @staticmethod
+    def unknown_pr_payloads(marker: str = _FIXTURE_MARKER) -> tuple[object, ...]:
+        return (
+            None,
+            "entries",
+            42,
+            [{"number": "NaN", "html_url": _FIXTURE_PR_URL, "body": marker}],
+            [{"html_url": _FIXTURE_PR_URL, "body": marker}],
+        )
+
+    @staticmethod
+    def matching_file_payload(sha: str = _FIXTURE_COMMIT_SHA) -> dict[str, dict[str, str]]:
+        return {"commit": {"sha": sha}}
+
+    @staticmethod
+    def unknown_file_payloads() -> tuple[object, ...]:
+        return (None, "ok", 42, [], {"commit": {"sha": None}}, {"unexpected": "shape"})
+
+
+class ProviderTranscriptFixtureTests(unittest.TestCase):
+    def test_outcome_classes_are_distinct(self):
+        fixtures = ProviderTranscriptFixtures()
+        self.assertIsInstance(fixtures.absent_branch_error(), FileNotFoundError)
+        self.assertEqual(
+            fixtures.matching_branch_payload(),
+            {"ref": f"refs/heads/{_FIXTURE_BRANCH}"},
+        )
+        self.assertEqual(fixtures.absent_pr_payload(), [])
+        self.assertEqual(
+            fixtures.matching_pr_payload()[0]["body"],
+            _FIXTURE_MARKER,
+        )
+        self.assertEqual(
+            fixtures.matching_file_payload(),
+            {"commit": {"sha": _FIXTURE_COMMIT_SHA}},
+        )
+        for payload in fixtures.unknown_branch_payloads():
+            self.assertNotEqual(payload, fixtures.matching_branch_payload())
+        for payload in fixtures.unknown_pr_payloads():
+            self.assertNotEqual(payload, fixtures.matching_pr_payload())
+            self.assertNotEqual(payload, fixtures.absent_pr_payload())
+        for payload in fixtures.unknown_file_payloads():
+            self.assertNotEqual(payload, fixtures.matching_file_payload())
+
+    def test_fixtures_carry_no_credentials_and_make_no_transport_calls(self):
+        calls: list[object] = []
+
+        def _forbidden_transport(*args: object, **kwargs: object) -> object:
+            calls.append((args, kwargs))
+            raise AssertionError("fixture must not invoke transport")
+
+        fixtures = ProviderTranscriptFixtures()
+        transcripts = [
+            fixtures.absent_branch_error(),
+            fixtures.matching_branch_payload(),
+            fixtures.absent_pr_payload(),
+            fixtures.matching_pr_payload(),
+            fixtures.matching_file_payload(),
+            list(fixtures.unknown_branch_payloads()),
+            list(fixtures.unknown_pr_payloads()),
+            list(fixtures.unknown_file_payloads()),
+        ]
+        # Reference the transport double without calling it: building and
+        # inspecting fixtures must leave the counter untouched.
+        self.assertTrue(callable(_forbidden_transport))
+        self.assertEqual(calls, [])
+        serialized = json.dumps(transcripts, default=str)
+        for secret in ("Bearer", "private-key", "BEGIN PRIVATE", "token", "opaque"):
+            self.assertNotIn(secret, serialized)
+
+
 class GitHubAppConfigurationTests(unittest.TestCase):
     def _environment(self, key_path: Path) -> dict[str, str]:
         return {

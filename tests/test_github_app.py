@@ -999,6 +999,24 @@ class GitHubReconciliationTests(unittest.TestCase):
             )
         self.assertEqual(calls, [])
 
+    def test_unknown_branch_fixture_denies_write_without_side_effect(self):
+        for payload in ProviderTranscriptFixtures.unknown_branch_payloads():
+            with self.subTest(payload=repr(payload)):
+                calls = []
+                channel = self._channel((
+                    lambda url, headers, request, _calls=calls: _calls.append(("POST", request)),
+                    lambda _url, _headers, _payload=payload: _payload,
+                    lambda url, headers, request, _calls=calls: _calls.append(("PUT", request)),
+                ))
+                self.assertIsNone(channel.reconcile_branch("agent/process-demo-001"))
+                with self.assertRaisesRegex(GitHubAppBrokerError, "outcome unknown"):
+                    channel.publish_verified_files(
+                        branch="agent/process-demo-001",
+                        staged_change=self._staged_change(),
+                        files=self._files(),
+                    )
+                self.assertEqual(calls, [])
+
     def test_lost_pr_response_reconciles_to_existing_receipt(self):
         from app_contracts.github_app import GitHubAppPublicationChannel
         branch = "agent/process-demo-001"

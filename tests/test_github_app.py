@@ -1017,6 +1017,43 @@ class GitHubReconciliationTests(unittest.TestCase):
                     )
                 self.assertEqual(calls, [])
 
+    def test_matching_branch_fixture_skips_ref_post_allows_only_file_put(self):
+        matching = ProviderTranscriptFixtures.matching_branch_payload()
+        posts, puts = [], []
+        channel = self._channel((
+            lambda url, headers, payload: posts.append(payload) or self.fail("existing branch must not recreate ref"),
+            lambda _url, _headers, _payload=matching: dict(_payload),
+            lambda url, headers, payload: puts.append((url, payload)) or dict(ProviderTranscriptFixtures.matching_file_payload()),
+        ))
+        self.assertTrue(channel.reconcile_branch("agent/process-demo-001"))
+        sha = channel.publish_verified_files(
+            branch="agent/process-demo-001",
+            staged_change=self._staged_change(),
+            files=self._files(),
+        )
+        self.assertEqual(sha, "e" * 40)
+        self.assertEqual(posts, [])
+        self.assertEqual(len(puts), 1)
+        put_url, put_payload = puts[0]
+        self.assertIn("contents/", put_url)
+        self.assertEqual(put_payload["branch"], "agent/process-demo-001")
+        for payload in ProviderTranscriptFixtures.unknown_branch_payloads():
+            with self.subTest(payload=repr(payload)):
+                calls = []
+                malformed = self._channel((
+                    lambda url, headers, request, _calls=calls: _calls.append(("POST", request)),
+                    lambda _url, _headers, _payload=payload: _payload,
+                    lambda url, headers, request, _calls=calls: _calls.append(("PUT", request)),
+                ))
+                self.assertIsNone(malformed.reconcile_branch("agent/process-demo-001"))
+                with self.assertRaisesRegex(GitHubAppBrokerError, "outcome unknown"):
+                    malformed.publish_verified_files(
+                        branch="agent/process-demo-001",
+                        staged_change=self._staged_change(),
+                        files=self._files(),
+                    )
+                self.assertEqual(calls, [])
+
     def test_lost_pr_response_reconciles_to_existing_receipt(self):
         from app_contracts.github_app import GitHubAppPublicationChannel
         branch = "agent/process-demo-001"

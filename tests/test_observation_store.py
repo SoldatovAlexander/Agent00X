@@ -110,6 +110,37 @@ class ObservationStoreTests(unittest.TestCase):
         ):
             SQLiteObservationStore(object())
 
+    def test_sqlite_store_persists_event_order_cursors_and_idempotency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            first = valid_event("event-sqlite-001", 0)
+            second = valid_event("event-sqlite-002", 1)
+            with SQLiteObservationStore(database) as store:
+                self.assertEqual(store.append(first), 0)
+                self.assertEqual(store.append(second), 1)
+            with SQLiteObservationStore(database) as reopened:
+                self.assertEqual(reopened.append(copy.deepcopy(first)), 0)
+                self.assertEqual(len(reopened), 2)
+                self.assertEqual(
+                    [event["event_id"] for event in reopened.events()],
+                    ["event-sqlite-001", "event-sqlite-002"],
+                )
+                changed = dict(first, sequence=9)
+                with self.assertRaisesRegex(EventConflictError, "^event id conflict$"):
+                    reopened.append(changed)
+                self.assertEqual(len(reopened), 2)
+
+    def test_sqlite_store_rejects_invalid_event_before_persisting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            broken = valid_event()
+            broken["event_type"] = "model_dreamed"
+            with SQLiteObservationStore(database) as store:
+                with self.assertRaises(ContractValidationError):
+                    store.append(broken)
+                self.assertEqual(len(store), 0)
+                self.assertEqual(store.events(), ())
+
     def test_accepts_only_schema_valid_events(self):
         store = ObservationStore()
         cursor = store.append(valid_event())

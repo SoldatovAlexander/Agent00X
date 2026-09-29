@@ -292,13 +292,46 @@ class SQLiteObservationStore:
                 raise ObservationStoreError("observation journal: schema is malformed")
 
     def events(self) -> tuple[dict[str, Any], ...]:
-        return ()
+        rows = self._connection.execute(
+            "SELECT event_json FROM observation_events ORDER BY cursor"
+        ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
 
     def checkpoints(self) -> tuple[dict[str, Any], ...]:
         return ()
 
     def __len__(self) -> int:
-        return 0
+        return self._connection.execute(
+            "SELECT COUNT(*) FROM observation_events"
+        ).fetchone()[0]
+
+    def append(self, event: dict[str, Any]) -> int:
+        """Validate and persist an event, returning its stable journal cursor."""
+
+        validate(event, EVENT_SCHEMA)
+        digest = sha256_digest(event)
+        event_id = event["event_id"]
+        try:
+            with self._connection:
+                known = self._connection.execute(
+                    "SELECT cursor, digest FROM observation_events WHERE event_id = ?",
+                    (event_id,),
+                ).fetchone()
+                if known is not None:
+                    if known["digest"] == digest:
+                        return known["cursor"]
+                    raise EventConflictError("event id conflict")
+                cursor = self._connection.execute(
+                    "SELECT COALESCE(MAX(cursor) + 1, 0) FROM observation_events"
+                ).fetchone()[0]
+                self._connection.execute(
+                    "INSERT INTO observation_events(event_id, cursor, event_json, digest) "
+                    "VALUES (?, ?, ?, ?)",
+                    (event_id, cursor, json.dumps(event, sort_keys=True, separators=(",", ":")), digest),
+                )
+                return cursor
+        except sqlite3.Error as exc:
+            raise ObservationStoreError("observation journal: event could not be stored") from exc
 
     def close(self) -> None:
         self._connection.close()

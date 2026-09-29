@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 3/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 4/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3853,7 +3853,7 @@ Commit: ALLOWED
   suite: 515 passed, 1 skipped.
 
 ## EXP-311 — resolve only an exact local commit object
-Статус: READY
+Статус: ACCEPTED
 Цель: resolve a caller-provided full commit OID against the local object database.
 Гипотеза: object type and exact identity checks reject tags, trees, missing objects and symbolic revision expressions.
 Зависит от: EXP-310
@@ -3872,9 +3872,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `e615dea` разрешает только полный OID формата
+  репозитория, проверяя `^{commit}` в локальной object database; symbolic ref,
+  abbreviation, missing object и tree object отклоняются. Targeted tests: 14
+  passed; full suite: 518 passed, 1 skipped.
 
 ## EXP-312 — export the exact commit tree without checkout state
-Статус: DRAFT
+Статус: READY
 Цель: materialize snapshot content from the resolved commit tree, excluding working-tree changes.
 Гипотеза: exporting the commit object prevents uncommitted files from contaminating executor input.
 Зависит от: EXP-311

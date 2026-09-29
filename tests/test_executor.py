@@ -16,7 +16,11 @@ from app_contracts.executor import (
     ExecutionRequest,
     ExecutionResult,
     ExecutionStatus,
+    IndependentVerifier,
     ProposalWorker,
+    VerifierInput,
+    VerifierResult,
+    VerifierVerdict,
     WorkerInput,
     WorkerProposal,
     ExecutorSandboxBackend,
@@ -103,6 +107,39 @@ class ExecutionRecordTests(unittest.TestCase):
             {"process_id", "task_id", "repository_id", "base_commit", "declared_change_paths"},
         )
         self.assertEqual(set(WorkerProposal.__dataclass_fields__), {"changes"})
+
+    def test_verifier_contract_is_separate_and_explicitly_local(self):
+        class FakeVerifier:
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                self.received = prepared
+                return VerifierResult(
+                    process_id=prepared.process_id,
+                    verifier_id="test-verifier",
+                    evidence_digest=prepared.evidence_digest,
+                    verdict=VerifierVerdict.PASS,
+                )
+
+        verifier = FakeVerifier()
+        prepared = VerifierInput(
+            process_id="process-local-001",
+            patch_digest="sha256:" + "a" * 64,
+            evidence_digest="sha256:" + "b" * 64,
+            verification_digest="sha256:" + "c" * 64,
+            verified_contents_digest="sha256:" + "d" * 64,
+        )
+        result = verifier.verify(prepared)
+        self.assertTrue(isinstance(verifier, IndependentVerifier))
+        self.assertEqual(verifier.received.evidence_origin, "local_test")
+        self.assertEqual(result.verdict, VerifierVerdict.PASS)
+        self.assertEqual(result.evidence_origin, "local_test")
+        self.assertEqual(
+            set(VerifierInput.__dataclass_fields__),
+            {
+                "process_id", "patch_digest", "evidence_digest", "verification_digest",
+                "verified_contents_digest", "evidence_origin",
+            },
+        )
+        self.assertNotIn("credential", VerifierInput.__dataclass_fields__)
 
     def test_worker_proposal_validator_rejects_malformed_values_without_echo(self):
         malformed = (

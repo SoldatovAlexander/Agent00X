@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import posixpath
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from .repository_process import prepare_change
 from .sandbox import LocalProcessSandboxBackend
@@ -83,9 +83,40 @@ class WorkerProposal:
     changes: tuple[tuple[str, str], ...]
 
 
+@dataclass(frozen=True)
+class VerifierInput:
+    process_id: str
+    patch_digest: str
+    evidence_digest: str
+    verification_digest: str
+    verified_contents_digest: str
+    evidence_origin: Literal["local_test"] = "local_test"
+
+
+class VerifierVerdict(str, Enum):
+    PASS = "pass"
+    FAIL = "fail"
+    BLOCKED = "blocked"
+
+
+@dataclass(frozen=True)
+class VerifierResult:
+    process_id: str
+    verifier_id: str
+    evidence_digest: str
+    verdict: VerifierVerdict
+    blocker_codes: tuple[str, ...] = ()
+    evidence_origin: Literal["local_test"] = "local_test"
+
+
 @runtime_checkable
 class ProposalWorker(Protocol):
     def propose(self, task: WorkerInput) -> WorkerProposal: ...
+
+
+@runtime_checkable
+class IndependentVerifier(Protocol):
+    def verify(self, prepared: VerifierInput) -> VerifierResult: ...
 
 
 @runtime_checkable

@@ -184,6 +184,58 @@ class ObservationStoreTests(unittest.TestCase):
                     reopened.record_checkpoint(wrong_cursor)
                 self.assertEqual(len(reopened.checkpoints()), 1)
 
+    def test_sqlite_store_resolves_invocation_causality_after_reopen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            intent = valid_event("event-sqlite-intent-001", 0)
+            intent["invocation_id"] = "invocation-sqlite-001"
+            intent["safe_parameters"] = {"path": "safe.py"}
+            result = valid_event("event-sqlite-result-001", 1)
+            result["event_type"] = "tool_completed"
+            result["invocation_id"] = "invocation-sqlite-001"
+            with SQLiteObservationStore(database) as store:
+                self.assertEqual(store.append(intent), 0)
+                store.append(result)
+            with SQLiteObservationStore(database) as reopened:
+                self.assertEqual(reopened.check_result_causality(result), 0)
+                exposed = reopened.events()
+                exposed[0]["safe_parameters"]["path"] = "rewritten.py"
+                self.assertEqual(reopened.events()[0]["safe_parameters"]["path"], "safe.py")
+
+    def test_sqlite_store_denies_invalid_causality_after_reopen(self):
+        cases = ("missing", "non_intent", "later", "ambiguous")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                database = Path(directory) / "observations.sqlite3"
+                result = valid_event("event-sqlite-result-001", 0)
+                result["event_type"] = "tool_completed"
+                result["invocation_id"] = "invocation-sqlite-001"
+                with SQLiteObservationStore(database) as store:
+                    if case == "non_intent":
+                        unrelated = valid_event("event-sqlite-unrelated-001", 0)
+                        unrelated["event_type"] = "tool_completed"
+                        unrelated["invocation_id"] = "invocation-sqlite-001"
+                        store.append(unrelated)
+                    elif case == "later":
+                        store.append(result)
+                        later = valid_event("event-sqlite-intent-001", 1)
+                        later["invocation_id"] = "invocation-sqlite-001"
+                        store.append(later)
+                    elif case == "ambiguous":
+                        for sequence in range(2):
+                            intent = valid_event(f"event-sqlite-intent-00{sequence + 1}", sequence)
+                            intent["invocation_id"] = "invocation-sqlite-001"
+                            store.append(intent)
+                with SQLiteObservationStore(database) as reopened:
+                    expected = {
+                        "missing": "unknown invocation reference",
+                        "non_intent": "invocation reference is not an intent",
+                        "later": "invocation reference is not preceding",
+                        "ambiguous": "ambiguous invocation reference",
+                    }[case]
+                    with self.assertRaisesRegex(ContractValidationError, f"^{expected}$"):
+                        reopened.check_result_causality(result)
+
     def test_accepts_only_schema_valid_events(self):
         store = ObservationStore()
         cursor = store.append(valid_event())

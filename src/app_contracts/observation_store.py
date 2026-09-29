@@ -394,6 +394,42 @@ class SQLiteObservationStore:
         except sqlite3.Error as exc:
             raise ObservationStoreError("observation journal: checkpoint could not be stored") from exc
 
+    def check_result_causality(self, result_event: dict[str, Any]) -> int:
+        """Resolve a result's preceding intent from the persisted event order."""
+
+        validate(result_event, EVENT_SCHEMA)
+        invocation_id = result_event.get("invocation_id")
+        if not invocation_id:
+            raise ContractValidationError("result has no invocation reference")
+        events = self.events()
+        own_position: int | None = None
+        for position, stored in enumerate(events):
+            if stored["event_id"] == result_event["event_id"]:
+                own_position = position
+                break
+        preceding: list[int] = []
+        saw_non_intent = False
+        saw_later_intent = False
+        for position, stored in enumerate(events):
+            if stored.get("invocation_id") != invocation_id or stored["event_id"] == result_event["event_id"]:
+                continue
+            if stored.get("event_type") not in _INTENT_EVENT_TYPES:
+                saw_non_intent = True
+                continue
+            if own_position is not None and position >= own_position:
+                saw_later_intent = True
+                continue
+            preceding.append(position)
+        if len(preceding) > 1:
+            raise ContractValidationError("ambiguous invocation reference")
+        if len(preceding) == 1:
+            return preceding[0]
+        if saw_later_intent:
+            raise ContractValidationError("invocation reference is not preceding")
+        if saw_non_intent:
+            raise ContractValidationError("invocation reference is not an intent")
+        raise ContractValidationError("unknown invocation reference")
+
     def close(self) -> None:
         self._connection.close()
 

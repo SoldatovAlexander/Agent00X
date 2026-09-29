@@ -66,6 +66,13 @@ class ExecutionResult:
     verified_contents_digest: str | None = None
     verifier_result: VerifierResult | None = None
     failure_code: str | None = None
+    evidence_origin: Literal["local_test"] = "local_test"
+    limitations: tuple[str, ...] = (
+        "injected_worker",
+        "remote_snapshot_unverified",
+        "production_sandbox_unproven",
+        "publication_not_attempted",
+    )
 
 
 @dataclass(frozen=True)

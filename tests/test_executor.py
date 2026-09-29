@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -374,6 +375,32 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertIsNone(result.prepared_change_id)
         self.assertTrue(result.evidence_digest.startswith("sha256:"))
         self.assertNotIn("SECRET", repr(result))
+
+    def test_execution_evidence_contains_digests_not_raw_inputs_or_outputs(self):
+        proposal_canary = "PROPOSAL-CANARY-RAW-CONTENT"
+        command_canary = "COMMAND-OUTPUT-CANARY"
+
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal(
+                    (("calculator.py", original + f"\n# {proposal_canary}\n"),)
+                )
+
+        result = run_local_execution(
+            valid_request(test_command=("python3", "-c", f"print('{command_canary}')")),
+            FakeWorker(),
+            verifier=AcceptingVerifier(),
+        )
+        serialized = json.dumps(asdict(result))
+        self.assertNotIn(proposal_canary, serialized)
+        self.assertNotIn(command_canary, serialized)
+        self.assertEqual(result.evidence_origin, "local_test")
+        self.assertIn("injected_worker", result.limitations)
+        self.assertIn("remote_snapshot_unverified", result.limitations)
+        self.assertIn("publication_not_attempted", result.limitations)
+        self.assertNotIn("prompt", ExecutionResult.__dataclass_fields__)
+        self.assertNotIn("task_description", WorkerInput.__dataclass_fields__)
 
     def test_malformed_sandbox_session_fails_before_worker_and_attempts_cleanup(self):
         class MalformedBackend:

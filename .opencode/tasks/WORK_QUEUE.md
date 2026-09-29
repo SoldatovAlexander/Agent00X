@@ -3201,6 +3201,572 @@ Commit: ALLOWED
   multi-process and infrastructure durability gaps. Full suite: 478 passed,
   1 skipped.
 
+## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
+
+Статус этапа: в работе; Batch AF принят — 1/3 батчей, 20/20 карточек.
+Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
+проверка исполнителя; AH — controlled publication и reconciliation. Даже после
+этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
+без отдельной task card с точной целью и командами.
+
+## Batch AF — local executor spine (20 карточек)
+
+Цель batch: собрать локальный orchestration путь от ограниченного execution
+request через подменяемый Worker/Sandbox до уже существующей подготовки и
+независимой проверки staged change. В этом батче нет LLM runtime, удалённого
+checkout, credentials, GitHub API, deployment или публикации. Локальные тесты
+не доказывают sandbox security или production isolation.
+
+## EXP-288 — define local execution request and result records
+Статус: ACCEPTED
+Цель: добавить внутренние типы запроса и результата для local executor spine.
+Гипотеза: явная форма execution input/output упростит проверку границ до запуска компонентов.
+Зависит от: EXP-287
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: LLM runtime, remote checkout, publication, public API guarantees.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- immutable typed records describe only process/task/repository identifiers, a local snapshot path/base reference, bounded allowlisted test command, and declared change paths.
+- result record distinguishes prepared/staged result from failure without carrying credentials or raw prompts.
+- importing existing modules and current full suite remain unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- records define shape only; caller fields are validated in dependent cards and base_commit is not provenance proof.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `4cc1320` adds frozen request/result records
+  containing only local preparation metadata and scalar digests/status. Targeted
+  tests: 2 passed; full suite: 480 passed, 1 skipped.
+
+## EXP-289 — validate execution identity fields
+Статус: ACCEPTED
+Цель: отклонять отсутствующие и malformed process/task/repository/base identifiers до вызова collaborators.
+Гипотеза: request construction является первым fail-closed boundary local executor.
+Зависит от: EXP-288
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: resolving identity to external accounts or repositories.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- invalid scalar types, blank values and control characters fail with stable errors.
+- invalid request causes zero worker, sandbox or verifier calls.
+- error strings do not echo caller identifiers.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- validation is local request hygiene, not authentication or repository existence proof.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `cfbb7bc` rejects malformed scalar identity
+  values, whitespace ambiguity and control characters with a stable non-echoing
+  error. Targeted tests: 3 passed; full suite: 481 passed, 1 skipped.
+
+## EXP-290 — bound local snapshot and command request fields
+Статус: ACCEPTED
+Цель: валидировать local snapshot path shape, relative declared paths and allowlisted test command.
+Гипотеза: filesystem and command inputs can be rejected before a worker or process starts.
+Зависит от: EXP-289
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: proving snapshot provenance, process isolation or Docker execution.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- malformed/empty paths, traversal, command strings instead of argv, empty argv elements and invalid limits are refused.
+- no subprocess is started during request validation.
+- valid local fixture request remains constructible.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- lexical request checks do not establish snapshot provenance or filesystem isolation.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `a72f5f6` requires an absolute non-root local
+  snapshot path, safe relative declared paths, a tuple argv with allowlisted
+  executable, and timeout 1–300 seconds. Targeted tests: 6 passed; full suite:
+  484 passed, 1 skipped.
+
+## EXP-291 — define injected worker proposal protocol
+Статус: ACCEPTED
+Цель: описать минимальный Worker protocol и immutable proposal record without choosing a model provider.
+Гипотеза: orchestration can depend on a narrow proposal interface rather than tool or publication capabilities.
+Зависит от: EXP-290
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: LLM integration, prompts, credentials, arbitrary tool execution.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- worker receives only the declared task envelope and returns declared file changes.
+- request and proposal contain no environment, network, gateway, broker or credential handle.
+- a small test fake conforms without production model dependencies.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- protocol and fake worker establish only a local typed boundary, not model safety or sandbox isolation.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `f87b3ef` adds a narrow WorkerInput/WorkerProposal
+  protocol with no filesystem, process, network or publication capability in
+  the worker-facing record. Targeted tests: 7 passed; full suite: 485 passed,
+  1 skipped.
+
+## EXP-292 — validate worker proposal shape before filesystem access
+Статус: ACCEPTED
+Цель: проверить runtime worker output type, path/content types and non-empty proposal before sandbox use.
+Гипотеза: untrusted worker output is data and cannot trigger raw attribute/type errors or filesystem access before validation.
+Зависит от: EXP-291
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: correctness of model-generated code or prompt-injection prevention.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- malformed worker outputs fail with a stable executor error and do not call sandbox/preparation.
+- a valid proposal is detached from later caller mutation.
+- raw proposal contents are not included in errors.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- structural validation does not yet enforce path scope or payload quotas; the following card adds those constraints.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `33deaf1` accepts only the declared WorkerProposal
+  shape, copies it into a fresh immutable record and returns stable errors
+  without echoing malformed values. Targeted tests: 9 passed; full suite: 487
+  passed, 1 skipped.
+
+## EXP-293 — enforce proposal path and size limits
+Статус: ACCEPTED
+Цель: ограничить заявленные change paths и proposal payload перед копированием или записью.
+Гипотеза: bounded proposals prevent accidental unbounded local resource use and path escape attempts.
+Зависит от: EXP-292
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: OS-level quotas or hostile-code isolation.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- traversal, absolute, duplicate-normalized, empty, excessive-count and oversized-content proposals are denied.
+- denied proposals cause no workspace mutation and no test command invocation.
+- valid in-limit proposal behavior is unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- byte/file caps bound proposal data, not total process memory or operating-system resource use.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `826d0d1` rejects unsafe/out-of-scope and
+  duplicate-normalized paths, more than 20 files, paths over 240 UTF-8 bytes,
+  files over 100 KB or payloads over 1 MB. Targeted tests: 11 passed; full
+  suite: 489 passed, 1 skipped.
+
+## EXP-294 — provide the one-shot local execution coordinator
+Статус: ACCEPTED
+Цель: orchestration wrapper must invoke one injected worker and pass its proposal to the existing preparation flow.
+Гипотеза: coordinator can compose current local seams without adding a direct publication path.
+Зависит от: EXP-293
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: remote snapshots, model runtime, gateway/broker/actuator calls.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- one run performs at most one proposal call and one preparation attempt.
+- execution order is deterministic and no staged result is returned before preparation succeeds.
+- collaborator calls are observable through injected fakes only.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- current coordinator uses LocalProcessSandbox development backend and injected non-LLM worker only.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `925cd1a` calls the Worker once, validates its
+  proposal, makes one `prepare_change` attempt and returns only prepared digest
+  metadata on success. Failure returns no prepared result. Targeted tests: 13
+  passed; full suite: 491 passed, 1 skipped.
+
+## EXP-295 — inject sandbox backend and close its session
+Статус: ACCEPTED
+Цель: route workspace creation through an injected sandbox backend and reliably close the created session.
+Гипотеза: explicit backend lifecycle makes current development-only isolation visible to the coordinator.
+Зависит от: EXP-294
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: changing sandbox security profile or claiming network/kernel isolation.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- backend or session shape errors fail closed before worker proposal.
+- created session closes after success and every tested failure path.
+- tests identify the LocalProcessSandbox profile as development-only where used.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- default LocalProcessSandboxBackend remains a development fallback; no kernel or network isolation claim.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `195ef2b` injects the sandbox backend, validates
+  session shape before worker calls and attempts cleanup on malformed-session
+  and worker-failure paths. Targeted tests: 15 passed; full suite: 493 passed,
+  1 skipped (with pre-existing SQLite ResourceWarnings observed once).
+
+## EXP-296 — bind preparation to the supplied base reference
+Статус: ACCEPTED
+Цель: pass the request's repository/base identifiers unchanged into existing prepare_change and its staged record.
+Гипотеза: executor cannot silently substitute the caller-authorized base metadata during preparation.
+Зависит от: EXP-295
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: proving that a local directory is an authentic remote commit snapshot.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- staged_change repository_id and base_commit match the request exactly.
+- fake/malformed preparation boundary cannot return a result bound to different identifiers.
+- documentation/comments do not call supplied metadata verified provenance.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- matching metadata does not prove the supplied local directory is an authentic remote commit snapshot.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `66b5328` denies a preparation result whose
+  process/repository/base fields differ from the request. Targeted tests: 16
+  passed; full suite: 494 passed, 1 skipped.
+
+## EXP-297 — preserve allowlisted test execution in preparation
+Статус: ACCEPTED
+Цель: ensure coordinator forwards only the request's declared argv and allowlisted executable to preparation.
+Гипотеза: worker proposal cannot choose or widen its own test command.
+Зависит от: EXP-296
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker profile and arbitrary command support.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- the declared command is the only command passed to sandbox.run.
+- proposal content cannot alter argv, timeout or allowed command set.
+- invalid/non-allowlisted command results in zero process calls.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- test-command enforcement relies on the existing development sandbox allowlist and is not Docker isolation evidence.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `c861d13` shows the Worker cannot replace the
+  request-owned argv; only the declared allowlisted command reaches
+  `sandbox.run`. Targeted tests: 17 passed; full suite: 495 passed, 1 skipped.
+
+## EXP-298 — return only fully prepared change artifacts
+Статус: ACCEPTED
+Цель: expose patch/evidence/verification/staged output only after the existing preparation path passes.
+Гипотеза: executor result cannot imply ready-to-publish when preparation or its allowlisted tests fail.
+Зависит от: EXP-297
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: user approval and publication.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- successful run carries the exact prepared digests and immutable verified contents reference.
+- failed tests or failed preparation produce no staged result.
+- result makes no claim of publishability or approval.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- the result remains local preparation evidence and is neither user approval nor permission to publish.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `4f7fb38` returns exact patch/evidence/
+  verification digests and a digest of immutable verified contents only after
+  preparation passes. Failed preparation returns no result. Targeted tests: 17
+  passed; full suite: 495 passed, 1 skipped.
+
+## EXP-299 — define an independent verifier protocol
+Статус: ACCEPTED
+Цель: определить отдельный typed verifier input/result/protocol с явной пометкой local-test evidence.
+Гипотеза: отделённый интерфейс не даст считать Worker self-attestation независимой проверкой.
+Зависит от: EXP-298
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: claiming human independence or implementing a separate trusted service.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- verifier input/result contain bounded identifiers, digests, verdict and safe blocker codes, not artifacts or credentials.
+- local injected test evidence is explicitly labeled `local_test`.
+- a fake verifier conforms without a model/provider/runtime dependency; coordinator integration and gate behavior remain for EXP-300/301.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- typed verifier record and fake establish no service identity or genuinely independent execution.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `670d5f5` adds separate frozen verifier input/result
+  records, bounded digest/verdict fields and explicit `local_test` provenance.
+  Targeted tests: 18 passed; full suite: 496 passed, 1 skipped.
+
+## EXP-300 — bind verifier input to prepared evidence digest
+Статус: ACCEPTED
+Цель: make verifier input identify the exact evidence and staged digests produced by preparation.
+Гипотеза: verifier cannot accidentally approve a different patch/evidence payload than the one prepared.
+Зависит от: EXP-299
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: cryptographic attestation from an external verifier.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- verifier request is derived from current prepared digests, not worker-supplied digest fields.
+- mismatched or stale verifier result is rejected without a staged success result.
+- no approval token or publication capability is generated.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- verifier is still an in-process injected test collaborator; matching fields do not authenticate an independent service.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `d7c849b` builds verifier input from the prepared
+  patch/evidence/verification/contents digests, checks returned binding and
+  local-test origin, and refuses missing or aliased verifier before sandbox
+  creation. Targeted tests: 19 passed; full suite: 497 passed, 1 skipped.
+
+## EXP-301 — gate staged result on verifier pass
+Статус: ACCEPTED
+Цель: require explicit verifier pass before returning a completed local execution result.
+Гипотеза: absent, failed or blocked verification cannot be treated as success.
+Зависит от: EXP-300
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy approval or external write.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- only an explicit pass status yields a staged result.
+- fail/blocked/unknown status returns a non-success state and preserves bounded evidence refs.
+- verifier failure causes zero publication/gateway/broker calls (none are wired in this batch).
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- explicit pass is from an in-process local fake; it does not grant approval or publication capability.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `d53e943` returns `VERIFIED` only for explicit
+  pass; fail, blocked and unknown verdicts return a non-success result with
+  bounded digests and no prepared-change ID. Targeted tests: 20 passed; full
+  suite: 498 passed, 1 skipped.
+
+## EXP-302 — validate verifier output shape and binding
+Статус: ACCEPTED
+Цель: reject malformed verifier objects and digest/identity mismatches with a stable error.
+Гипотеза: caller-provided lookalike verifier output cannot satisfy the gate through attribute similarity.
+Зависит от: EXP-301
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: verifier service authentication.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- malformed values fail before result serialization and do not leak their repr/content.
+- result process identity and evidence digest match the prepared change.
+- a genuine pass result preserves the successful local flow.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- validation checks typed local responses and digest equality; it does not authenticate a verifier process.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `ca44faf` rejects lookalikes, malformed verdicts,
+  unsafe labels/blockers and process/digest mismatches with stable non-leaking
+  errors; genuine local pass still succeeds. Targeted tests: 21 passed; full
+  suite: 499 passed, 1 skipped.
+
+## EXP-303 — fail closed on worker and verifier exceptions
+Статус: ACCEPTED
+Цель: ensure exceptions/timeouts from injected worker or verifier do not produce staged success or trigger retry.
+Гипотеза: local executor has a single-attempt failure boundary with no implicit model/tool retry.
+Зависит от: EXP-302
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: process crash/power-loss simulation or model-provider retry policy.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- worker/verifier exceptions produce stable non-sensitive failure results or documented stable errors.
+- proposal/verifier call counts remain one; no staged result is returned.
+- any created sandbox session is closed on each tested exception path.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- exceptions are converted for the injected worker/verifier calls only; power loss and process crash remain outside this card.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `a153088` converts worker/verifier exceptions
+  and timeouts to bounded failure codes, performs no automatic retry and closes
+  the sandbox. Targeted tests: 23 passed; full suite: 501 passed, 1 skipped.
+
+## EXP-304 — bound and sanitize execution evidence
+Статус: ACCEPTED
+Цель: constrain executor-owned evidence fields and prevent raw prompt/proposal/command output from entering result records.
+Гипотеза: test evidence can reference digests and statuses without copying untrusted payloads into persistent records.
+Зависит от: EXP-303
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: proving absence from OS logs, memory, crash dumps or all telemetry.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- returned evidence is bounded to identifiers, statuses, digests and safe refs.
+- canary prompt/proposal/output strings are absent from serialized result and exception text.
+- evidence explicitly marks its local/test provenance and limitations.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- canary test covers serialized result/error surfaces only, not process memory, crash dumps, filesystem artifacts or OS telemetry.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `759e6d2` labels evidence `local_test`, records
+  explicit limitations and serializes only bounded digest/status metadata; a
+  proposal/content and command-output canary are absent. Targeted tests: 24
+  passed; full suite: 502 passed, 1 skipped.
+
+## EXP-305 — deny publication capabilities in local worker boundary
+Статус: ACCEPTED
+Цель: lock the Batch AF input/collaborator surface to preparation-only capabilities.
+Гипотеза: worker-facing request and local coordinator have no path to publish, obtain credentials or mutate remotes.
+Зависит от: EXP-304
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: repository-wide proof against unrelated modules or runtime monkeypatching.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- executor request/proposal types contain no token, credential, gateway, broker or actuator fields.
+- static/import-boundary regression demonstrates no direct publication client is called by coordinator.
+- valid local preparation path remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- static import boundary is scoped to this local coordinator and does not prevent arbitrary runtime monkeypatching or unrelated modules from publishing.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `8411c3b` checks request/proposal/result field
+  surfaces and statically denies direct publication-client imports/calls from
+  the local executor. Targeted tests: 25 passed; full suite: 503 passed,
+  1 skipped.
+
+## EXP-306 — cover the composed local execution failure matrix
+Статус: ACCEPTED
+Цель: test success and ordered failure points across request, worker, sandbox, preparation and verifier.
+Гипотеза: the local vertical path is deterministic and stops at the first failed gate.
+Зависит от: EXP-305
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: actual LLM evaluation, remote snapshot integrity, production sandbox assurance, publication.
+Разрешённые пути:
+- tests/test_executor.py
+- src/app_contracts/executor.py
+Критерии приёмки:
+- each negative case proves downstream collaborators were not called after denial.
+- one success case records the exact ordered calls and closes the sandbox.
+- tests explicitly label fake worker/verifier and local process sandbox as non-production evidence.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `6a4c47a` добавил проверку успешного порядка вызовов,
+  закрытия sandbox и остановки до downstream collaborators на отказе proposal
+  или preparation. Targeted tests: 26 passed; full suite: 504 passed, 1 skipped.
+
+## EXP-307 — reconcile Batch AF evidence and R2 stage status
+Статус: ACCEPTED
+Цель: update README and implementation status after local executor spine acceptance.
+Гипотеза: documentation can report this as a local deterministic executor shell without claiming R2 completion.
+Зависит от: EXP-306
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: roadmap sequence changes, actual model selection, remote or publication operations.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+- docs/24-mvp-final-plan.md
+Критерии приёмки:
+- implementation status distinguishes the local injected worker/verifier runner from the planned real LLM Worker.
+- R2 remains in progress and remote snapshot/publication boundaries are explicitly open.
+- stage plan reports 3 batches, with Batch AF 1/3 and 20 cards; local full-suite count/date are accurate.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `e607d5b` синхронизировал README и статус проекта;
+  R2 отмечен незавершённым, а Batch AF — локальным executor shell без claims о
+  реальном LLM, remote snapshot, production sandbox или publication. Полный
+  suite: 504 passed, 1 skipped.
+
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

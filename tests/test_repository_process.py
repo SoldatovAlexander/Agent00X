@@ -63,6 +63,27 @@ class RepositoryProcessTests(unittest.TestCase):
         self.assertEqual(TWIN_BASE_METADATA["base_commit"], "a" * 40)
         self.assertNotIn("token", repr(TWIN_BASE_METADATA))
 
+    def test_twin_preparations_keep_patch_digest_and_manifest_workspace_bound(self):
+        first, second = self.twin_sandboxes()
+        first_content = self.new_calculator
+        second_content = self.new_calculator + "\n\ndef multiply(left: int, right: int) -> int:\n    return left * right\n"
+        prepared_first = prepare_change(
+            first, process_id="process-twin-first", task_id="task-twin-first",
+            changes={"calculator.py": first_content}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        prepared_second = prepare_change(
+            second, process_id="process-twin-second", task_id="task-twin-second",
+            changes={"calculator.py": second_content}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        self.assertNotEqual(prepared_first.staged_change["patch_digest"], prepared_second.staged_change["patch_digest"])
+        self.assertNotEqual(prepared_first.evidence_bundle["process_id"], prepared_second.evidence_bundle["process_id"])
+        first_manifest = build_publish_manifest(first, prepared_first, {"calculator.py": "ignored"})
+        second_manifest = build_publish_manifest(second, prepared_second, {"calculator.py": "ignored"})
+        self.assertEqual(first_manifest[0].content, first_content)
+        self.assertEqual(second_manifest[0].content, second_content)
+
     def prepare(self):
         sandbox = self.backend.create(self.fixture, {"python3"})
         self.addCleanup(sandbox.close)

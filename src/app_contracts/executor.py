@@ -49,6 +49,7 @@ class ExecutionRequest:
 
 class ExecutionStatus(str, Enum):
     PREPARED = "prepared"
+    VERIFIED = "verified"
     FAILED = "failed"
 
 
@@ -258,8 +259,18 @@ def run_local_execution(
             or verifier_result.evidence_origin != "local_test"
         ):
             raise ExecutionError("execution verifier: result binding mismatch")
+        if verifier_result.verdict != VerifierVerdict.PASS:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                verifier_result=verifier_result,
+                failure_code="verifier-not-pass",
+            )
         return ExecutionResult(
-            status=ExecutionStatus.PREPARED,
+            status=ExecutionStatus.VERIFIED,
             prepared_change_id=staged["staged_change_id"],
             patch_digest=staged["patch_digest"],
             evidence_digest=staged["evidence_digest"],

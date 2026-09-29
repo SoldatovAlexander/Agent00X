@@ -254,7 +254,7 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertEqual(worker.calls, 1)
         prepare_call.assert_called_once()
         self.assertEqual(worker.task.declared_change_paths, ("calculator.py",))
-        self.assertEqual(result.status, ExecutionStatus.PREPARED)
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
         self.assertEqual(verifier.calls, 1)
         self.assertEqual(result.prepared_change_id, "staged-local-001")
         self.assertTrue(result.patch_digest.startswith("sha256:"))
@@ -504,6 +504,40 @@ class ExecutionRecordTests(unittest.TestCase):
                 valid_request(), dual_role, verifier=dual_role, sandbox_backend=backend
             )
         self.assertEqual(backend.calls, 0)
+
+    def test_only_explicit_verifier_pass_returns_verified_result(self):
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", original + "\n# local change\n"),))
+
+        class ReturningVerifier:
+            def __init__(self, verdict):
+                self.verdict = verdict
+
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                return VerifierResult(
+                    process_id=prepared.process_id,
+                    verifier_id="test-verifier",
+                    patch_digest=prepared.patch_digest,
+                    evidence_digest=prepared.evidence_digest,
+                    verification_digest=prepared.verification_digest,
+                    verified_contents_digest=prepared.verified_contents_digest,
+                    verdict=self.verdict,
+                )
+
+        for verdict in (VerifierVerdict.FAIL, VerifierVerdict.BLOCKED, "unknown"):
+            with self.subTest(verdict=verdict):
+                result = run_local_execution(
+                    valid_request(test_command=("python3", "-c", "print('ok')")),
+                    FakeWorker(),
+                    verifier=ReturningVerifier(verdict),
+                )
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertIsNone(result.prepared_change_id)
+                self.assertEqual(result.failure_code, "verifier-not-pass")
+                self.assertTrue(result.evidence_digest.startswith("sha256:"))
+                self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

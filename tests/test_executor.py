@@ -330,6 +330,45 @@ class ExecutionRecordTests(unittest.TestCase):
                 ):
                     run_local_execution(request, FakeWorker(), sandbox_backend=FakeBackend())
 
+    def test_worker_cannot_replace_declared_test_command(self):
+        class TrackingBackend:
+            def __init__(self):
+                self.commands = []
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                from app_contracts.sandbox import LocalProcessSandbox
+
+                sandbox = LocalProcessSandbox(snapshot, allowed_commands)
+                backend = self
+
+                class Session:
+                    snapshot = sandbox.snapshot
+                    workspace = sandbox.workspace
+
+                    def run(self, argv, timeout_seconds=30):
+                        backend.commands.append(tuple(argv))
+                        return sandbox.run(argv, timeout_seconds)
+
+                    def close(self):
+                        sandbox.close()
+
+                return Session()
+
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                proposal = WorkerProposal((("calculator.py", "replacement"),))
+                self.proposed_command = ("sh", "-c", "touch injected")
+                return proposal
+
+        command = ("python3", "-c", "print('declared-only')")
+        backend = TrackingBackend()
+        worker = FakeWorker()
+        run_local_execution(
+            valid_request(test_command=command), worker, sandbox_backend=backend
+        )
+        self.assertEqual(backend.commands, [command])
+        self.assertNotEqual(backend.commands[0], worker.proposed_command)
+
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))
         for value in invalid_snapshots:

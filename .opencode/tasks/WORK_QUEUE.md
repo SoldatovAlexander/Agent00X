@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 2/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 3/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3827,7 +3827,7 @@ Commit: ALLOWED
   passed, 1 skipped.
 
 ## EXP-310 — preflight a local repository without consulting remotes
-Статус: READY
+Статус: ACCEPTED
 Цель: validate a repository directory as a local Git worktree or bare repository.
 Гипотеза: local object access can be constrained without reading remote configuration or contacting a server.
 Зависит от: EXP-309
@@ -3846,9 +3846,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `0b00a3a` добавил preflight worktree/bare repos
+  через ограниченный набор read-only `rev-parse` команд, без remote config
+  inspection; пути и stderr скрыты из ошибок. Targeted tests: 11 passed; full
+  suite: 515 passed, 1 skipped.
 
 ## EXP-311 — resolve only an exact local commit object
-Статус: DRAFT
+Статус: READY
 Цель: resolve a caller-provided full commit OID against the local object database.
 Гипотеза: object type and exact identity checks reject tags, trees, missing objects and symbolic revision expressions.
 Зависит от: EXP-310

@@ -51,6 +51,61 @@ class PinnedSnapshotRecordTests(unittest.TestCase):
             {"repository_id", "commit_oid", "tree_digest", "snapshot_path", "evidence_origin"},
         )
 
+    def test_identity_validation_accepts_full_sha1_and_sha256_oids(self):
+        for oid in ("a" * 40, "b" * 64):
+            with self.subTest(oid_length=len(oid)):
+                snapshot = PinnedSnapshot(
+                    repository_id="org/repository-1",
+                    commit_oid=oid,
+                    tree_digest="sha256:" + "c" * 64,
+                    snapshot_path=Path("/private/tmp/snapshot-valid"),
+                )
+                self.assertEqual(snapshot.commit_oid, oid)
+
+    def test_identity_validation_rejects_malformed_values_without_echoing_them(self):
+        valid = {
+            "repository_id": "repo-demo-001",
+            "commit_oid": "a" * 40,
+            "tree_digest": "sha256:" + "b" * 64,
+            "snapshot_path": Path("/private/tmp/snapshot-invalid"),
+        }
+        invalid_cases = (
+            ("repository_id", "ssh://user:secret@host/repository"),
+            ("repository_id", "../outside"),
+            ("repository_id", "repo with spaces"),
+            ("commit_oid", "HEAD"),
+            ("commit_oid", "a" * 39),
+            ("commit_oid", "A" * 40),
+            ("commit_oid", 123),
+            ("tree_digest", "sha256:" + "B" * 64),
+            ("tree_digest", "sha256:short"),
+            ("evidence_origin", "remote_git_commit"),
+        )
+
+        for field_name, invalid_value in invalid_cases:
+            with self.subTest(field=field_name, value_type=type(invalid_value).__name__):
+                arguments = dict(valid)
+                arguments[field_name] = invalid_value
+                with self.assertRaises(ValueError) as raised:
+                    PinnedSnapshot(**arguments)
+                self.assertNotIn(str(invalid_value), str(raised.exception))
+
+    def test_identity_validation_rejects_boolean_and_non_path_values(self):
+        with self.assertRaisesRegex(ValueError, "^pinned snapshot repository identity is invalid$"):
+            PinnedSnapshot(
+                repository_id=True,
+                commit_oid="a" * 40,
+                tree_digest="sha256:" + "b" * 64,
+                snapshot_path=Path("/private/tmp/snapshot-invalid"),
+            )
+        with self.assertRaisesRegex(ValueError, "^pinned snapshot local path is invalid$"):
+            PinnedSnapshot(
+                repository_id="repo-demo-001",
+                commit_oid="a" * 40,
+                tree_digest="sha256:" + "b" * 64,
+                snapshot_path="/private/tmp/snapshot-invalid",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

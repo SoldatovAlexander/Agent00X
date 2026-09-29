@@ -1109,6 +1109,31 @@ class GitHubReconciliationTests(unittest.TestCase):
                 self.assertNotIn(_FIXTURE_IDEMPOTENCY_KEY, message)
                 self.assertNotIn("opaque", message)
 
+    def test_matching_pr_fixture_reuses_canonical_receipt_without_post(self):
+        posts = []
+        channel = self._channel((
+            lambda _url, _headers, body: posts.append(body),
+            lambda _url, _headers: ProviderTranscriptFixtures.matching_pr_payload(),
+            None,
+        ))
+        request = {
+            "operation": "publish_pull_request",
+            "repository_id": "github-installation/456/repository/1001",
+            "branch": _FIXTURE_BRANCH,
+            "staged_change_digest": _FIXTURE_DIGEST,
+            "idempotency_key": _FIXTURE_IDEMPOTENCY_KEY,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        receipt = channel.publish_pull_request(request)
+        self.assertEqual(posts, [])
+        self.assertEqual(receipt.pull_request_id, 13)
+        self.assertEqual(receipt.pull_request_url, _FIXTURE_PR_URL)
+        self.assertEqual(receipt.repository_id, request["repository_id"])
+        self.assertEqual(receipt.branch, request["branch"])
+        self.assertEqual(receipt.staged_change_digest, request["staged_change_digest"])
+        self.assertEqual(receipt.idempotency_key, request["idempotency_key"])
+
     def test_reconcile_returns_unknown_when_lookup_fails(self):
         channel = self._channel((
             None,

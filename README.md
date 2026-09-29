@@ -32,7 +32,11 @@ collector completeness, access control или многопроцессную к�
 Batch AF добавил локальный детерминированный executor shell с injected Worker,
 Verifier и sandbox backend. Это не реальный LLM Worker, проверенный remote
 snapshot, production sandbox или publication chain; детали и открытые границы —
-в документе 27.
+в документе 27. Batch AG добавил экспорт дерева точного commit из локальной
+Git object database и повторный запуск allowlisted-команды в отдельной локальной
+sandbox-сессии. Это не remote provenance и не independently trusted verifier:
+backend/verifier остаются injected doubles, а process backend — development
+fallback; production isolation, публикация и reconciliation не подтверждены.
 
 Единственный актуальный статус реализации и границ доказательств:
 [документ 27](docs/27-implementation-status.md). Порядок работ R0—R5:
@@ -44,7 +48,7 @@ snapshot, production sandbox или publication chain; детали и откр�
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Обычный прогон на 2026-09-29: 504 теста, все прошли, один opt-in Docker test
+Обычный прогон на 2026-09-29: 546 тестов, все прошли, один opt-in Docker test
 пропущен. Результат подтверждает только покрытые тестами свойства на текущей
 машине. Подробнее — в документе 27.
 

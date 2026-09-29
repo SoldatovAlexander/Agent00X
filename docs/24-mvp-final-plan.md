@@ -42,11 +42,14 @@ trust boundaries. Наблюдатель и обучение через конт
    один LLM Worker, независимая проверка, минимальный CLI и контролируемая
    публикация. Все проверки до внешнего write; реальные границы секретов и
    durable reconciliation. Основные пути R2 инструментированы наблюдением R1.
-   Текущий срез на 2026-09-29: R2 в работе, Batch AF — 1 из 3 локальных батчей
-   по 20 карточек. Batch AF подтверждает только локальный executor shell с
-   injected fakes; он не закрывает требования этого этапа. Remote pinned
-   snapshot, реальный LLM Worker, production sandbox и отдельно разрешённые
-   publication/reconciliation остаются открытыми.
+   Текущий срез на 2026-09-29: R2 в работе; Batch AF — 1/3 (20/20 карточек),
+   Batch AG — 2/3 (20/20). AG подтверждает экспорт точного commit/tree из
+   локальной Git object database и повторный запуск allowlisted-команды во
+   второй локальной sandbox-сессии. Это не remote provenance и не independently
+   trusted production verification: Worker, sandbox backend и verifier остаются
+   injected fakes, process backend — development fallback. Реальный LLM Worker,
+   production isolation и отдельно разрешённые publication/reconciliation
+   остаются открытыми; следующий батч AH сохраняет отдельный gate для последних.
 4. **R3 — наблюдатель и исторический отчёт.** Отчёты сейчас/на момент T,
    причинные ссылки, отделение фактов от оснований и интерпретаций; проверки
    неполной истории, поздних ответов и отказов. Детерминированный отчёт допустим

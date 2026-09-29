@@ -8,6 +8,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+TWIN_NOW = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+TWIN_BASE_METADATA = {
+    "repository_id": "github-installation/42/repository/1001",
+    "base_commit": "a" * 40,
+}
+
 from app_contracts.digests import sha256_bytes, sha256_digest
 from app_contracts.repository_process import (
     PublishableFile,
@@ -35,6 +41,27 @@ class RepositoryProcessTests(unittest.TestCase):
             "def subtract(left: int, right: int) -> int:\n"
             "    return left - right\n"
         )
+
+    def twin_sandboxes(self):
+        """Two ephemeral writers copied from one immutable fixture snapshot."""
+
+        first = self.backend.create(self.fixture, {"python3"})
+        second = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(first.close)
+        self.addCleanup(second.close)
+        return first, second
+
+    def test_twin_sandbox_fixtures_have_isolated_workspaces_and_shared_metadata(self):
+        first, second = self.twin_sandboxes()
+        self.assertNotEqual(first.workspace, second.workspace)
+        self.assertNotEqual(first.snapshot, second.snapshot)
+        self.assertEqual(
+            (first.snapshot / "calculator.py").read_text(encoding="utf-8"),
+            (second.snapshot / "calculator.py").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(TWIN_NOW.tzinfo, timezone.utc)
+        self.assertEqual(TWIN_BASE_METADATA["base_commit"], "a" * 40)
+        self.assertNotIn("token", repr(TWIN_BASE_METADATA))
 
     def prepare(self):
         sandbox = self.backend.create(self.fixture, {"python3"})

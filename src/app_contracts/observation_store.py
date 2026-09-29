@@ -298,7 +298,10 @@ class SQLiteObservationStore:
         return tuple(json.loads(row[0]) for row in rows)
 
     def checkpoints(self) -> tuple[dict[str, Any], ...]:
-        return ()
+        rows = self._connection.execute(
+            "SELECT checkpoint_json FROM observation_checkpoints ORDER BY cursor"
+        ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
 
     def __len__(self) -> int:
         return self._connection.execute(
@@ -332,6 +335,64 @@ class SQLiteObservationStore:
                 return cursor
         except sqlite3.Error as exc:
             raise ObservationStoreError("observation journal: event could not be stored") from exc
+
+    def check_checkpoint(self, checkpoint: dict[str, Any]) -> int:
+        if not isinstance(checkpoint, dict):
+            raise ContractValidationError("checkpoint is malformed")
+        validate(checkpoint, CHECKPOINT_SCHEMA)
+        events = self.events()
+        trigger = checkpoint["trigger_event_id"]
+        trigger_event: dict[str, Any] | None = None
+        trigger_position: int | None = None
+        for position, stored in enumerate(events):
+            if stored["event_id"] == trigger:
+                trigger_event = stored
+                trigger_position = position
+                break
+        if trigger_event is None or trigger_position is None:
+            raise ContractValidationError("unknown trigger event")
+        for field in ("process_id", "run_id", "branch_id"):
+            if trigger_event[field] != checkpoint[field]:
+                raise ContractValidationError(f"checkpoint trigger {field} mismatch")
+        cursor = checkpoint["event_cursor"]
+        if cursor >= len(events):
+            raise ContractValidationError("checkpoint cursor is beyond journal end")
+        if cursor != trigger_position:
+            raise ContractValidationError("checkpoint cursor does not match trigger position")
+        return cursor
+
+    def record_checkpoint(self, checkpoint: dict[str, Any]) -> int:
+        """Validate and persist a checkpoint against the recorded event history."""
+
+        self.check_checkpoint(checkpoint)
+        digest = sha256_digest(checkpoint)
+        checkpoint_id = checkpoint["checkpoint_id"]
+        try:
+            with self._connection:
+                known = self._connection.execute(
+                    "SELECT cursor, digest FROM observation_checkpoints WHERE checkpoint_id = ?",
+                    (checkpoint_id,),
+                ).fetchone()
+                if known is not None:
+                    if known["digest"] == digest:
+                        return known["cursor"]
+                    raise EventConflictError("checkpoint id conflict")
+                cursor = self._connection.execute(
+                    "SELECT COALESCE(MAX(cursor) + 1, 0) FROM observation_checkpoints"
+                ).fetchone()[0]
+                self._connection.execute(
+                    "INSERT INTO observation_checkpoints(checkpoint_id, cursor, checkpoint_json, digest) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        checkpoint_id,
+                        cursor,
+                        json.dumps(checkpoint, sort_keys=True, separators=(",", ":")),
+                        digest,
+                    ),
+                )
+                return cursor
+        except sqlite3.Error as exc:
+            raise ObservationStoreError("observation journal: checkpoint could not be stored") from exc
 
     def close(self) -> None:
         self._connection.close()

@@ -141,6 +141,49 @@ class ObservationStoreTests(unittest.TestCase):
                 self.assertEqual(len(store), 0)
                 self.assertEqual(store.events(), ())
 
+    def test_sqlite_store_persists_and_revalidates_checkpoints_after_reopen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            event = valid_event("event-sqlite-checkpoint-001", 0)
+            checkpoint = valid_checkpoint(event["event_id"], 0)
+            with SQLiteObservationStore(database) as store:
+                store.append(event)
+                self.assertEqual(store.record_checkpoint(checkpoint), 0)
+            with SQLiteObservationStore(database) as reopened:
+                self.assertEqual(reopened.check_checkpoint(checkpoint), 0)
+                self.assertEqual(reopened.record_checkpoint(copy.deepcopy(checkpoint)), 0)
+                self.assertEqual(reopened.checkpoints(), (checkpoint,))
+
+                conflicting = dict(checkpoint, restore_mode="none")
+                with self.assertRaisesRegex(EventConflictError, "^checkpoint id conflict$"):
+                    reopened.record_checkpoint(conflicting)
+
+                unknown_trigger = dict(checkpoint, checkpoint_id="checkpoint-sqlite-002")
+                unknown_trigger["trigger_event_id"] = "event-sqlite-missing"
+                with self.assertRaisesRegex(ContractValidationError, "^unknown trigger event$"):
+                    reopened.record_checkpoint(unknown_trigger)
+
+                wrong_owner = dict(
+                    checkpoint,
+                    checkpoint_id="checkpoint-sqlite-003",
+                    process_id="process-foreign",
+                )
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^checkpoint trigger process_id mismatch$"
+                ):
+                    reopened.record_checkpoint(wrong_owner)
+
+                wrong_cursor = dict(
+                    checkpoint,
+                    checkpoint_id="checkpoint-sqlite-004",
+                    event_cursor=1,
+                )
+                with self.assertRaisesRegex(
+                    ContractValidationError, "^checkpoint cursor is beyond journal end$"
+                ):
+                    reopened.record_checkpoint(wrong_cursor)
+                self.assertEqual(len(reopened.checkpoints()), 1)
+
     def test_accepts_only_schema_valid_events(self):
         store = ObservationStore()
         cursor = store.append(valid_event())

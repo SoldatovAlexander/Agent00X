@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 8/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 9/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3984,7 +3984,7 @@ Commit: ALLOWED
   full suite: 531 passed, 1 skipped.
 
 ## EXP-316 — make snapshot lifecycle explicit and read-only
-Статус: READY
+Статус: ACCEPTED
 Цель: provide explicit close/context lifecycle for temporary pinned snapshots.
 Гипотеза: owned temporary state is cleaned on success/failure and cannot silently outlive its lease.
 Зависит от: EXP-315
@@ -4003,9 +4003,15 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `ac8e8b7` возвращает explicit read-only lease с
+  close/context lifecycle; idempotent cleanup удаляет только provider-owned root.
+  Тесты покрыли read-only mode, cleanup после context error и partial export
+  failure при неизменном source repo. Targeted: 30 passed; full: 534 passed,
+  1 skipped.
 
 ## EXP-317 — verify snapshot identity after sandbox copying
-Статус: DRAFT
+Статус: READY
 Цель: bind the sandbox's read-only snapshot copy to the pinned tree digest.
 Гипотеза: executor can detect copy substitution before invoking Worker.
 Зависит от: EXP-316

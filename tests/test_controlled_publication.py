@@ -628,5 +628,101 @@ class PolicyGateTests(unittest.TestCase):
             downstream.assert_untouched(self)
 
 
+class PolicyGateApprovalRemediationTests(unittest.TestCase):
+    def test_expired_approval_stops_policy_gate_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, decision):
+            for expires_at in (
+                format_time(FIXED_NOW - timedelta(hours=1)),
+                format_time(FIXED_NOW),
+            ):
+                with self.subTest(expires_at=expires_at):
+                    downstream = PolicyDownstream()
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: approval expired$",
+                    ):
+                        run_policy_gate(
+                            intent, dict(approval, expires_at=expires_at), decision,
+                            now=FIXED_NOW, proceed=downstream.proceed,
+                        )
+                    downstream.assert_untouched(self)
+
+    def test_foreign_approval_bindings_stop_policy_gate_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, decision):
+            cases = [
+                {"process_id": "process-foreign-001"},
+                {"repository_id": "repository-foreign"},
+                {"staged_change_digest": "sha256:" + "f" * 64},
+            ]
+            for override in cases:
+                with self.subTest(override=tuple(override)):
+                    downstream = PolicyDownstream()
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: approval binding mismatch$",
+                    ):
+                        run_policy_gate(
+                            intent, dict(approval, **override), decision,
+                            now=FIXED_NOW, proceed=downstream.proceed,
+                        )
+                    downstream.assert_untouched(self)
+            stripped = dict(approval)
+            del stripped["process_id"]
+            downstream = PolicyDownstream()
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: approval binding mismatch$",
+            ):
+                run_policy_gate(
+                    intent, stripped, decision, now=FIXED_NOW, proceed=downstream.proceed
+                )
+            downstream.assert_untouched(self)
+
+    def test_malformed_approval_expiry_stops_policy_gate_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, decision):
+            for expires_at in (None, "", "not-a-time"):
+                with self.subTest(expires_at=repr(expires_at)):
+                    downstream = PolicyDownstream()
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: approval expiry is invalid$",
+                    ):
+                        run_policy_gate(
+                            intent, dict(approval, expires_at=expires_at), decision,
+                            now=FIXED_NOW, proceed=downstream.proceed,
+                        )
+                    downstream.assert_untouched(self)
+
+    def test_foreign_approval_values_never_reach_errors(self):
+        canary = "POLICY-APPROVAL-CANARY"
+        with decided_gate_fixture() as (intent, approval, decision):
+            foreign = dict(
+                approval, approval_id=canary,
+                staged_change_digest="sha256:" + "f" * 64,
+            )
+            downstream = PolicyDownstream()
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: approval binding mismatch$",
+            ) as raised:
+                run_policy_gate(
+                    intent, foreign, decision, now=FIXED_NOW, proceed=downstream.proceed
+                )
+            self.assertNotIn(canary, str(raised.exception))
+            downstream.assert_untouched(self)
+
+    def test_matching_approval_and_decision_still_pass_policy_gate(self):
+        with decided_gate_fixture() as (intent, approval, decision):
+            downstream = PolicyDownstream()
+            marker, passed_intent, passed_approval, passed_decision = run_policy_gate(
+                intent, approval, decision, now=FIXED_NOW, proceed=downstream.proceed
+            )
+            self.assertEqual(marker, "completed-path")
+            self.assertIs(passed_approval, approval)
+            self.assertIs(passed_decision, decision)
+            for stage in PolicyDownstream.STAGES:
+                self.assertEqual(downstream.calls[stage], 1, stage)
+
+
 if __name__ == "__main__":
     unittest.main()

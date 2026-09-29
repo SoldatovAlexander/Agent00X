@@ -64,10 +64,14 @@ def run_policy_gate(
 ) -> T:
     """Pass the approved intent downstream only with a fresh matching decision.
 
-    The decision effect, operation, repository and staged digest are verified
-    against the same seed-bound intent, and its allow lifetime is verified
-    through the existing decision-use contract, all before the downstream
-    step runs. A stale, mismatched or deny decision stops the path with zero
+    The approval itself is re-verified here — it must be fresh and its
+    process, repository and staged-digest bindings must equal the same
+    seed-bound intent — so entering this gate directly can never smuggle a
+    stale or foreign approval past the approval boundary. The decision
+    effect, operation, repository and staged digest are then verified against
+    the same intent, and its allow lifetime is verified through the existing
+    decision-use contract, all before the downstream step runs. A stale,
+    mismatched or deny approval or decision stops the path with zero
     downstream calls. Failures carry stable messages without decision,
     approval, intent or digest values.
     """
@@ -81,6 +85,11 @@ def run_policy_gate(
     if not isinstance(decision, dict):
         raise ControlledPublicationError("controlled publication: decision is missing")
     moment = _require_clock(now)
+    if _require_approval_expiry(approval) <= moment:
+        raise ControlledPublicationError("controlled publication: approval expired")
+    for field in ("process_id", "repository_id", "staged_change_digest"):
+        if approval.get(field) != getattr(intent, field):
+            raise ControlledPublicationError("controlled publication: approval binding mismatch")
     if decision.get("operation") != "publish_pull_request":
         raise ControlledPublicationError("controlled publication: decision operation mismatch")
     if decision.get("repository_id") != intent.repository_id:

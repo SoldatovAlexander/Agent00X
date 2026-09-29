@@ -101,6 +101,13 @@ class WorkerProposal:
 @dataclass(frozen=True)
 class VerifierInput:
     process_id: str
+    repository_id: str
+    base_commit: str
+    snapshot_tree_digest: str | None
+    declared_change_paths: tuple[str, ...]
+    verified_contents: tuple[tuple[str, str], ...]
+    test_command: tuple[str, ...]
+    test_timeout_seconds: int
     patch_digest: str
     evidence_digest: str
     verification_digest: str
@@ -299,11 +306,11 @@ def run_local_execution(
                 verified_contents,
             )
         verified_contents_digest = sha256_digest(verified_contents)
-        verifier_input = VerifierInput(
-            process_id=request.process_id,
-            patch_digest=staged["patch_digest"],
-            evidence_digest=staged["evidence_digest"],
-            verification_digest=staged["verification_digest"],
+        verifier_input = _build_verifier_input(
+            request=request,
+            proposal=proposal,
+            staged=staged,
+            verified_contents=verified_contents,
             verified_contents_digest=verified_contents_digest,
         )
         try:
@@ -412,6 +419,64 @@ def _validate_prepared_snapshot_binding(
         raise
     except Exception:
         raise ExecutionError("execution preparation: pinned source binding mismatch") from None
+
+
+def _build_verifier_input(
+    *,
+    request: ExecutionRequest,
+    proposal: WorkerProposal,
+    staged: dict,
+    verified_contents: tuple[tuple[str, str], ...],
+    verified_contents_digest: str,
+) -> VerifierInput:
+    expected_contents = tuple(sorted(proposal.changes))
+    declared_paths = {posixpath.normpath(path) for path in request.declared_change_paths}
+    total_bytes = 0
+    if (
+        not isinstance(verified_contents, tuple)
+        or verified_contents != expected_contents
+        or len(verified_contents) > MAX_PROPOSAL_FILES
+    ):
+        raise ExecutionError("execution verifier input: prepared scope is invalid")
+    for entry in verified_contents:
+        if (
+            not isinstance(entry, tuple)
+            or len(entry) != 2
+            or not isinstance(entry[0], str)
+            or not isinstance(entry[1], str)
+            or not _is_safe_relative_path(entry[0])
+            or posixpath.normpath(entry[0]) not in declared_paths
+        ):
+            raise ExecutionError("execution verifier input: prepared scope is invalid")
+        path, content = entry
+        try:
+            path_bytes = path.encode("utf-8")
+            content_bytes = content.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ExecutionError("execution verifier input: prepared scope is invalid") from None
+        if len(path_bytes) > MAX_PROPOSAL_PATH_BYTES or len(content_bytes) > MAX_PROPOSAL_FILE_BYTES:
+            raise ExecutionError("execution verifier input: limits exceeded")
+        total_bytes += len(path_bytes) + len(content_bytes)
+        if total_bytes > MAX_PROPOSAL_TOTAL_BYTES:
+            raise ExecutionError("execution verifier input: limits exceeded")
+    return VerifierInput(
+        process_id=request.process_id,
+        repository_id=request.repository_id,
+        base_commit=request.base_commit,
+        snapshot_tree_digest=(
+            request.pinned_snapshot.tree_digest
+            if request.pinned_snapshot is not None
+            else None
+        ),
+        declared_change_paths=request.declared_change_paths,
+        verified_contents=verified_contents,
+        test_command=request.test_command,
+        test_timeout_seconds=request.test_timeout_seconds,
+        patch_digest=staged["patch_digest"],
+        evidence_digest=staged["evidence_digest"],
+        verification_digest=staged["verification_digest"],
+        verified_contents_digest=verified_contents_digest,
+    )
 
 
 def validate_verifier_result(value: object, expected: VerifierInput) -> VerifierResult:

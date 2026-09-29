@@ -221,6 +221,13 @@ class ExecutionRecordTests(unittest.TestCase):
         verifier = FakeVerifier()
         prepared = VerifierInput(
             process_id="process-local-001",
+            repository_id="fixture-repository",
+            base_commit="a" * 40,
+            snapshot_tree_digest="sha256:" + "d" * 64,
+            declared_change_paths=("calculator.py",),
+            verified_contents=(("calculator.py", "safe content"),),
+            test_command=("python3", "-m", "unittest"),
+            test_timeout_seconds=30,
             patch_digest="sha256:" + "a" * 64,
             evidence_digest="sha256:" + "b" * 64,
             verification_digest="sha256:" + "c" * 64,
@@ -229,16 +236,24 @@ class ExecutionRecordTests(unittest.TestCase):
         result = verifier.verify(prepared)
         self.assertTrue(isinstance(verifier, IndependentVerifier))
         self.assertEqual(verifier.received.evidence_origin, "local_test")
+        self.assertNotIn("snapshot_path", VerifierInput.__dataclass_fields__)
+        self.assertNotIn("stdout", VerifierInput.__dataclass_fields__)
+        self.assertNotIn("stderr", VerifierInput.__dataclass_fields__)
+        self.assertNotIn("environment", VerifierInput.__dataclass_fields__)
+        self.assertNotIn("credential", VerifierInput.__dataclass_fields__)
+        with self.assertRaises(FrozenInstanceError):
+            prepared.base_commit = "changed"
         self.assertEqual(result.verdict, VerifierVerdict.PASS)
         self.assertEqual(result.evidence_origin, "local_test")
         self.assertEqual(
             set(VerifierInput.__dataclass_fields__),
             {
-                "process_id", "patch_digest", "evidence_digest", "verification_digest",
-                "verified_contents_digest", "evidence_origin",
+                "process_id", "repository_id", "base_commit", "snapshot_tree_digest",
+                "declared_change_paths", "verified_contents", "test_command",
+                "test_timeout_seconds", "patch_digest", "evidence_digest",
+                "verification_digest", "verified_contents_digest", "evidence_origin",
             },
         )
-        self.assertNotIn("credential", VerifierInput.__dataclass_fields__)
 
     def test_worker_proposal_validator_rejects_malformed_values_without_echo(self):
         malformed = (
@@ -341,7 +356,7 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertEqual(worker.task.snapshot_origin, "local_git_commit")
         self.assertNotIn("snapshot_path", WorkerInput.__dataclass_fields__)
         self.assertNotIn(str(request.snapshot_path), repr(worker.task))
-        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED, repr(result))
         self.assertEqual(result.snapshot_tree_digest, request.pinned_snapshot.tree_digest)
         self.assertEqual(verifier.calls, 1)
         self.assertEqual(result.prepared_change_id, "staged-local-001")
@@ -366,6 +381,21 @@ class ExecutionRecordTests(unittest.TestCase):
             verifier.received.verified_contents_digest, result.verified_contents_digest
         )
         self.assertEqual(verifier.received.evidence_origin, "local_test")
+        self.assertEqual(verifier.received.repository_id, request.repository_id)
+        self.assertEqual(verifier.received.base_commit, request.pinned_snapshot.commit_oid)
+        self.assertEqual(
+            verifier.received.snapshot_tree_digest, request.pinned_snapshot.tree_digest
+        )
+        self.assertEqual(
+            verifier.received.declared_change_paths, request.declared_change_paths
+        )
+        self.assertEqual(
+            verifier.received.verified_contents, (("calculator.py", worker.content),)
+        )
+        self.assertEqual(verifier.received.test_command, request.test_command)
+        self.assertEqual(
+            verifier.received.test_timeout_seconds, request.test_timeout_seconds
+        )
         self.assertEqual(result.verifier_result.verifier_id, "test-verifier")
         self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("publishable", ExecutionResult.__dataclass_fields__)
@@ -589,7 +619,7 @@ class ExecutionRecordTests(unittest.TestCase):
             "verification_digest": "sha256:" + "c" * 64,
         }
 
-        def exercise(worker_output, preparation_error=None):
+        def exercise(worker_output, preparation_error=None, prepared_contents=None):
             calls = []
 
             class LocalTestBackend:
@@ -638,7 +668,11 @@ class ExecutionRecordTests(unittest.TestCase):
                     raise preparation_error
                 return SimpleNamespace(
                     staged_change=staged,
-                    verified_contents=(("calculator.py", "prepared text"),),
+                    verified_contents=(
+                        (("calculator.py", "proposal"),)
+                        if prepared_contents is None
+                        else prepared_contents
+                    ),
                 )
 
             with patch("app_contracts.executor.prepare_change", side_effect=prepare) as prepare_mock:
@@ -655,7 +689,8 @@ class ExecutionRecordTests(unittest.TestCase):
 
         valid_proposal = WorkerProposal((("calculator.py", "proposal"),))
         result, calls, verifier_calls, prepare_calls = exercise(valid_proposal)
-        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertIsInstance(result, ExecutionResult, repr(result))
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED, repr(result))
         self.assertEqual(
             calls,
             ["sandbox.create", "worker.propose", "prepare_change", "verifier.verify", "sandbox.close"],
@@ -676,6 +711,17 @@ class ExecutionRecordTests(unittest.TestCase):
         )
         self.assertIsInstance(result, ContractValidationError)
         self.assertEqual(str(result), "preparation denied")
+        self.assertEqual(
+            calls, ["sandbox.create", "worker.propose", "prepare_change", "sandbox.close"]
+        )
+        self.assertEqual(verifier_calls, 0)
+        self.assertEqual(prepare_calls, 1)
+
+        result, calls, verifier_calls, prepare_calls = exercise(
+            valid_proposal, prepared_contents=(("other.py", "proposal"),)
+        )
+        self.assertIsInstance(result, ExecutionError)
+        self.assertEqual(str(result), "execution verifier input: prepared scope is invalid")
         self.assertEqual(
             calls, ["sandbox.create", "worker.propose", "prepare_change", "sandbox.close"]
         )

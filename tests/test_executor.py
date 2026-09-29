@@ -441,6 +441,115 @@ class ExecutionRecordTests(unittest.TestCase):
             )
         )
 
+    def test_composed_executor_orders_local_fakes_and_stops_after_first_failure(self):
+        from app_contracts.sandbox import LocalProcessSandboxBackend
+
+        self.assertIn("Development fallback", LocalProcessSandboxBackend.__doc__)
+        self.assertIn("development-only", executor_module.run_local_execution.__doc__)
+        request = valid_request()
+        staged = {
+            "process_id": request.process_id,
+            "repository_id": request.repository_id,
+            "base_commit": request.base_commit,
+            "staged_change_id": "staged-local-001",
+            "patch_digest": "sha256:" + "a" * 64,
+            "evidence_digest": "sha256:" + "b" * 64,
+            "verification_digest": "sha256:" + "c" * 64,
+        }
+
+        def exercise(worker_output, preparation_error=None):
+            calls = []
+
+            class LocalTestBackend:
+                def create(self, snapshot: Path, allowed_commands: set[str]):
+                    calls.append("sandbox.create")
+                    local_snapshot = snapshot
+
+                    class Session:
+                        snapshot = local_snapshot
+                        workspace = local_snapshot
+
+                        def run(self, argv, timeout_seconds=30):
+                            raise AssertionError("the fake preparation must not run commands")
+
+                        def close(self):
+                            calls.append("sandbox.close")
+
+                    return Session()
+
+            class FakeWorker:
+                def propose(self, task: WorkerInput):
+                    calls.append("worker.propose")
+                    return worker_output
+
+            class FakeVerifier:
+                calls_count = 0
+
+                def verify(self, prepared: VerifierInput):
+                    self.calls_count += 1
+                    calls.append("verifier.verify")
+                    return VerifierResult(
+                        process_id=prepared.process_id,
+                        verifier_id="local-fake-verifier",
+                        patch_digest=prepared.patch_digest,
+                        evidence_digest=prepared.evidence_digest,
+                        verification_digest=prepared.verification_digest,
+                        verified_contents_digest=prepared.verified_contents_digest,
+                        verdict=VerifierVerdict.PASS,
+                    )
+
+            verifier = FakeVerifier()
+
+            def prepare(*_args, **_kwargs):
+                calls.append("prepare_change")
+                if preparation_error is not None:
+                    raise preparation_error
+                return SimpleNamespace(
+                    staged_change=staged,
+                    verified_contents=(("calculator.py", "prepared text"),),
+                )
+
+            with patch("app_contracts.executor.prepare_change", side_effect=prepare) as prepare_mock:
+                try:
+                    result = run_local_execution(
+                        request,
+                        FakeWorker(),
+                        verifier=verifier,
+                        sandbox_backend=LocalTestBackend(),
+                    )
+                except Exception as exc:
+                    result = exc
+            return result, calls, verifier.calls_count, prepare_mock.call_count
+
+        valid_proposal = WorkerProposal((("calculator.py", "proposal"),))
+        result, calls, verifier_calls, prepare_calls = exercise(valid_proposal)
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(
+            calls,
+            ["sandbox.create", "worker.propose", "prepare_change", "verifier.verify", "sandbox.close"],
+        )
+        self.assertEqual(verifier_calls, 1)
+        self.assertEqual(prepare_calls, 1)
+        self.assertEqual(result.evidence_origin, "local_test")
+
+        result, calls, verifier_calls, prepare_calls = exercise(object())
+        self.assertIsInstance(result, ExecutionError)
+        self.assertEqual(str(result), "execution proposal: shape is invalid")
+        self.assertEqual(calls, ["sandbox.create", "worker.propose", "sandbox.close"])
+        self.assertEqual(verifier_calls, 0)
+        self.assertEqual(prepare_calls, 0)
+
+        result, calls, verifier_calls, prepare_calls = exercise(
+            valid_proposal, ContractValidationError("preparation denied")
+        )
+        self.assertIsInstance(result, ContractValidationError)
+        self.assertEqual(str(result), "preparation denied")
+        self.assertEqual(
+            calls, ["sandbox.create", "worker.propose", "prepare_change", "sandbox.close"]
+        )
+        self.assertEqual(verifier_calls, 0)
+        self.assertEqual(prepare_calls, 1)
+
     def test_malformed_sandbox_session_fails_before_worker_and_attempts_cleanup(self):
         class MalformedBackend:
             def __init__(self):

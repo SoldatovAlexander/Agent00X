@@ -67,6 +67,7 @@ class ExecutionResult:
     evidence_digest: str | None = None
     verification_digest: str | None = None
     verified_contents_digest: str | None = None
+    staged_change_digest: str | None = None
     snapshot_tree_digest: str | None = None
     snapshot_origin: Literal[
         "local_git_commit", "unverified_local_test"
@@ -341,6 +342,7 @@ def run_local_execution(
                     evidence_digest=staged["evidence_digest"],
                     verification_digest=staged["verification_digest"],
                     verified_contents_digest=verified_contents_digest,
+                    staged_change_digest=_staged_change_digest(staged),
                     snapshot_tree_digest=request.pinned_snapshot.tree_digest,
                     snapshot_origin=request.pinned_snapshot.evidence_origin,
                     failure_code="verification-replay-failed",
@@ -362,6 +364,7 @@ def run_local_execution(
                 evidence_digest=staged["evidence_digest"],
                 verification_digest=staged["verification_digest"],
                 verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
                 snapshot_tree_digest=(
                     request.pinned_snapshot.tree_digest
                     if request.pinned_snapshot
@@ -382,6 +385,7 @@ def run_local_execution(
                 evidence_digest=staged["evidence_digest"],
                 verification_digest=staged["verification_digest"],
                 verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
                 verifier_result=verifier_result,
                 snapshot_tree_digest=(
                     request.pinned_snapshot.tree_digest
@@ -402,6 +406,7 @@ def run_local_execution(
             evidence_digest=staged["evidence_digest"],
             verification_digest=staged["verification_digest"],
             verified_contents_digest=verified_contents_digest,
+            staged_change_digest=_staged_change_digest(staged),
             snapshot_tree_digest=(
                 request.pinned_snapshot.tree_digest
                 if request.pinned_snapshot is not None
@@ -418,6 +423,11 @@ def run_local_execution(
         close = getattr(sandbox, "close", None)
         if callable(close):
             close()
+
+
+def _staged_change_digest(staged: dict) -> str:
+    """Return the canonical digest-only binding for one verified staged change."""
+    return sha256_digest(staged)
 
 
 def _same_callable(first: object, second: object) -> bool:

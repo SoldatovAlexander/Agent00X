@@ -1032,6 +1032,167 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertNotIn("prompt", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("task_description", WorkerInput.__dataclass_fields__)
 
+    def test_staged_change_digest_binds_verified_prepared_change(self):
+        content_canary = "STAGED-DIGEST-PROPOSAL-CANARY"
+        request = valid_request(test_command=("python3", "-c", "print('ok')"))
+        staged = {
+            "process_id": request.process_id,
+            "repository_id": request.repository_id,
+            "base_commit": request.base_commit,
+            "staged_change_id": "staged-local-001",
+            "patch_digest": "sha256:" + "a" * 64,
+            "evidence_digest": "sha256:" + "b" * 64,
+            "verification_digest": "sha256:" + "c" * 64,
+        }
+        expected_digest = sha256_digest(staged)
+
+        class LocalTestBackend:
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                local_snapshot = snapshot
+
+                class Session:
+                    snapshot = local_snapshot
+                    workspace = local_snapshot
+
+                    def run(self, argv, timeout_seconds=30):
+                        raise AssertionError("the fake preparation must not run commands")
+
+                    def close(self):
+                        pass
+
+                return Session()
+
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                return WorkerProposal((("calculator.py", f"proposal {content_canary}"),))
+
+        def run_with(layered_verifier):
+            with patch(
+                "app_contracts.executor.prepare_change",
+                return_value=SimpleNamespace(
+                    staged_change=dict(staged),
+                    verified_contents=(("calculator.py", f"proposal {content_canary}"),),
+                ),
+            ):
+                return run_local_execution(
+                    request,
+                    FakeWorker(),
+                    verifier=layered_verifier,
+                    sandbox_backend=LocalTestBackend(),
+                )
+
+        verified = run_with(AcceptingVerifier())
+        self.assertEqual(verified.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(verified.staged_change_digest, expected_digest)
+        self.assertRegex(verified.staged_change_digest, r"^sha256:[0-9a-f]{64}$")
+        serialized = json.dumps(asdict(verified))
+        self.assertIn(expected_digest, serialized)
+        self.assertNotIn(content_canary, serialized)
+
+        class FailingVerifier:
+            def verify(self, prepared: VerifierInput):
+                raise TimeoutError("SECRET verifier response")
+
+        verifier_failed = run_with(FailingVerifier())
+        self.assertEqual(verifier_failed.status, ExecutionStatus.FAILED)
+        self.assertEqual(verifier_failed.failure_code, "verifier-failed")
+        self.assertEqual(verifier_failed.staged_change_digest, expected_digest)
+        self.assertNotIn(content_canary, json.dumps(asdict(verifier_failed)))
+
+        class DenyingVerifier:
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                genuine = AcceptingVerifier().verify(prepared)
+                return VerifierResult(**{**genuine.__dict__, "verdict": VerifierVerdict.FAIL})
+
+        denied = run_with(DenyingVerifier())
+        self.assertEqual(denied.status, ExecutionStatus.FAILED)
+        self.assertEqual(denied.failure_code, "verifier-not-pass")
+        self.assertEqual(denied.staged_change_digest, expected_digest)
+
+        class FailingWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                raise RuntimeError("injected worker failure")
+
+        with patch("app_contracts.executor.prepare_change") as prepare:
+            worker_failed = run_local_execution(
+                request,
+                FailingWorker(),
+                verifier=AcceptingVerifier(),
+                sandbox_backend=LocalTestBackend(),
+            )
+        prepare.assert_not_called()
+        self.assertEqual(worker_failed.status, ExecutionStatus.FAILED)
+        self.assertEqual(worker_failed.failure_code, "worker-failed")
+        self.assertIsNone(worker_failed.staged_change_digest)
+
+    def test_staged_change_digest_survives_pinned_replay_failure(self):
+        from app_contracts.sandbox import CommandResult
+
+        captured: dict = {}
+
+        class FakeBackend:
+            def __init__(self):
+                self.sessions = []
+                self.temp_roots = []
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                temporary = tempfile.TemporaryDirectory()
+                root = Path(temporary.name)
+                self.temp_roots.append(root)
+                copied_snapshot = root / "snapshot"
+                workspace = root / "workspace"
+                shutil.copytree(snapshot, copied_snapshot)
+                shutil.copytree(snapshot, workspace)
+                for path in (workspace, *workspace.rglob("*")):
+                    path.chmod(path.stat().st_mode | 0o200)
+                backend = self
+
+                class Session:
+                    def __init__(self):
+                        self.index = len(backend.sessions) + 1
+                        self.snapshot = copied_snapshot
+                        self.workspace = workspace
+
+                    def run(self, argv, timeout_seconds=30):
+                        if len(backend.sessions) == 2:
+                            return CommandResult(tuple(argv), 1, "replay stdout", "replay stderr")
+                        return CommandResult(tuple(argv), 0, "prepare stdout", "prepare stderr")
+
+                    def close(self):
+                        temporary.cleanup()
+
+                session = Session()
+                self.sessions.append(session)
+                return session
+
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                self.content = original + "\n# replay-failure-canary\n"
+                return WorkerProposal((("calculator.py", self.content),))
+
+        with pinned_test_request(test_command=("python3", "-c", "print('ok')")) as request:
+            real_prepare = prepare_change
+
+            def capturing_prepare(sandbox, **kwargs):
+                prepared = real_prepare(sandbox, **kwargs)
+                captured["staged_change"] = dict(prepared.staged_change)
+                return prepared
+
+            with patch("app_contracts.executor.prepare_change", side_effect=capturing_prepare):
+                result = run_local_execution(
+                    request,
+                    FakeWorker(),
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=FakeBackend(),
+                    require_pinned_snapshot=True,
+                )
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "verification-replay-failed")
+        self.assertIsNotNone(captured.get("staged_change"))
+        self.assertEqual(result.staged_change_digest, sha256_digest(captured["staged_change"]))
+        self.assertNotIn("replay-failure-canary", json.dumps(asdict(result)))
+
     def test_local_executor_types_and_imports_expose_no_publication_capability(self):
         forbidden_fields = {
             "token", "access_token", "credential", "credentials", "gateway",

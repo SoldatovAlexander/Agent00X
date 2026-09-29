@@ -27,6 +27,7 @@ MAX_PROPOSAL_FILES = 20
 MAX_PROPOSAL_PATH_BYTES = 240
 MAX_PROPOSAL_FILE_BYTES = 100_000
 MAX_PROPOSAL_TOTAL_BYTES = 1_000_000
+MAX_VERIFIER_BLOCKER_CODES = 16
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,9 @@ class ExecutionResult:
     verification_digest: str | None = None
     verified_contents_digest: str | None = None
     snapshot_tree_digest: str | None = None
+    snapshot_origin: Literal[
+        "local_git_commit", "unverified_local_test"
+    ] = "unverified_local_test"
     verifier_result: VerifierResult | None = None
     failure_code: str | None = None
     evidence_origin: Literal["local_test"] = "local_test"
@@ -278,6 +282,16 @@ def run_local_execution(
         except Exception:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=(
+                    request.pinned_snapshot.tree_digest
+                    if request.pinned_snapshot
+                    else None
+                ),
+                snapshot_origin=(
+                    request.pinned_snapshot.evidence_origin
+                    if request.pinned_snapshot
+                    else "unverified_local_test"
+                ),
                 failure_code="worker-failed",
             )
         proposal = validate_worker_proposal(raw_proposal, request)
@@ -327,6 +341,8 @@ def run_local_execution(
                     evidence_digest=staged["evidence_digest"],
                     verification_digest=staged["verification_digest"],
                     verified_contents_digest=verified_contents_digest,
+                    snapshot_tree_digest=request.pinned_snapshot.tree_digest,
+                    snapshot_origin=request.pinned_snapshot.evidence_origin,
                     failure_code="verification-replay-failed",
                 )
         verifier_input = _build_verifier_input(
@@ -346,6 +362,16 @@ def run_local_execution(
                 evidence_digest=staged["evidence_digest"],
                 verification_digest=staged["verification_digest"],
                 verified_contents_digest=verified_contents_digest,
+                snapshot_tree_digest=(
+                    request.pinned_snapshot.tree_digest
+                    if request.pinned_snapshot
+                    else None
+                ),
+                snapshot_origin=(
+                    request.pinned_snapshot.evidence_origin
+                    if request.pinned_snapshot
+                    else "unverified_local_test"
+                ),
                 failure_code="verifier-failed",
             )
         verifier_result = validate_verifier_result(raw_verifier_result, verifier_input)
@@ -357,6 +383,16 @@ def run_local_execution(
                 verification_digest=staged["verification_digest"],
                 verified_contents_digest=verified_contents_digest,
                 verifier_result=verifier_result,
+                snapshot_tree_digest=(
+                    request.pinned_snapshot.tree_digest
+                    if request.pinned_snapshot
+                    else None
+                ),
+                snapshot_origin=(
+                    request.pinned_snapshot.evidence_origin
+                    if request.pinned_snapshot
+                    else "unverified_local_test"
+                ),
                 failure_code="verifier-not-pass",
             )
         return ExecutionResult(
@@ -370,6 +406,11 @@ def run_local_execution(
                 request.pinned_snapshot.tree_digest
                 if request.pinned_snapshot is not None
                 else None
+            ),
+            snapshot_origin=(
+                request.pinned_snapshot.evidence_origin
+                if request.pinned_snapshot is not None
+                else "unverified_local_test"
             ),
             verifier_result=verifier_result,
         )
@@ -592,18 +633,19 @@ def validate_verifier_result(value: object, expected: VerifierInput) -> Verifier
         raise ExecutionError("execution verifier: result shape is invalid")
     if (
         not _is_safe_label(value.process_id)
-        or not isinstance(value.base_commit, str)
+        or not _is_safe_label(value.base_commit)
         or (
             value.snapshot_tree_digest is not None
-            and not isinstance(value.snapshot_tree_digest, str)
+            and not _is_safe_digest(value.snapshot_tree_digest)
         )
         or (
             value.replay_result_digest is not None
-            and not isinstance(value.replay_result_digest, str)
+            and not _is_safe_digest(value.replay_result_digest)
         )
         or not _is_safe_label(value.verifier_id)
         or type(value.verdict) is not VerifierVerdict
         or not isinstance(value.blocker_codes, tuple)
+        or len(value.blocker_codes) > MAX_VERIFIER_BLOCKER_CODES
         or any(
             not isinstance(code, str)
             or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", code) is None
@@ -611,7 +653,7 @@ def validate_verifier_result(value: object, expected: VerifierInput) -> Verifier
         )
         or value.evidence_origin != "local_test"
         or any(
-            not isinstance(digest, str)
+            not _is_safe_digest(digest)
             for digest in (
                 value.patch_digest,
                 value.evidence_digest,
@@ -652,6 +694,13 @@ def _is_safe_label(value: object) -> bool:
     return (
         isinstance(value, str)
         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is not None
+    )
+
+
+def _is_safe_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
     )
 
 

@@ -224,6 +224,13 @@ class ExecutionRecordTests(unittest.TestCase):
                 if replay_returncode == 0:
                     self.assertEqual(result.status, ExecutionStatus.VERIFIED)
                     self.assertEqual(verifier.calls, 1)
+                    self.assertEqual(result.snapshot_origin, "local_git_commit")
+                    self.assertNotIn("snapshot_path", ExecutionResult.__dataclass_fields__)
+                    self.assertNotIn("verified_contents", ExecutionResult.__dataclass_fields__)
+                    self.assertNotIn("test_command", ExecutionResult.__dataclass_fields__)
+                    self.assertNotIn("stdout", ExecutionResult.__dataclass_fields__)
+                    self.assertNotIn("stderr", ExecutionResult.__dataclass_fields__)
+                    self.assertNotIn("environment", ExecutionResult.__dataclass_fields__)
                     self.assertEqual(
                         verifier.received.base_commit, request.pinned_snapshot.commit_oid
                     )
@@ -1083,6 +1090,9 @@ class ExecutionRecordTests(unittest.TestCase):
             lambda result: VerifierResult(**{**result.__dict__, "verifier_id": "SECRET RAW VALUE"}),
             lambda result: VerifierResult(**{**result.__dict__, "verdict": "pass"}),
             lambda result: VerifierResult(**{**result.__dict__, "blocker_codes": ["bad"]}),
+            lambda result: VerifierResult(
+                **{**result.__dict__, "blocker_codes": tuple(f"blocker-{i}" for i in range(17))}
+            ),
         )
         for value in malformed:
             transform = value if callable(value) else lambda _result, fixed=value: fixed
@@ -1109,7 +1119,14 @@ class ExecutionRecordTests(unittest.TestCase):
                     FakeWorker(),
                     verifier=MalformedVerifier(
                         lambda result: VerifierResult(
-                            **{**result.__dict__, field: "foreign-value"}
+                            **{
+                                **result.__dict__,
+                                field: (
+                                    "sha256:" + "f" * 64
+                                    if field.endswith("digest")
+                                    else "foreign-value"
+                                ),
+                            }
                         )
                     ),
                 )

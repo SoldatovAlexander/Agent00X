@@ -12,6 +12,9 @@ from pathlib import Path
 import posixpath
 from typing import Protocol, runtime_checkable
 
+from .repository_process import prepare_change
+from .sandbox import LocalProcessSandbox
+
 
 class ExecutionError(ValueError):
     """A local execution request or collaborator result is invalid."""
@@ -128,6 +131,44 @@ def validate_worker_proposal(value: object, request: ExecutionRequest) -> Worker
     if len(detached) > MAX_PROPOSAL_FILES:
         raise ExecutionError("execution proposal: limits exceeded")
     return WorkerProposal(tuple(detached))
+
+
+def run_local_execution(request: ExecutionRequest, worker: ProposalWorker) -> ExecutionResult:
+    """Run one injected proposal through local sandbox preparation only."""
+
+    if not isinstance(request, ExecutionRequest):
+        raise ExecutionError("execution request: type is invalid")
+    if not callable(getattr(worker, "propose", None)):
+        raise ExecutionError("execution worker: collaborator is invalid")
+    sandbox = LocalProcessSandbox(request.snapshot_path, set(request.allowed_commands))
+    try:
+        worker_input = WorkerInput(
+            process_id=request.process_id,
+            task_id=request.task_id,
+            repository_id=request.repository_id,
+            base_commit=request.base_commit,
+            declared_change_paths=request.declared_change_paths,
+        )
+        proposal = validate_worker_proposal(worker.propose(worker_input), request)
+        prepared = prepare_change(
+            sandbox,
+            process_id=request.process_id,
+            task_id=request.task_id,
+            repository_id=request.repository_id,
+            base_commit=request.base_commit,
+            changes=dict(proposal.changes),
+            test_command=request.test_command,
+        )
+        staged = prepared.staged_change
+        return ExecutionResult(
+            status=ExecutionStatus.PREPARED,
+            prepared_change_id=staged["staged_change_id"],
+            patch_digest=staged["patch_digest"],
+            evidence_digest=staged["evidence_digest"],
+            verification_digest=staged["verification_digest"],
+        )
+    finally:
+        sandbox.close()
 
 
 def _validate_identity(value: object) -> None:

@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +18,11 @@ from app_contracts.executor import (
     ProposalWorker,
     WorkerInput,
     WorkerProposal,
+    run_local_execution,
     validate_worker_proposal,
 )
+from app_contracts.validator import ContractValidationError
+from app_contracts.repository_process import prepare_change
 
 
 def valid_request(**overrides) -> ExecutionRequest:
@@ -162,6 +166,51 @@ class ExecutionRecordTests(unittest.TestCase):
             ExecutionError, "^execution proposal: content is invalid$"
         ):
             validate_worker_proposal(invalid_unicode, valid_request())
+
+    def test_local_coordinator_calls_worker_once_and_returns_prepared_digests(self):
+        class FakeWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                self.task = task
+                content = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", content + "\n\ndef subtract(a, b):\n    return a - b\n"),))
+
+        worker = FakeWorker()
+        with patch(
+            "app_contracts.executor.prepare_change", wraps=prepare_change
+        ) as prepare_call:
+            result = run_local_execution(
+                valid_request(test_command=("python3", "-c", "print('ok')")), worker
+            )
+
+        self.assertEqual(worker.calls, 1)
+        prepare_call.assert_called_once()
+        self.assertEqual(worker.task.declared_change_paths, ("calculator.py",))
+        self.assertEqual(result.status, ExecutionStatus.PREPARED)
+        self.assertEqual(result.prepared_change_id, "staged-local-001")
+        self.assertTrue(result.patch_digest.startswith("sha256:"))
+        self.assertTrue(result.evidence_digest.startswith("sha256:"))
+        self.assertTrue(result.verification_digest.startswith("sha256:"))
+        self.assertTrue(all(len(digest.removeprefix("sha256:")) == 64 for digest in (
+            result.patch_digest,
+            result.evidence_digest,
+            result.verification_digest,
+        )))
+
+    def test_local_coordinator_returns_no_success_when_preparation_fails(self):
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                return WorkerProposal((("calculator.py", "invalid but different"),))
+
+        request = valid_request(test_command=("python3", "-c", "raise SystemExit(1)"))
+        with self.assertRaisesRegex(
+            ContractValidationError,
+            "^verification failed; staged change was not created$",
+        ):
+            run_local_execution(request, FakeWorker())
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

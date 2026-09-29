@@ -2526,6 +2526,223 @@ Commit: ALLOWED
   `README.md` и `docs/27-implementation-status.md`; полный suite: 451 tests
   passed, 1 skipped.
 
+## Этап Provider reconciliation — 1 batch, 8 карточек
+
+## Batch AC — mock provider partial-failure matrix
+
+Цель batch: связать существующие GitHub adapter reconciliation seams в
+локальную matrix частичных outcomes. Только injected mock transports; без token
+minting, сети, GitHub calls или claims об API atomicity.
+
+## EXP-264 — define provider transcript fixtures
+Статус: ACCEPTED
+Цель: создать компактные deterministic fixtures для branch/file/PR reconciliation outcomes.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: provider code, network, credentials.
+Разрешённые пути:
+- tests/test_github_app.py
+Критерии приёмки:
+- fixtures различают confirmed absence, matching receipt и unknown/malformed transport result;
+- fixtures не содержат credential values и не исполняют transport calls.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- test data не доказывает реальную GitHub семантику.
+Результат Control Plane:
+- ACCEPTED 2026-09-26: commit `4c718ba` добавил deterministic data-only
+  fixtures для branch/file/PR confirmed absence, matching evidence и
+  unknown/malformed outcome. Тесты подтверждают отсутствие credential-like
+  values и transport calls. Scope ограничен `tests/test_github_app.py`;
+  полный suite: 453 tests passed, 1 skipped.
+
+## EXP-265 — deny unknown branch outcome before write
+Статус: ACCEPTED
+Цель: показать, что unknown branch reconciliation не создаёт ref или file write.
+Зависит от: EXP-264
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real API retries.
+Разрешённые пути:
+- tests/test_github_app.py
+Критерии приёмки:
+- unknown branch outcome даёт stable reconciliation error;
+- POST/PUT counters остаются нулевыми.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- local transport double only.
+Результат Control Plane:
+- ACCEPTED 2026-09-26: commit `6d4dcd3` прогоняет каждый unknown branch
+  fixture через reconciliation и `publish_verified_files`; outcome unknown
+  вызывает stable error до ref POST и file PUT. Scope ограничен
+  `tests/test_github_app.py`; полный suite: 454 tests passed, 1 skipped.
+
+## EXP-266 — reconcile existing branch without duplicate ref
+Статус: ACCEPTED
+Цель: проверить existing scoped branch перед file publication.
+Зависит от: EXP-265
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: branch merge semantics.
+Разрешённые пути:
+- tests/test_github_app.py
+Критерии приёмки:
+- matching existing branch вызывает zero ref POST и разрешает only verified file PUT;
+- malformed branch evidence не разрешает write.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- не доказывает provider concurrency.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `f6e4783` доказал, что matching scoped branch
+  не создаёт ref POST и допускает только verified file PUT; каждый malformed
+  branch outcome fail-closed до write. Scope ограничен
+  `tests/test_github_app.py`; полный suite: 455 tests passed, 1 skipped.
+
+## EXP-267 — deny unknown pull-request reconciliation before POST
+Статус: ACCEPTED
+Цель: зафиксировать неизвестный PR outcome как reconciliation-required, а не create retry.
+Зависит от: EXP-264
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: external PR lookup.
+Разрешённые пути:
+- tests/test_github_app.py
+Критерии приёмки:
+- unknown/malformed PR lookup не создаёт POST;
+- error не содержит marker, request или credential-like values.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- read failure cannot establish provider absence.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `384035d` прогоняет unknown/malformed PR
+  fixtures через `publish_pull_request`; reconciliation error возникает до
+  POST и не раскрывает marker/key/credential-like value. Scope ограничен
+  `tests/test_github_app.py`; полный suite: 456 tests passed, 1 skipped.
+
+## EXP-268 — reuse matching pull-request receipt
+Статус: ACCEPTED
+Цель: доказать idempotent reuse matching provider receipt.
+Зависит от: EXP-267
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real provider idempotency.
+Разрешённые пути:
+- tests/test_github_app.py
+Критерии приёмки:
+- matching idempotency marker возвращает canonical receipt без второго POST;
+- receipt binding сохраняет repository/branch/digest/key.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- provider response is a mock transcript.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `639ab75` использует matching PR fixture и
+  подтверждает canonical receipt binding (repository/branch/digest/key) без
+  create POST. Scope ограничен `tests/test_github_app.py`; полный suite: 457
+  tests passed, 1 skipped.
+
+## EXP-269 — reject conflicting provider receipt
+Статус: ACCEPTED
+Цель: не считать conflicting или malformed provider evidence успешным replay.
+Зависит от: EXP-268
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: GitHub API contract changes.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- receipt с matching marker, но conflicting `head.ref`, leads to reconciliation error without POST;
+- malformed receipt leads to reconciliation error without POST;
+- diagnostics use stable reason without raw payload.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- no external consistency assertion.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `83bcf69` добавил fail-closed validation
+  conflicting `head.ref` для receipt с matching marker. Conflict отклоняется
+  stable error до create POST и без raw provider evidence. Scope ограничен
+  `github_app.py` и `tests/test_github_app.py`; полный suite: 458 tests
+  passed, 1 skipped.
+
+## EXP-270 — catalog provider partial-effect recovery
+Статус: ACCEPTED
+Цель: собрать branch-exists/file-unknown/PR-unknown/replay outcomes в regression catalog.
+Зависит от: EXP-269
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: production orchestration.
+Разрешённые пути:
+- src/app_contracts/github_app.py
+- tests/test_github_app.py
+Критерии приёмки:
+- unknown file-write outcome enters an explicit channel-local reconciliation-required state;
+- a repeated call on that channel performs zero blind file PUT retry;
+- matching outcome asserts exactly one receipt or verified file effect.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- channel-local state is not durable recovery or remote atomicity.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `9755f13` вводит explicit channel-local
+  reconciliation-required state после unknown file PUT outcome. Повтор на том
+  же channel fail-closed до второго PUT; matching outcomes сохраняют one
+  effect. Scope ограничен `github_app.py` и `tests/test_github_app.py`;
+  полный suite: 459 tests passed, 1 skipped.
+
+## EXP-271 — document provider reconciliation proof boundary
+Статус: ACCEPTED
+Цель: записать completed local matrix и remaining provider proof gaps.
+Зависит от: EXP-270
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: status claims about live GitHub.
+Разрешённые пути:
+- docs/31-proof-boundary-traceability.md
+- docs/32-local-publication-chain-spec.md
+Критерии приёмки:
+- docs distinguish mock transcript assertions from API atomicity and real provider consistency;
+- exact test module is linked.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- no external proof statement.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `d19d1a0` документирует mock provider matrix,
+  including unknown branch/PR stop, matching receipt reuse, conflicting
+  receipt deny и channel-local unknown-file no-retry. Документы явно
+  исключают API atomicity и durable/external recovery. Scope ограничен двумя
+  разрешёнными документами; полный suite: 459 tests passed, 1 skipped.
+
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

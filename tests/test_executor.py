@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, asdict
+import ast
 import json
 from pathlib import Path
 import sys
@@ -31,6 +32,7 @@ from app_contracts.executor import (
 from app_contracts.validator import ContractValidationError
 from app_contracts.repository_process import prepare_change
 from app_contracts.digests import sha256_digest
+import app_contracts.executor as executor_module
 
 
 def valid_request(**overrides) -> ExecutionRequest:
@@ -401,6 +403,43 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertIn("publication_not_attempted", result.limitations)
         self.assertNotIn("prompt", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("task_description", WorkerInput.__dataclass_fields__)
+
+    def test_local_executor_types_and_imports_expose_no_publication_capability(self):
+        forbidden_fields = {
+            "token", "access_token", "credential", "credentials", "gateway",
+            "broker", "actuator", "publication_client", "github_client",
+        }
+        records = (
+            ExecutionRequest, WorkerInput, WorkerProposal, VerifierInput,
+            VerifierResult, ExecutionResult,
+        )
+        for record in records:
+            self.assertTrue(forbidden_fields.isdisjoint(record.__dataclass_fields__))
+
+        source = Path(executor_module.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported_modules = set()
+        called_names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.update(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported_modules.add((node.module or "").lower())
+                imported_modules.update(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    called_names.add(node.func.id.lower())
+                elif isinstance(node.func, ast.Attribute):
+                    called_names.add(node.func.attr.lower())
+        forbidden_modules = {"gateway", "broker", "actuator", "publication", "github_app"}
+        self.assertTrue(
+            all(not any(forbidden in module for module in imported_modules) for forbidden in forbidden_modules)
+        )
+        self.assertTrue(
+            {"publish_pull_request", "publish_verified_files", "create_pull_request"}.isdisjoint(
+                called_names
+            )
+        )
 
     def test_malformed_sandbox_session_fails_before_worker_and_attempts_cleanup(self):
         class MalformedBackend:

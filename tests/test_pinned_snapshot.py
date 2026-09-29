@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.pinned_snapshot import (
     PinnedSnapshot,
+    export_local_commit_tree,
     open_local_repository,
     resolve_local_commit,
 )
@@ -277,6 +278,99 @@ class LocalCommitResolutionTests(_LocalGitRepositoryTestSupport, unittest.TestCa
             command[3:],
             ["rev-parse", "--verify", "--end-of-options", f"{commit_oid}^{{commit}}"],
         )
+
+
+class LocalCommitExportTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
+    def test_export_uses_exact_commit_blobs_and_ignores_worktree_changes(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path = self._create_repository(root)
+            attributes = repository_path / ".gitattributes"
+            version_file = repository_path / "version.txt"
+            attributes.write_text("version.txt export-subst\n", encoding="utf-8")
+            version_file.write_text("$Format:%H$\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repository_path), "add", ".gitattributes", "version.txt"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(repository_path), "-c", "user.name=Snapshot Test",
+                    "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
+                    "add snapshot fixture",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            repository = open_local_repository(repository_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            version_file.write_text("dirty worktree content\n", encoding="utf-8")
+            untracked_file = repository_path / "untracked.txt"
+            untracked_file.write_text("untracked content\n", encoding="utf-8")
+            status_before = subprocess.run(
+                ["git", "-C", str(repository_path), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            head_before = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+
+            exported = export_local_commit_tree(repository, commit_oid, destination_parent)
+
+            self.assertEqual(
+                (exported / "version.txt").read_text(encoding="utf-8"), "$Format:%H$\n"
+            )
+            self.assertFalse((exported / "untracked.txt").exists())
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(repository_path), "status", "--porcelain"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout,
+                status_before,
+            )
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout,
+                head_before,
+            )
+
+    def test_export_rejects_invalid_destination_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path = self._create_repository(root)
+            repository = open_local_repository(repository_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            missing_parent = root / "missing-parent"
+
+            with self.assertRaisesRegex(ValueError, "^pinned snapshot destination is invalid$"):
+                export_local_commit_tree(repository, commit_oid, missing_parent)
+            self.assertFalse(missing_parent.exists())
 
 
 if __name__ == "__main__":

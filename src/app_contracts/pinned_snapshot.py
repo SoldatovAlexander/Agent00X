@@ -10,8 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
+import shutil
 import subprocess
+import tempfile
 from typing import Literal
 
 _REPOSITORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}\Z")
@@ -126,6 +129,35 @@ def _run_local_git(repository_path: Path, arguments: tuple[str, ...]) -> str:
     return completed.stdout.strip()
 
 
+def _run_local_git_bytes(repository_path: Path, arguments: tuple[str, ...]) -> bytes:
+    """Return raw local Git object data under the same command allowlist."""
+
+    if not _is_allowlisted_local_git_arguments(arguments):
+        raise ValueError("pinned snapshot local Git operation is not allowlisted")
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "LANG": "C.UTF-8",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repository_path), *arguments],
+            capture_output=True,
+            text=False,
+            timeout=10,
+            check=False,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("pinned snapshot local Git object read failed") from None
+    if completed.returncode != 0:
+        raise ValueError("pinned snapshot local Git object read failed")
+    return completed.stdout
+
+
 def resolve_local_commit(repository: LocalGitRepository, commit_oid: str) -> str:
     """Resolve one full object id as a commit without symbolic or remote lookup."""
 
@@ -147,13 +179,100 @@ def resolve_local_commit(repository: LocalGitRepository, commit_oid: str) -> str
     return resolved
 
 
+def export_local_commit_tree(
+    repository: LocalGitRepository,
+    commit_oid: str,
+    destination_parent: Path,
+) -> Path:
+    """Copy regular file blobs from one commit into an owned temporary tree."""
+
+    resolved_commit = resolve_local_commit(repository, commit_oid)
+    if not isinstance(destination_parent, Path):
+        raise ValueError("pinned snapshot destination is invalid")
+    try:
+        parent = destination_parent.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ValueError("pinned snapshot destination is invalid") from None
+    if not parent.is_dir():
+        raise ValueError("pinned snapshot destination is invalid")
+    output_root = Path(tempfile.mkdtemp(prefix="app-pinned-snapshot-", dir=parent))
+    try:
+        listing = _run_local_git_bytes(
+            repository.root_path,
+            ("ls-tree", "-r", "-z", "--full-tree", f"{resolved_commit}^{{tree}}"),
+        )
+        for record in listing.split(b"\0"):
+            if not record:
+                continue
+            metadata, raw_path = record.split(b"\t", 1)
+            mode_raw, kind_raw, object_oid_raw = metadata.split(b" ", 2)
+            mode = mode_raw.decode("ascii")
+            kind = kind_raw.decode("ascii")
+            object_oid = object_oid_raw.decode("ascii")
+            if mode not in ("100644", "100755") or kind != "blob":
+                raise ValueError("pinned snapshot tree contains an unsupported entry")
+            expected_oid_length = 40 if repository.object_format == "sha1" else 64
+            if len(object_oid) != expected_oid_length or not _FULL_COMMIT_OID.fullmatch(object_oid):
+                raise ValueError("pinned snapshot tree object identity is invalid")
+            try:
+                path_text = raw_path.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError("pinned snapshot tree path is invalid") from None
+            relative_path = _safe_snapshot_relative_path(path_text)
+            file_size_text = _run_local_git(
+                repository.root_path, ("cat-file", "-s", object_oid)
+            )
+            if not file_size_text.isdecimal():
+                raise ValueError("pinned snapshot blob size is invalid")
+            content = _run_local_git_bytes(repository.root_path, ("cat-file", "blob", object_oid))
+            if len(content) != int(file_size_text):
+                raise ValueError("pinned snapshot blob size changed")
+            target = output_root.joinpath(*relative_path.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("xb") as snapshot_file:
+                snapshot_file.write(content)
+            target.chmod(0o755 if mode == "100755" else 0o644)
+        return output_root
+    except Exception:
+        shutil.rmtree(output_root, ignore_errors=True)
+        raise ValueError("pinned snapshot export failed") from None
+
+
+def _safe_snapshot_relative_path(value: str) -> PurePosixPath:
+    path = PurePosixPath(value)
+    if (
+        not value
+        or path.is_absolute()
+        or "\\" in value
+        or any(part in ("", ".", "..", ".git") for part in path.parts)
+    ):
+        raise ValueError("pinned snapshot tree path is invalid")
+    return path
+
+
 def _is_allowlisted_local_git_arguments(arguments: tuple[str, ...]) -> bool:
     if arguments in _PREFLIGHT_GIT_ARGUMENTS:
         return True
-    return (
+    if (
         len(arguments) == 4
         and arguments[:3] == ("rev-parse", "--verify", "--end-of-options")
         and isinstance(arguments[3], str)
         and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\^\{commit\}", arguments[3])
         is not None
+    ):
+        return True
+    if (
+        len(arguments) == 5
+        and arguments[:4] == ("ls-tree", "-r", "-z", "--full-tree")
+        and isinstance(arguments[4], str)
+        and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\^\{tree\}", arguments[4])
+        is not None
+    ):
+        return True
+    return (
+        len(arguments) == 3
+        and arguments[0] == "cat-file"
+        and arguments[1] in ("-s", "blob")
+        and isinstance(arguments[2], str)
+        and _FULL_COMMIT_OID.fullmatch(arguments[2]) is not None
     )

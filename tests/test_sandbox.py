@@ -3,7 +3,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +117,56 @@ class SandboxTests(unittest.TestCase):
             workspace_file = sandbox.workspace / "generated.txt"
             workspace_file.write_text("artifact", encoding="utf-8")
             self.assertFalse((sandbox.snapshot / "generated.txt").exists())
+
+    def test_read_only_input_snapshot_produces_read_only_baseline_and_writable_workspace(self):
+        with tempfile.TemporaryDirectory(prefix="app-sandbox-readonly-input-") as temporary_directory:
+            snapshot = Path(temporary_directory) / "snapshot"
+            nested = snapshot / "nested"
+            nested.mkdir(parents=True)
+            source_file = nested / "source.txt"
+            source_file.write_text("pinned input\n", encoding="utf-8")
+            source_file.chmod(0o444)
+            nested.chmod(0o555)
+            snapshot.chmod(0o555)
+            try:
+                with self.backend.create(snapshot, {"python3"}) as sandbox:
+                    readonly_copy = sandbox.snapshot / "nested" / "source.txt"
+                    workspace_copy = sandbox.workspace / "nested" / "source.txt"
+                    self.assertFalse(readonly_copy.stat().st_mode & 0o222)
+                    self.assertTrue(workspace_copy.stat().st_mode & 0o200)
+                    workspace_copy.write_text("workspace update\n", encoding="utf-8")
+                    self.assertEqual(readonly_copy.read_text(encoding="utf-8"), "pinned input\n")
+                    self.assertEqual(source_file.read_text(encoding="utf-8"), "pinned input\n")
+            finally:
+                source_file.chmod(0o600)
+                nested.chmod(0o700)
+                snapshot.chmod(0o700)
+
+    def test_docker_copy_of_read_only_input_keeps_writable_workspace(self):
+        with tempfile.TemporaryDirectory(prefix="app-docker-readonly-input-") as temporary_directory:
+            snapshot = Path(temporary_directory) / "snapshot"
+            snapshot.mkdir()
+            source_file = snapshot / "source.txt"
+            source_file.write_text("pinned input\n", encoding="utf-8")
+            source_file.chmod(0o444)
+            snapshot.chmod(0o555)
+            backend = DockerSandboxBackend("local-test-image")
+            backend._assert_image_available = lambda: None
+            try:
+                with patch(
+                    "app_contracts.sandbox.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        ["docker"], 0, "container-id\n", ""
+                    ),
+                ):
+                    sandbox = backend.create(snapshot, {"python3"})
+                    workspace_copy = sandbox.workspace / "source.txt"
+                    self.assertTrue(workspace_copy.stat().st_mode & 0o200)
+                    self.assertFalse((sandbox.snapshot / "source.txt").stat().st_mode & 0o222)
+                    sandbox.close()
+            finally:
+                source_file.chmod(0o600)
+                snapshot.chmod(0o700)
 
     def test_backend_does_not_claim_network_isolation(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:

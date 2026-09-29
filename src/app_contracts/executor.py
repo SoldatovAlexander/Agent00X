@@ -16,7 +16,7 @@ from typing import Literal, Protocol, runtime_checkable
 from .repository_process import prepare_change
 from .sandbox import LocalProcessSandboxBackend
 from .digests import sha256_digest
-from .pinned_snapshot import compute_snapshot_tree_digest
+from .pinned_snapshot import PinnedSnapshot, compute_snapshot_tree_digest
 
 
 class ExecutionError(ValueError):
@@ -42,7 +42,7 @@ class ExecutionRequest:
     declared_change_paths: tuple[str, ...]
     test_command: tuple[str, ...]
     test_timeout_seconds: int = 30
-    snapshot_tree_digest: str | None = None
+    pinned_snapshot: PinnedSnapshot | None = None
 
     def __post_init__(self) -> None:
         for value in (self.process_id, self.task_id, self.repository_id, self.base_commit):
@@ -86,6 +86,8 @@ class WorkerInput:
     repository_id: str
     base_commit: str
     declared_change_paths: tuple[str, ...]
+    snapshot_tree_digest: str | None = None
+    snapshot_origin: Literal["local_git_commit", "unverified_local_test"] = "unverified_local_test"
 
 
 @dataclass(frozen=True)
@@ -192,6 +194,7 @@ def run_local_execution(
     *,
     verifier: IndependentVerifier | None = None,
     sandbox_backend: ExecutorSandboxBackend | None = None,
+    require_pinned_snapshot: bool = False,
 ) -> ExecutionResult:
     """Run one injected proposal through local sandbox preparation only.
 
@@ -201,6 +204,10 @@ def run_local_execution(
 
     if not isinstance(request, ExecutionRequest):
         raise ExecutionError("execution request: type is invalid")
+    if not isinstance(require_pinned_snapshot, bool):
+        raise ExecutionError("execution request: pinned snapshot mode is invalid")
+    if require_pinned_snapshot and request.pinned_snapshot is None:
+        raise ExecutionError("execution request: pinned snapshot is required")
     if not callable(getattr(worker, "propose", None)):
         raise ExecutionError("execution worker: collaborator is invalid")
     verify = getattr(verifier, "verify", None)
@@ -222,7 +229,7 @@ def run_local_execution(
             or not callable(getattr(sandbox, "close", None))
         ):
             raise ExecutionError("execution sandbox: session is invalid")
-        if request.snapshot_tree_digest is not None:
+        if request.pinned_snapshot is not None:
             try:
                 source_tree_digest = compute_snapshot_tree_digest(request.snapshot_path)
                 source_content_digest = compute_snapshot_tree_digest(
@@ -233,7 +240,7 @@ def run_local_execution(
                 )
             except Exception:
                 raise ExecutionError("execution snapshot: digest check failed") from None
-            if source_tree_digest != request.snapshot_tree_digest:
+            if source_tree_digest != request.pinned_snapshot.tree_digest:
                 raise ExecutionError("execution snapshot: digest mismatch")
             if copied_content_digest != source_content_digest:
                 raise ExecutionError("execution snapshot: digest mismatch")
@@ -243,6 +250,16 @@ def run_local_execution(
             repository_id=request.repository_id,
             base_commit=request.base_commit,
             declared_change_paths=request.declared_change_paths,
+            snapshot_tree_digest=(
+                request.pinned_snapshot.tree_digest
+                if request.pinned_snapshot is not None
+                else None
+            ),
+            snapshot_origin=(
+                request.pinned_snapshot.evidence_origin
+                if request.pinned_snapshot is not None
+                else "unverified_local_test"
+            ),
         )
         try:
             raw_proposal = worker.propose(worker_input)
@@ -400,12 +417,14 @@ def _validate_request_shape(request: ExecutionRequest) -> None:
         or ".." in snapshot.parts
     ):
         raise ExecutionError("execution request: snapshot path is invalid")
-    snapshot_digest = request.snapshot_tree_digest
-    if snapshot_digest is not None and (
-        not isinstance(snapshot_digest, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot_digest) is None
+    pinned_snapshot = request.pinned_snapshot
+    if pinned_snapshot is not None and (
+        not isinstance(pinned_snapshot, PinnedSnapshot)
+        or pinned_snapshot.repository_id != request.repository_id
+        or pinned_snapshot.commit_oid != request.base_commit
+        or pinned_snapshot.snapshot_path != snapshot
     ):
-        raise ExecutionError("execution request: snapshot digest is invalid")
+        raise ExecutionError("execution request: pinned snapshot binding is invalid")
     if (
         not isinstance(request.allowed_commands, frozenset)
         or not request.allowed_commands

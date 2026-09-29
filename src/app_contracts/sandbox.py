@@ -68,6 +68,7 @@ class LocalProcessSandbox:
         shutil.copytree(snapshot, self.snapshot, symlinks=False)
         shutil.copytree(snapshot, self.workspace, symlinks=False)
         _make_tree_read_only(self.snapshot)
+        _make_tree_owner_writable(self.workspace)
         self._allowed_commands = frozenset(allowed_commands)
         self._closed = False
 
@@ -201,6 +202,7 @@ class DockerSandboxBackend:
             shutil.copytree(snapshot, copied_snapshot, symlinks=False)
             shutil.copytree(snapshot, workspace, symlinks=False)
             _make_tree_read_only(copied_snapshot)
+            _make_tree_owner_writable(workspace)
             completed = subprocess.run(
                 self.build_run_command(copied_snapshot, workspace),
                 capture_output=True,

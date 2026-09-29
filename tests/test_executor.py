@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, asdict
 import ast
+from contextlib import contextmanager
 import json
 from pathlib import Path
+import shutil
 import sys
+import subprocess
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -32,7 +36,12 @@ from app_contracts.executor import (
 from app_contracts.validator import ContractValidationError
 from app_contracts.repository_process import prepare_change
 from app_contracts.digests import sha256_digest
-from app_contracts.pinned_snapshot import compute_snapshot_tree_digest
+from app_contracts.pinned_snapshot import (
+    PinnedSnapshot,
+    compute_snapshot_tree_digest,
+    export_local_commit_tree,
+    open_local_repository,
+)
 import app_contracts.executor as executor_module
 
 
@@ -49,6 +58,66 @@ def valid_request(**overrides) -> ExecutionRequest:
     }
     fields.update(overrides)
     return ExecutionRequest(**fields)
+
+
+@contextmanager
+def pinned_test_request(**overrides):
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        source_repository = temporary_root / "source-repository"
+        shutil.copytree(ROOT / "fixtures/repository/project", source_repository)
+        subprocess.run(
+            ["git", "init", "--quiet", str(source_repository)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(source_repository), "add", "-A"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "git", "-C", str(source_repository), "-c", "user.name=Executor Test",
+                "-c", "user.email=executor@example.invalid", "commit", "--quiet", "-m",
+                "fixture snapshot",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        repository = open_local_repository(source_repository)
+        commit_oid = subprocess.run(
+            ["git", "-C", str(source_repository), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        lease = export_local_commit_tree(repository, commit_oid, temporary_root)
+        try:
+            snapshot_path = lease.path
+            fields = {
+                "process_id": "process-local-001",
+                "task_id": "task-local-001",
+                "repository_id": "fixture-repository",
+                "base_commit": commit_oid,
+                "snapshot_path": snapshot_path,
+                "allowed_commands": frozenset({"python3"}),
+                "declared_change_paths": ("calculator.py",),
+                "test_command": ("python3", "-m", "unittest"),
+                "pinned_snapshot": PinnedSnapshot(
+                    repository_id="fixture-repository",
+                    commit_oid=commit_oid,
+                    tree_digest=compute_snapshot_tree_digest(snapshot_path),
+                    snapshot_path=snapshot_path,
+                ),
+            }
+            fields.update(overrides)
+            yield ExecutionRequest(**fields)
+        finally:
+            lease.close()
 
 
 class AcceptingVerifier:
@@ -126,8 +195,13 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertTrue(isinstance(fake, ProposalWorker))
         self.assertEqual(
             set(WorkerInput.__dataclass_fields__),
-            {"process_id", "task_id", "repository_id", "base_commit", "declared_change_paths"},
+            {
+                "process_id", "task_id", "repository_id", "base_commit",
+                "declared_change_paths", "snapshot_tree_digest", "snapshot_origin",
+            },
         )
+        self.assertIsNone(task.snapshot_tree_digest)
+        self.assertEqual(task.snapshot_origin, "unverified_local_test")
         self.assertEqual(set(WorkerProposal.__dataclass_fields__), {"changes"})
 
     def test_verifier_contract_is_separate_and_explicitly_local(self):
@@ -249,20 +323,24 @@ class ExecutionRecordTests(unittest.TestCase):
             "app_contracts.executor.prepare_change", wraps=prepare_change
         ) as prepare_call:
             verifier = AcceptingVerifier()
-            result = run_local_execution(
-                valid_request(
-                    test_command=("python3", "-c", "print('ok')"),
-                    snapshot_tree_digest=compute_snapshot_tree_digest(
-                        valid_request().snapshot_path
-                    ),
-                ),
-                worker,
-                verifier=verifier,
-            )
+            with pinned_test_request(
+                test_command=("python3", "-c", "print('ok')")
+            ) as request:
+                result = run_local_execution(
+                    request,
+                    worker,
+                    verifier=verifier,
+                    require_pinned_snapshot=True,
+                )
 
         self.assertEqual(worker.calls, 1)
         prepare_call.assert_called_once()
         self.assertEqual(worker.task.declared_change_paths, ("calculator.py",))
+        self.assertEqual(worker.task.base_commit, request.pinned_snapshot.commit_oid)
+        self.assertEqual(worker.task.snapshot_tree_digest, request.pinned_snapshot.tree_digest)
+        self.assertEqual(worker.task.snapshot_origin, "local_git_commit")
+        self.assertNotIn("snapshot_path", WorkerInput.__dataclass_fields__)
+        self.assertNotIn(str(request.snapshot_path), repr(worker.task))
         self.assertEqual(result.status, ExecutionStatus.VERIFIED)
         self.assertEqual(verifier.calls, 1)
         self.assertEqual(result.prepared_change_id, "staged-local-001")
@@ -328,13 +406,10 @@ class ExecutionRecordTests(unittest.TestCase):
         worker = CountingWorker()
         backend = TrackingBackend()
         verifier = AcceptingVerifier()
-        request = valid_request(
-            snapshot_tree_digest=compute_snapshot_tree_digest(valid_request().snapshot_path)
-        )
-
-        with patch("app_contracts.executor.prepare_change") as prepare:
-            with self.assertRaisesRegex(ExecutionError, "^execution snapshot: digest mismatch$"):
-                run_local_execution(request, worker, verifier=verifier, sandbox_backend=backend)
+        with pinned_test_request() as request:
+            with patch("app_contracts.executor.prepare_change") as prepare:
+                with self.assertRaisesRegex(ExecutionError, "^execution snapshot: digest mismatch$"):
+                    run_local_execution(request, worker, verifier=verifier, sandbox_backend=backend)
 
         self.assertEqual(worker.calls, 0)
         self.assertEqual(prepare.call_count, 0)
@@ -912,6 +987,50 @@ class ExecutionRecordTests(unittest.TestCase):
                     ExecutionError, "^execution request: command allowlist is invalid$"
                 ):
                     valid_request(allowed_commands=allowed_commands)
+
+    def test_pinned_request_rejects_identity_or_path_mismatch(self):
+        for overrides in (
+            {"repository_id": "other-repository"},
+            {"base_commit": "b" * 40},
+            {"snapshot_path": ROOT / "fixtures"},
+            {"pinned_snapshot": "not-a-pinned-record"},
+        ):
+            with self.subTest(overrides=tuple(overrides)):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: pinned snapshot binding is invalid$"
+                ):
+                    with pinned_test_request(**overrides):
+                        self.fail("mismatched pinned request unexpectedly constructed")
+
+    def test_pinned_execution_path_rejects_legacy_unpinned_request_before_sandbox(self):
+        class MustNotStartBackend:
+            calls = 0
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                self.calls += 1
+                raise AssertionError("unpinned request reached sandbox")
+
+        class CountingWorker:
+            calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        backend = MustNotStartBackend()
+        worker = CountingWorker()
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution request: pinned snapshot is required$"
+        ):
+            run_local_execution(
+                valid_request(),
+                worker,
+                verifier=AcceptingVerifier(),
+                sandbox_backend=backend,
+                require_pinned_snapshot=True,
+            )
+        self.assertEqual(backend.calls, 0)
+        self.assertEqual(worker.calls, 0)
 
 
 if __name__ == "__main__":

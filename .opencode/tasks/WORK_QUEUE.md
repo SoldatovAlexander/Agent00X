@@ -4013,17 +4013,20 @@ Commit: ALLOWED
 ## EXP-317 — verify snapshot identity after sandbox copying
 Статус: READY
 Цель: bind the sandbox's read-only snapshot copy to the pinned tree digest.
-Гипотеза: executor can detect copy substitution before invoking Worker.
+Гипотеза: executor can detect copy substitution before invoking Worker while separating content identity from intentional permission normalization.
 Зависит от: EXP-316
 Среда исполнения: local
 Внешняя цель: none
 Вне scope: production sandbox guarantees, host race elimination claims.
 Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
 - src/app_contracts/executor.py
+- tests/test_pinned_snapshot.py
 - tests/test_executor.py
 Критерии приёмки:
+- source tree is rechecked against the expected pinned digest; copied snapshot content is compared independently of backend read-only permission normalization.
 - mismatch is detected before worker or preparation calls and sandbox is closed.
-- tests substitute one copied file and assert fail-closed call ordering.
+- tests substitute one copied file and assert fail-closed call ordering; digest tests distinguish mode-bound pin from content-only copy comparison.
 - limitations explicitly retain local process/race caveats.
 Проверки:
 - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q

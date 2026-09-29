@@ -9,21 +9,32 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.executor import ExecutionRequest, ExecutionResult, ExecutionStatus
+from app_contracts.executor import (
+    ExecutionError,
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutionStatus,
+)
+
+
+def valid_request(**overrides) -> ExecutionRequest:
+    fields = {
+        "process_id": "process-local-001",
+        "task_id": "task-local-001",
+        "repository_id": "fixture-repository",
+        "base_commit": "fixture-base-001",
+        "snapshot_path": Path("fixtures/repository/project"),
+        "allowed_commands": frozenset({"python3"}),
+        "declared_change_paths": ("calculator.py",),
+        "test_command": ("python3", "-m", "unittest"),
+    }
+    fields.update(overrides)
+    return ExecutionRequest(**fields)
 
 
 class ExecutionRecordTests(unittest.TestCase):
     def test_request_is_an_immutable_local_preparation_record(self):
-        request = ExecutionRequest(
-            process_id="process-local-001",
-            task_id="task-local-001",
-            repository_id="fixture-repository",
-            base_commit="fixture-base-001",
-            snapshot_path=Path("fixtures/repository/project"),
-            allowed_commands=frozenset({"python3"}),
-            declared_change_paths=("calculator.py",),
-            test_command=("python3", "-m", "unittest"),
-        )
+        request = valid_request()
 
         self.assertEqual(request.test_timeout_seconds, 30)
         with self.assertRaises(FrozenInstanceError):
@@ -46,6 +57,17 @@ class ExecutionRecordTests(unittest.TestCase):
             failed.status = ExecutionStatus.PREPARED  # type: ignore[misc]
         self.assertNotIn("prompt", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("credential", ExecutionRequest.__dataclass_fields__)
+
+    def test_request_rejects_invalid_identity_values_without_echoing_them(self):
+        for field in ("process_id", "task_id", "repository_id", "base_commit"):
+            for value in (None, 42, "", "  ", " leading", "trailing ", "unsafe\nvalue"):
+                with self.subTest(field=field, value=repr(value)):
+                    with self.assertRaisesRegex(
+                        ExecutionError,
+                        "^execution request: identity field is invalid$",
+                    ) as raised:
+                        valid_request(**{field: value})
+                    self.assertNotIn("unsafe", str(raised.exception))
 
 
 if __name__ == "__main__":

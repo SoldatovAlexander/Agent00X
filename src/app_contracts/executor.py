@@ -11,6 +11,10 @@ from enum import Enum
 from pathlib import Path
 
 
+class ExecutionError(ValueError):
+    """A local execution request or collaborator result is invalid."""
+
+
 @dataclass(frozen=True)
 class ExecutionRequest:
     """Caller-declared inputs for one local preparation attempt."""
@@ -24,6 +28,10 @@ class ExecutionRequest:
     declared_change_paths: tuple[str, ...]
     test_command: tuple[str, ...]
     test_timeout_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        for value in (self.process_id, self.task_id, self.repository_id, self.base_commit):
+            _validate_identity(value)
 
 
 class ExecutionStatus(str, Enum):
@@ -41,3 +49,13 @@ class ExecutionResult:
     evidence_digest: str | None = None
     verification_digest: str | None = None
     failure_code: str | None = None
+
+
+def _validate_identity(value: object) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ExecutionError("execution request: identity field is invalid")

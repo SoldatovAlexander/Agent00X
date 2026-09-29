@@ -18,6 +18,7 @@ from app_contracts.pinned_snapshot import (
     MAX_SNAPSHOT_TOTAL_BYTES,
     OwnedLocalSnapshot,
     PinnedSnapshot,
+    SNAPSHOT_CONTENT_DIGEST_CANONICALIZATION,
     SNAPSHOT_DIGEST_CANONICALIZATION,
     compute_snapshot_tree_digest,
     export_local_commit_tree,
@@ -628,6 +629,15 @@ class SnapshotTreeDigestTests(unittest.TestCase):
             renamed.chmod(0o755)
             changed_mode = compute_snapshot_tree_digest(snapshot)
             self.assertNotEqual(changed_path, changed_mode)
+
+            mode_insensitive_digest = compute_snapshot_tree_digest(snapshot, include_mode=False)
+            renamed.chmod(0o644)
+            same_content_digest = compute_snapshot_tree_digest(snapshot, include_mode=False)
+            self.assertEqual(mode_insensitive_digest, same_content_digest)
+            self.assertEqual(
+                SNAPSHOT_CONTENT_DIGEST_CANONICALIZATION,
+                "app-process-snapshot-content/v1",
+            )
 
     def test_digest_rejects_symlink_entries(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

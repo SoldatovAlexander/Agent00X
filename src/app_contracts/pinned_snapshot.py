@@ -27,6 +27,7 @@ _REPOSITORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}\Z")
 _FULL_COMMIT_OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SNAPSHOT_DIGEST_CANONICALIZATION = "app-process-snapshot-tree/v1"
+SNAPSHOT_CONTENT_DIGEST_CANONICALIZATION = "app-process-snapshot-content/v1"
 MAX_SNAPSHOT_FILES = 10_000
 MAX_SNAPSHOT_PATH_BYTES = 240
 MAX_SNAPSHOT_FILE_BYTES = 100_000
@@ -350,10 +351,14 @@ def export_local_commit_tree(
         raise ValueError("pinned snapshot export failed") from None
 
 
-def compute_snapshot_tree_digest(snapshot_path: Path) -> str:
-    """Hash normalized relative paths, executable mode and file bytes."""
+def compute_snapshot_tree_digest(snapshot_path: Path, *, include_mode: bool = True) -> str:
+    """Hash normalized relative paths and bytes, optionally binding executable mode."""
 
-    if not isinstance(snapshot_path, Path) or snapshot_path.is_symlink():
+    if (
+        not isinstance(snapshot_path, Path)
+        or snapshot_path.is_symlink()
+        or not isinstance(include_mode, bool)
+    ):
         raise ValueError("pinned snapshot tree path is invalid")
     try:
         root = snapshot_path.resolve(strict=True)
@@ -382,13 +387,10 @@ def compute_snapshot_tree_digest(snapshot_path: Path) -> str:
             ):
                 raise ValueError("pinned snapshot tree limits exceeded")
             content_digest = _hash_file(path)
-            entries.append(
-                {
-                    "path": relative.as_posix(),
-                    "mode": "100755" if metadata.st_mode & 0o111 else "100644",
-                    "content_digest": content_digest,
-                }
-            )
+            entry = {"path": relative.as_posix(), "content_digest": content_digest}
+            if include_mode:
+                entry["mode"] = "100755" if metadata.st_mode & 0o111 else "100644"
+            entries.append(entry)
         entries.sort(key=lambda entry: entry["path"])
     except ValueError:
         raise
@@ -396,7 +398,11 @@ def compute_snapshot_tree_digest(snapshot_path: Path) -> str:
         raise ValueError("pinned snapshot tree could not be read") from None
     return sha256_digest(
         {
-            "canonicalization": SNAPSHOT_DIGEST_CANONICALIZATION,
+            "canonicalization": (
+                SNAPSHOT_DIGEST_CANONICALIZATION
+                if include_mode
+                else SNAPSHOT_CONTENT_DIGEST_CANONICALIZATION
+            ),
             "files": entries,
         }
     )

@@ -16,6 +16,7 @@ from typing import Literal, Protocol, runtime_checkable
 from .repository_process import prepare_change
 from .sandbox import LocalProcessSandboxBackend
 from .digests import sha256_digest
+from .pinned_snapshot import compute_snapshot_tree_digest
 
 
 class ExecutionError(ValueError):
@@ -41,6 +42,7 @@ class ExecutionRequest:
     declared_change_paths: tuple[str, ...]
     test_command: tuple[str, ...]
     test_timeout_seconds: int = 30
+    snapshot_tree_digest: str | None = None
 
     def __post_init__(self) -> None:
         for value in (self.process_id, self.task_id, self.repository_id, self.base_commit):
@@ -220,6 +222,21 @@ def run_local_execution(
             or not callable(getattr(sandbox, "close", None))
         ):
             raise ExecutionError("execution sandbox: session is invalid")
+        if request.snapshot_tree_digest is not None:
+            try:
+                source_tree_digest = compute_snapshot_tree_digest(request.snapshot_path)
+                source_content_digest = compute_snapshot_tree_digest(
+                    request.snapshot_path, include_mode=False
+                )
+                copied_content_digest = compute_snapshot_tree_digest(
+                    sandbox.snapshot, include_mode=False
+                )
+            except Exception:
+                raise ExecutionError("execution snapshot: digest check failed") from None
+            if source_tree_digest != request.snapshot_tree_digest:
+                raise ExecutionError("execution snapshot: digest mismatch")
+            if copied_content_digest != source_content_digest:
+                raise ExecutionError("execution snapshot: digest mismatch")
         worker_input = WorkerInput(
             process_id=request.process_id,
             task_id=request.task_id,
@@ -383,6 +400,12 @@ def _validate_request_shape(request: ExecutionRequest) -> None:
         or ".." in snapshot.parts
     ):
         raise ExecutionError("execution request: snapshot path is invalid")
+    snapshot_digest = request.snapshot_tree_digest
+    if snapshot_digest is not None and (
+        not isinstance(snapshot_digest, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", snapshot_digest) is None
+    ):
+        raise ExecutionError("execution request: snapshot digest is invalid")
     if (
         not isinstance(request.allowed_commands, frozenset)
         or not request.allowed_commands

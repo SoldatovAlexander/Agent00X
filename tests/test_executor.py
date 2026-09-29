@@ -32,6 +32,7 @@ from app_contracts.executor import (
 from app_contracts.validator import ContractValidationError
 from app_contracts.repository_process import prepare_change
 from app_contracts.digests import sha256_digest
+from app_contracts.pinned_snapshot import compute_snapshot_tree_digest
 import app_contracts.executor as executor_module
 
 
@@ -249,7 +250,12 @@ class ExecutionRecordTests(unittest.TestCase):
         ) as prepare_call:
             verifier = AcceptingVerifier()
             result = run_local_execution(
-                valid_request(test_command=("python3", "-c", "print('ok')")),
+                valid_request(
+                    test_command=("python3", "-c", "print('ok')"),
+                    snapshot_tree_digest=compute_snapshot_tree_digest(
+                        valid_request().snapshot_path
+                    ),
+                ),
                 worker,
                 verifier=verifier,
             )
@@ -284,6 +290,56 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertEqual(result.verifier_result.verifier_id, "test-verifier")
         self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("publishable", ExecutionResult.__dataclass_fields__)
+
+    def test_snapshot_copy_digest_mismatch_stops_before_worker_and_preparation(self):
+        from app_contracts.sandbox import LocalProcessSandbox
+
+        class TrackingBackend:
+            def __init__(self):
+                self.closed = 0
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                sandbox = LocalProcessSandbox(snapshot, allowed_commands)
+                copied_file = sandbox.snapshot / "calculator.py"
+                copied_file.chmod(0o644)
+                copied_file.write_text("substituted snapshot content\n", encoding="utf-8")
+                backend = self
+
+                class Session:
+                    snapshot = sandbox.snapshot
+                    workspace = sandbox.workspace
+
+                    def run(self, argv, timeout_seconds=30):
+                        return sandbox.run(argv, timeout_seconds)
+
+                    def close(self):
+                        backend.closed += 1
+                        sandbox.close()
+
+                return Session()
+
+        class CountingWorker:
+            calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        worker = CountingWorker()
+        backend = TrackingBackend()
+        verifier = AcceptingVerifier()
+        request = valid_request(
+            snapshot_tree_digest=compute_snapshot_tree_digest(valid_request().snapshot_path)
+        )
+
+        with patch("app_contracts.executor.prepare_change") as prepare:
+            with self.assertRaisesRegex(ExecutionError, "^execution snapshot: digest mismatch$"):
+                run_local_execution(request, worker, verifier=verifier, sandbox_backend=backend)
+
+        self.assertEqual(worker.calls, 0)
+        self.assertEqual(prepare.call_count, 0)
+        self.assertEqual(verifier.calls, 0)
+        self.assertEqual(backend.closed, 1)
 
     def test_local_coordinator_returns_no_success_when_preparation_fails(self):
         class FakeWorker:

@@ -1134,6 +1134,30 @@ class GitHubReconciliationTests(unittest.TestCase):
         self.assertEqual(receipt.staged_change_digest, request["staged_change_digest"])
         self.assertEqual(receipt.idempotency_key, request["idempotency_key"])
 
+    def test_conflicting_pr_branch_with_matching_marker_denies_without_post(self):
+        posts = []
+        conflicting = ProviderTranscriptFixtures.matching_pr_payload()
+        conflicting[0]["head"] = {"ref": "agent/process-other-001"}
+        channel = self._channel((
+            lambda _url, _headers, body: posts.append(body),
+            lambda _url, _headers: conflicting,
+            None,
+        ))
+        request = {
+            "operation": "publish_pull_request",
+            "repository_id": "github-installation/456/repository/1001",
+            "branch": _FIXTURE_BRANCH,
+            "staged_change_digest": _FIXTURE_DIGEST,
+            "idempotency_key": _FIXTURE_IDEMPOTENCY_KEY,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        with self.assertRaisesRegex(GitHubAppBrokerError, "entry conflicts with requested branch") as raised:
+            channel.publish_pull_request(request)
+        self.assertEqual(posts, [])
+        self.assertNotIn("process-other-001", str(raised.exception))
+        self.assertNotIn(_FIXTURE_MARKER, str(raised.exception))
+
     def test_reconcile_returns_unknown_when_lookup_fails(self):
         channel = self._channel((
             None,

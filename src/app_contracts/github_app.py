@@ -407,6 +407,11 @@ class GitHubAppPublicationChannel:
         for item in response:
             if not isinstance(item, dict) or marker not in item.get("body", ""):
                 continue
+            head = item.get("head")
+            if head is not None and (
+                not isinstance(head, dict) or head.get("ref") != branch
+            ):
+                raise GitHubAppBrokerError("GitHub pull-request entry conflicts with requested branch")
             number, html_url = item.get("number"), item.get("html_url")
             if not (
                 isinstance(number, int)

@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 7/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 8/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3957,7 +3957,7 @@ Commit: ALLOWED
   full suite: 526 passed, 1 skipped.
 
 ## EXP-315 — bound snapshot file count and total bytes
-Статус: READY
+Статус: ACCEPTED
 Цель: set explicit limits for tree entries, path bytes, individual files and total bytes.
 Гипотеза: bounded exports prevent oversized repository objects from exhausting local resources.
 Зависит от: EXP-314
@@ -3976,9 +3976,15 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `7ad0ff5` ограничил дерево (10k файлов, 240-byte
+  пути, 100k на файл, 1MB суммарно), проверяя declared blob size до чтения;
+  tree listing и blob output читаются потоково с hard cap. Тесты проверяют
+  границы/переполнение и отсутствие blob-read при отказе. Targeted: 27 passed;
+  full suite: 531 passed, 1 skipped.
 
 ## EXP-316 — make snapshot lifecycle explicit and read-only
-Статус: DRAFT
+Статус: READY
 Цель: provide explicit close/context lifecycle for temporary pinned snapshots.
 Гипотеза: owned temporary state is cleaned on success/failure and cannot silently outlive its lease.
 Зависит от: EXP-315

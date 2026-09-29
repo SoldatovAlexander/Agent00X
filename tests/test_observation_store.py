@@ -681,6 +681,55 @@ class FailingCheckpointStore(ObservationStore):
 
 
 class PreDispatchGateTests(unittest.TestCase):
+    def test_sqlite_gate_commits_checkpoint_and_intent_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            store = SQLiteObservationStore(database)
+            store.append(valid_event("event-store-demo-001", 0))
+            calls: list[str] = []
+
+            def dispatch():
+                self.assertEqual(len(store.checkpoints()), 1)
+                self.assertEqual(len(store.events()), 2)
+                calls.append("dispatched")
+                return "mock-receipt"
+
+            cursor, outcome = run_gated_dispatch(
+                store,
+                checkpoint=valid_checkpoint(),
+                intent_event=valid_event("event-store-demo-002", 1),
+                dispatch=dispatch,
+            )
+            self.assertEqual(cursor, 1)
+            self.assertEqual(outcome, "mock-receipt")
+            self.assertEqual(calls, ["dispatched"])
+            store.close()
+
+    def test_sqlite_gate_rolls_back_pair_and_refuses_dispatch_on_write_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            store = SQLiteObservationStore(database)
+            store.append(valid_event("event-store-demo-001", 0))
+            with store._connection:
+                store._connection.execute(
+                    """CREATE TRIGGER reject_intent BEFORE INSERT ON observation_events
+                       WHEN NEW.event_id = 'event-store-demo-002'
+                       BEGIN SELECT RAISE(ABORT, 'injected'); END"""
+                )
+            calls: list[str] = []
+            with self.assertRaisesRegex(PreDispatchError, "^pre-dispatch gate refused:"):
+                run_gated_dispatch(
+                    store,
+                    checkpoint=valid_checkpoint(),
+                    intent_event=valid_event("event-store-demo-002", 1),
+                    dispatch=lambda: calls.append("dispatched"),
+                )
+            self.assertEqual(calls, [])
+            store.close()
+            with SQLiteObservationStore(database) as reopened:
+                self.assertEqual(len(reopened.events()), 1)
+                self.assertEqual(reopened.checkpoints(), ())
+
     def test_gate_records_checkpoint_and_intent_before_dispatch(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

@@ -66,9 +66,13 @@ def run_gated_dispatch(
     if not callable(dispatch):
         raise PreDispatchError("pre-dispatch gate refused: dispatch is not callable")
     try:
-        store.record_checkpoint(checkpoint)
-        cursor = store.append(intent_event)
-    except (ContractValidationError, EventConflictError) as exc:
+        persist_pair = getattr(store, "record_checkpoint_and_intent", None)
+        if callable(persist_pair):
+            cursor = persist_pair(checkpoint, intent_event)
+        else:
+            store.record_checkpoint(checkpoint)
+            cursor = store.append(intent_event)
+    except (ContractValidationError, EventConflictError, ObservationStoreError) as exc:
         raise PreDispatchError(f"pre-dispatch gate refused: {exc}") from exc
     return cursor, dispatch()
 
@@ -429,6 +433,64 @@ class SQLiteObservationStore:
         if saw_non_intent:
             raise ContractValidationError("invocation reference is not an intent")
         raise ContractValidationError("unknown invocation reference")
+
+    def record_checkpoint_and_intent(
+        self, checkpoint: dict[str, Any], intent_event: dict[str, Any]
+    ) -> int:
+        """Commit a validated checkpoint and its intent event in one transaction."""
+
+        validate(intent_event, EVENT_SCHEMA)
+        intent_digest = sha256_digest(intent_event)
+        intent_id = intent_event["event_id"]
+        checkpoint_digest = sha256_digest(checkpoint) if isinstance(checkpoint, dict) else ""
+        checkpoint_id = checkpoint.get("checkpoint_id") if isinstance(checkpoint, dict) else None
+        try:
+            with self._connection:
+                self.check_checkpoint(checkpoint)
+                known_checkpoint = self._connection.execute(
+                    "SELECT digest FROM observation_checkpoints WHERE checkpoint_id = ?",
+                    (checkpoint_id,),
+                ).fetchone()
+                if known_checkpoint is not None and known_checkpoint["digest"] != checkpoint_digest:
+                    raise EventConflictError("checkpoint id conflict")
+                known_event = self._connection.execute(
+                    "SELECT cursor, digest FROM observation_events WHERE event_id = ?",
+                    (intent_id,),
+                ).fetchone()
+                if known_event is not None and known_event["digest"] != intent_digest:
+                    raise EventConflictError("event id conflict")
+                if known_checkpoint is None:
+                    checkpoint_cursor = self._connection.execute(
+                        "SELECT COALESCE(MAX(cursor) + 1, 0) FROM observation_checkpoints"
+                    ).fetchone()[0]
+                    self._connection.execute(
+                        "INSERT INTO observation_checkpoints(checkpoint_id, cursor, checkpoint_json, digest) "
+                        "VALUES (?, ?, ?, ?)",
+                        (
+                            checkpoint_id,
+                            checkpoint_cursor,
+                            json.dumps(checkpoint, sort_keys=True, separators=(",", ":")),
+                            checkpoint_digest,
+                        ),
+                    )
+                if known_event is not None:
+                    return known_event["cursor"]
+                event_cursor = self._connection.execute(
+                    "SELECT COALESCE(MAX(cursor) + 1, 0) FROM observation_events"
+                ).fetchone()[0]
+                self._connection.execute(
+                    "INSERT INTO observation_events(event_id, cursor, event_json, digest) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        intent_id,
+                        event_cursor,
+                        json.dumps(intent_event, sort_keys=True, separators=(",", ":")),
+                        intent_digest,
+                    ),
+                )
+                return event_cursor
+        except sqlite3.Error as exc:
+            raise ObservationStoreError("observation journal: gated records could not be stored") from exc
 
     def close(self) -> None:
         self._connection.close()

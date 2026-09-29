@@ -142,6 +142,242 @@ class AcceptingVerifier:
 
 
 class ExecutionRecordTests(unittest.TestCase):
+    def test_complete_pinned_git_export_to_second_pass_flow_is_local_and_bound(self):
+        from app_contracts.sandbox import CommandResult
+
+        class FakeBackend:
+            def __init__(self):
+                self.sessions = []
+                self.commands = []
+                self.temp_roots = []
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                temporary = tempfile.TemporaryDirectory()
+                root = Path(temporary.name)
+                self.temp_roots.append(root)
+                copied_snapshot = root / "snapshot"
+                workspace = root / "workspace"
+                shutil.copytree(snapshot, copied_snapshot)
+                shutil.copytree(snapshot, workspace)
+                for path in (workspace, *workspace.rglob("*")):
+                    path.chmod(path.stat().st_mode | 0o200)
+                backend = self
+
+                class Session:
+                    def __init__(self):
+                        self.index = len(backend.sessions) + 1
+                        self.snapshot = copied_snapshot
+                        self.workspace = workspace
+                        self.closed = False
+                        self.initial_tree_digest = compute_snapshot_tree_digest(self.snapshot)
+
+                    def run(self, argv, timeout_seconds=30):
+                        backend.commands.append(
+                            (self.index, tuple(argv), timeout_seconds)
+                        )
+                        return CommandResult(tuple(argv), 0, "test stdout sentinel", "test stderr sentinel")
+
+                    def close(self):
+                        self.closed = True
+                        temporary.cleanup()
+
+                session = Session()
+                self.sessions.append(session)
+                return session
+
+        class FakeWorker:
+            def __init__(self, content):
+                self.content = content
+                self.calls = 0
+                self.received = None
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                self.received = task
+                return WorkerProposal((("calculator.py", self.content),))
+
+        class EchoVerifier:
+            def __init__(self, verdict=VerifierVerdict.PASS):
+                self.verdict = verdict
+                self.calls = 0
+                self.received = None
+
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                self.calls += 1
+                self.received = prepared
+                return VerifierResult(
+                    process_id=prepared.process_id,
+                    base_commit=prepared.base_commit,
+                    snapshot_tree_digest=prepared.snapshot_tree_digest,
+                    replay_result_digest=prepared.replay_result_digest,
+                    verifier_id="end-to-end-local-verifier",
+                    patch_digest=prepared.patch_digest,
+                    evidence_digest=prepared.evidence_digest,
+                    verification_digest=prepared.verification_digest,
+                    verified_contents_digest=prepared.verified_contents_digest,
+                    verdict=self.verdict,
+                )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository = root / "source-repository"
+            shutil.copytree(ROOT / "fixtures/repository/project", repository)
+            subprocess.run(["git", "init", "--quiet", str(repository)], check=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "add", "-A"], check=True
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(repository), "-c", "user.name=E2E Test",
+                    "-c", "user.email=e2e@example.invalid", "commit", "--quiet", "-m",
+                    "pinned base",
+                ],
+                check=True,
+            )
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            base_content = (repository / "calculator.py").read_text(encoding="utf-8")
+            (repository / "calculator.py").write_text(
+                base_content + "\n# uncommitted-source-sentinel\n", encoding="utf-8"
+            )
+            (repository / "untracked-source-sentinel.txt").write_text(
+                "untracked-source-sentinel", encoding="utf-8"
+            )
+            source_status = subprocess.run(
+                ["git", "-C", str(repository), "status", "--porcelain"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            local_repository = open_local_repository(repository)
+            lease = export_local_commit_tree(local_repository, commit_oid, root)
+            lease_path = lease.path
+            try:
+                self.assertEqual(
+                    (lease.path / "calculator.py").read_text(encoding="utf-8"), base_content
+                )
+                self.assertFalse((lease.path / "untracked-source-sentinel.txt").exists())
+                pin = PinnedSnapshot(
+                    repository_id="fixture-repository",
+                    commit_oid=commit_oid,
+                    tree_digest=compute_snapshot_tree_digest(lease.path),
+                    snapshot_path=lease.path,
+                )
+                command = ("python3", "-c", "print('pinned-e2e-test')")
+                request = ExecutionRequest(
+                    process_id="process-e2e-001",
+                    task_id="task-e2e-001",
+                    repository_id=pin.repository_id,
+                    base_commit=pin.commit_oid,
+                    snapshot_path=lease.path,
+                    allowed_commands=frozenset({"python3"}),
+                    declared_change_paths=("calculator.py",),
+                    test_command=command,
+                    test_timeout_seconds=23,
+                    pinned_snapshot=pin,
+                )
+                proposed_content = base_content + "\n# prepared-candidate\n"
+
+                success_backend = FakeBackend()
+                success_worker = FakeWorker(proposed_content)
+                success_verifier = EchoVerifier()
+                success = run_local_execution(
+                    request,
+                    success_worker,
+                    verifier=success_verifier,
+                    sandbox_backend=success_backend,
+                    require_pinned_snapshot=True,
+                )
+                self.assertEqual(success.status, ExecutionStatus.VERIFIED)
+                self.assertEqual(success_worker.calls, 1)
+                self.assertEqual(
+                    success_worker.received.base_commit, commit_oid
+                )
+                self.assertEqual(
+                    success_worker.received.snapshot_tree_digest, pin.tree_digest
+                )
+                self.assertEqual(success_verifier.calls, 1)
+                self.assertEqual(success_verifier.received.base_commit, commit_oid)
+                self.assertEqual(
+                    success_verifier.received.snapshot_tree_digest, pin.tree_digest
+                )
+                self.assertEqual(
+                    success_verifier.received.verified_contents,
+                    (("calculator.py", proposed_content),),
+                )
+                self.assertEqual(success_backend.sessions[0].initial_tree_digest, pin.tree_digest)
+                self.assertEqual(success_backend.sessions[1].initial_tree_digest, pin.tree_digest)
+                self.assertEqual(
+                    [command_call for command_call in success_backend.commands if command_call[0] == 2],
+                    [(2, command, 23)],
+                )
+                self.assertTrue(all(session.closed for session in success_backend.sessions))
+                self.assertTrue(all(not path.exists() for path in success_backend.temp_roots))
+
+                snapshot_denial_backend = FakeBackend()
+                snapshot_denial_worker = FakeWorker(proposed_content)
+                snapshot_denial_verifier = EchoVerifier()
+                wrong_pin = replace(pin, tree_digest="sha256:" + "e" * 64)
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution snapshot: digest mismatch$"
+                ):
+                    run_local_execution(
+                        replace(request, pinned_snapshot=wrong_pin),
+                        snapshot_denial_worker,
+                        verifier=snapshot_denial_verifier,
+                        sandbox_backend=snapshot_denial_backend,
+                        require_pinned_snapshot=True,
+                    )
+                self.assertEqual(snapshot_denial_worker.calls, 0)
+                self.assertEqual(snapshot_denial_verifier.calls, 0)
+                self.assertEqual(len(snapshot_denial_backend.sessions), 1)
+                self.assertTrue(snapshot_denial_backend.sessions[0].closed)
+                self.assertTrue(all(not path.exists() for path in snapshot_denial_backend.temp_roots))
+
+                denial_backend = FakeBackend()
+                denial_worker = FakeWorker(proposed_content)
+                denial_verifier = EchoVerifier(VerifierVerdict.BLOCKED)
+                denied = run_local_execution(
+                    request,
+                    denial_worker,
+                    verifier=denial_verifier,
+                    sandbox_backend=denial_backend,
+                    require_pinned_snapshot=True,
+                )
+                self.assertEqual(denied.status, ExecutionStatus.FAILED)
+                self.assertEqual(denied.failure_code, "verifier-not-pass")
+                self.assertEqual(denial_worker.calls, 1)
+                self.assertEqual(denial_verifier.calls, 1)
+                self.assertTrue(all(session.closed for session in denial_backend.sessions))
+                self.assertTrue(all(not path.exists() for path in denial_backend.temp_roots))
+                self.assertEqual(
+                    subprocess.run(
+                        ["git", "-C", str(repository), "status", "--porcelain"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    ).stdout,
+                    source_status,
+                )
+                serialized = repr((success, denied))
+                for sentinel in (
+                    str(repository),
+                    "uncommitted-source-sentinel",
+                    "untracked-source-sentinel",
+                    "prepared-candidate",
+                    "pinned-e2e-test",
+                    "test stdout sentinel",
+                    "test stderr sentinel",
+                ):
+                    self.assertNotIn(sentinel, serialized)
+            finally:
+                lease.close()
+                self.assertFalse(lease_path.exists())
+
     def test_pinned_verifier_replays_command_in_fresh_sandbox_and_closes_it(self):
         from app_contracts.sandbox import CommandResult
 

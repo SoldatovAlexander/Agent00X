@@ -29,6 +29,10 @@ orchestrator, доказательство реальной параллельн
 SQLite persistence/reopen и fail-closed проверки ObservationEvent/Checkpoint;
 они не доказывают power-loss durability, защиту от привилегированного изменения,
 collector completeness, access control или многопроцессную конкурентность.
+Batch AF добавил локальный детерминированный executor shell с injected Worker,
+Verifier и sandbox backend. Это не реальный LLM Worker, проверенный remote
+snapshot, production sandbox или publication chain; детали и открытые границы —
+в документе 27.
 
 Единственный актуальный статус реализации и границ доказательств:
 [документ 27](docs/27-implementation-status.md). Порядок работ R0—R5:
@@ -40,7 +44,7 @@ collector completeness, access control или многопроцессную к�
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Обычный прогон на 2026-09-29: 478 тестов, все прошли, один opt-in Docker test
+Обычный прогон на 2026-09-29: 504 теста, все прошли, один opt-in Docker test
 пропущен. Результат подтверждает только покрытые тестами свойства на текущей
 машине. Подробнее — в документе 27.
 

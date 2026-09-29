@@ -17,11 +17,14 @@
 явное представление целей, данных, состояния, процедур и правил поможет агенту
 исполнять проработанную бизнес-функцию. Первый пример функции — `repository-change`.
 
-Есть контрактная и sandbox-основа, детерминированный reference flow, mock boundary
-и отдельные GitHub App spikes. Полный агент, remote snapshot как вход Worker,
-наблюдатель, исторические отчёты, учебные ветки и сквозная защищённая публикация
-ещё не реализованы. Нельзя заявлять production-ready, отсутствие всех утечек
-секретов или доказанную неуязвимость Gateway.
+Есть контрактная и sandbox-основа, детерминированный reference flow, локальный
+executor shell с injected Worker/Verifier/backend, mock boundary и отдельные
+GitHub App spikes. Shell связывает локальный request, Worker proposal,
+подготовку изменения и отдельный verifier gate; тесты используют фейки и
+development fallback. Реальный LLM Worker, remote snapshot как вход Worker,
+production sandbox, наблюдатель, исторические отчёты, учебные ветки и сквозная
+защищённая публикация ещё не реализованы. Нельзя заявлять production-ready,
+отсутствие всех утечек секретов или доказанную неуязвимость Gateway.
 
 ## 2. Каноническая шкала доказательств
 
@@ -43,7 +46,8 @@
 | Docker profile | Частично проверено | Профиль и opt-in integration test существуют; обычный прогон не запускает Docker integration |
 | GitHub App | Spike | App создал тестовые branch/PR; это не доказывает полную авторизацию, atomic publication или recovery |
 | Наблюдатель и обучение | Контракты, in-memory store и локальный SQLite journal реализованы и unit-tested | ObservationEvent/Checkpoint и локальная persistence/reopen/pre-dispatch failure semantics; collector, отчёты, access control, учебные ветки и production storage guarantees отсутствуют |
-| LLM Worker и субагенты | Не реализовано | Reference flow детерминированный, не является исполнением функции моделью |
+| Local executor shell | Реализовано и unit-tested локально | Ограниченные request/proposal records, injected Worker/Sandbox/Verifier, однократный coordinator, fail-closed gate и sanitized local evidence; используются фейки, а process sandbox — development fallback |
+| LLM Worker и субагенты | Не реализовано | Injected Worker protocol и fake worker не запускают модель и не подтверждают исполнение функции LLM |
 
 ## 4. Последняя локальная проверка
 
@@ -53,7 +57,7 @@
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Результат сверки 2026-09-29: **478 тестов, все прошли, 1 пропущен**. Пропущен
+Результат сверки 2026-09-29: **504 теста, все прошли, 1 пропущен**. Пропущен
 opt-in Docker integration test; его запуск требует `RUN_DOCKER_SANDBOX_TESTS=1`,
 доступный Docker daemon и образ. Этот результат подтверждает только указанные
 тестами свойства кода на текущей машине.
@@ -107,7 +111,7 @@ preparation и последовательный stale-manifest отказ, но 
 |---|---|---|
 | R0: наблюдение и память | Концепция готова | JSON Schema, валидаторы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary |
 | R1: целостность и фиксация действий | Частично проверено | Нарушения 1–2 закрыты локальными regression; composed local harness, gateway-before-broker enforcement и deterministic workspace interleaving приняты, но production orchestration, real concurrent-writer evidence и external proof отсутствуют |
-| R2: сквозной исполнитель | Не начат | Один LLM Worker с remote snapshot и controlled publication |
+| R2: сквозной исполнитель | В работе: Batch AF 1/3 (20 карточек) | Локальный deterministic executor shell принят; остаются remote pinned snapshot, реальный LLM Worker, independently trusted verification, production sandbox и separately gated controlled publication/reconciliation |
 | R3: исторический Observer | Не начат | Отчёты по сохранённой истории, причинности и пробелам |
 | R4: учебная ветка | Не начат | Simulation branch без переноса старых прав и external writes |
 | R5: эксперимент | Не начат | Сравнение полной и упрощённой организации данных по заранее заданному набору задач |
@@ -163,3 +167,12 @@ causality, transaction rollback и fail-closed отказа на corrupt records
 multi-process concurrency, production collector или access control. Настоящий
 inventory не является security certification и не доказывает external
 publication.
+
+Batch AF (EXP-288—307, 20 карточек; R2, batch 1/3) добавил локальный executor
+shell и его composed failure-matrix coverage. Worker и verifier в этих тестах —
+injected fakes; результат имеет маркировку `local_test`. Snapshot provenance,
+production isolation, реальная модель, публикация и reconciliation остаются
+непроверенными. R2 не завершён; следующими запланированы Batch AG — pinned
+snapshot и отдельная проверка исполнителя, затем Batch AH — controlled
+publication и reconciliation. Внешние операции требуют отдельных точных task
+cards и допуска.

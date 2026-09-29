@@ -13,7 +13,7 @@ import posixpath
 from typing import Protocol, runtime_checkable
 
 from .repository_process import prepare_change
-from .sandbox import LocalProcessSandbox
+from .sandbox import LocalProcessSandboxBackend
 
 
 class ExecutionError(ValueError):
@@ -86,6 +86,11 @@ class ProposalWorker(Protocol):
     def propose(self, task: WorkerInput) -> WorkerProposal: ...
 
 
+@runtime_checkable
+class ExecutorSandboxBackend(Protocol):
+    def create(self, snapshot: Path, allowed_commands: set[str]) -> object: ...
+
+
 def validate_worker_proposal(value: object, request: ExecutionRequest) -> WorkerProposal:
     """Validate, scope and detach the worker's bounded text proposal."""
 
@@ -133,15 +138,35 @@ def validate_worker_proposal(value: object, request: ExecutionRequest) -> Worker
     return WorkerProposal(tuple(detached))
 
 
-def run_local_execution(request: ExecutionRequest, worker: ProposalWorker) -> ExecutionResult:
-    """Run one injected proposal through local sandbox preparation only."""
+def run_local_execution(
+    request: ExecutionRequest,
+    worker: ProposalWorker,
+    *,
+    sandbox_backend: ExecutorSandboxBackend | None = None,
+) -> ExecutionResult:
+    """Run one injected proposal through local sandbox preparation only.
+
+    The default LocalProcessSandboxBackend is a development-only fallback, not
+    a security boundary or evidence of network/kernel isolation.
+    """
 
     if not isinstance(request, ExecutionRequest):
         raise ExecutionError("execution request: type is invalid")
     if not callable(getattr(worker, "propose", None)):
         raise ExecutionError("execution worker: collaborator is invalid")
-    sandbox = LocalProcessSandbox(request.snapshot_path, set(request.allowed_commands))
+    backend = sandbox_backend or LocalProcessSandboxBackend()
+    if not callable(getattr(backend, "create", None)):
+        raise ExecutionError("execution sandbox: backend is invalid")
+    sandbox = None
     try:
+        sandbox = backend.create(request.snapshot_path, set(request.allowed_commands))
+        if (
+            not isinstance(getattr(sandbox, "snapshot", None), Path)
+            or not isinstance(getattr(sandbox, "workspace", None), Path)
+            or not callable(getattr(sandbox, "run", None))
+            or not callable(getattr(sandbox, "close", None))
+        ):
+            raise ExecutionError("execution sandbox: session is invalid")
         worker_input = WorkerInput(
             process_id=request.process_id,
             task_id=request.task_id,
@@ -168,7 +193,9 @@ def run_local_execution(request: ExecutionRequest, worker: ProposalWorker) -> Ex
             verification_digest=staged["verification_digest"],
         )
     finally:
-        sandbox.close()
+        close = getattr(sandbox, "close", None)
+        if callable(close):
+            close()
 
 
 def _validate_identity(value: object) -> None:

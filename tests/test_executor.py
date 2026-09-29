@@ -18,6 +18,7 @@ from app_contracts.executor import (
     ProposalWorker,
     WorkerInput,
     WorkerProposal,
+    ExecutorSandboxBackend,
     run_local_execution,
     validate_worker_proposal,
 )
@@ -211,6 +212,76 @@ class ExecutionRecordTests(unittest.TestCase):
             "^verification failed; staged change was not created$",
         ):
             run_local_execution(request, FakeWorker())
+
+    def test_local_coordinator_closes_injected_sandbox_on_worker_failure(self):
+        class TrackingBackend:
+            def __init__(self):
+                self.closed = 0
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                from app_contracts.sandbox import LocalProcessSandbox
+
+                sandbox = LocalProcessSandbox(snapshot, allowed_commands)
+                backend = self
+
+                class Session:
+                    snapshot = sandbox.snapshot
+                    workspace = sandbox.workspace
+
+                    def run(self, argv, timeout_seconds=30):
+                        return sandbox.run(argv, timeout_seconds)
+
+                    def close(self):
+                        backend.closed += 1
+                        sandbox.close()
+
+                return Session()
+
+        class FailingWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                raise RuntimeError("injected worker failure")
+
+        backend = TrackingBackend()
+        with self.assertRaisesRegex(RuntimeError, "^injected worker failure$"):
+            run_local_execution(valid_request(), FailingWorker(), sandbox_backend=backend)
+        self.assertEqual(backend.closed, 1)
+        self.assertIsInstance(backend, ExecutorSandboxBackend)
+
+    def test_malformed_sandbox_session_fails_before_worker_and_attempts_cleanup(self):
+        class MalformedBackend:
+            def __init__(self):
+                self.session_closed = False
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                backend = self
+
+                class Session:
+                    workspace = snapshot
+
+                    def run(self, argv, timeout_seconds=30):
+                        raise AssertionError("must not run")
+
+                    def close(self):
+                        backend.session_closed = True
+
+                return Session()
+
+        class CountingWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        backend = MalformedBackend()
+        worker = CountingWorker()
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution sandbox: session is invalid$"
+        ):
+            run_local_execution(valid_request(), worker, sandbox_backend=backend)
+        self.assertEqual(worker.calls, 0)
+        self.assertTrue(backend.session_closed)
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

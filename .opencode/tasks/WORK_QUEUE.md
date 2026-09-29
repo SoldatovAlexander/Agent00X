@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG подготовлен — 0/20.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 1/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3776,7 +3776,7 @@ credentials, LLM runtime и publication. Это не доказывает remote
 production isolation или trust independence от host.
 
 ## EXP-308 — define the pinned local snapshot record
-Статус: READY
+Статус: ACCEPTED
 Цель: создать immutable typed record для local snapshot provenance.
 Гипотеза: единый record позволит явно связать repository id, full commit id, tree digest и extracted path.
 Зависит от: EXP-307
@@ -3795,9 +3795,13 @@ production isolation или trust independence от host.
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `2a8208d` добавил frozen record с local Git origin;
+  repr скрывает абсолютный путь, а контракт не содержит remote/credential fields.
+  Targeted tests: 3 passed; full suite: 507 passed, 1 skipped.
 
 ## EXP-309 — validate pinned snapshot identities
-Статус: DRAFT
+Статус: READY
 Цель: fail closed on malformed repo id, commit OID, digest and evidence origin.
 Гипотеза: strict syntax validation prevents symbolic refs and untyped provenance from being presented as pinned evidence.
 Зависит от: EXP-308

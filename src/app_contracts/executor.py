@@ -184,7 +184,14 @@ def run_local_execution(
             changes=dict(proposal.changes),
             test_command=request.test_command,
         )
-        staged = prepared.staged_change
+        staged = getattr(prepared, "staged_change", None)
+        if (
+            not isinstance(staged, dict)
+            or staged.get("process_id") != request.process_id
+            or staged.get("repository_id") != request.repository_id
+            or staged.get("base_commit") != request.base_commit
+        ):
+            raise ExecutionError("execution preparation: binding mismatch")
         return ExecutionResult(
             status=ExecutionStatus.PREPARED,
             prepared_change_id=staged["staged_change_id"],

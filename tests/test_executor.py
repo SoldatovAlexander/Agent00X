@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -282,6 +283,52 @@ class ExecutionRecordTests(unittest.TestCase):
             run_local_execution(valid_request(), worker, sandbox_backend=backend)
         self.assertEqual(worker.calls, 0)
         self.assertTrue(backend.session_closed)
+
+    def test_preparation_metadata_must_match_request_bindings(self):
+        class FakeBackend:
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                class Session:
+                    workspace = snapshot
+
+                    def __init__(self):
+                        self.snapshot = snapshot
+
+                    def run(self, argv, timeout_seconds=30):
+                        raise AssertionError("preparation is mocked")
+
+                    def close(self):
+                        pass
+
+                return Session()
+
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                return WorkerProposal((("calculator.py", "replacement"),))
+
+        request = valid_request()
+        base_staged = {
+            "process_id": request.process_id,
+            "repository_id": request.repository_id,
+            "base_commit": request.base_commit,
+            "staged_change_id": "staged-local-001",
+            "patch_digest": "sha256:" + "a" * 64,
+            "evidence_digest": "sha256:" + "b" * 64,
+            "verification_digest": "sha256:" + "c" * 64,
+        }
+        for field, replacement in (
+            ("process_id", "process-foreign"),
+            ("repository_id", "repository-foreign"),
+            ("base_commit", "commit-foreign"),
+        ):
+            staged = dict(base_staged, **{field: replacement})
+            with self.subTest(field=field), patch(
+                "app_contracts.executor.prepare_change",
+                return_value=SimpleNamespace(staged_change=staged),
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution preparation: binding mismatch$"
+                ):
+                    run_local_execution(request, FakeWorker(), sandbox_backend=FakeBackend())
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

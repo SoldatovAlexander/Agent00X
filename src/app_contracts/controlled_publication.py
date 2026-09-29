@@ -164,13 +164,15 @@ def run_gateway_gate(
     """Pass the approved intent to broker only on a matching gateway slow-allow.
 
     The envelope must be bound to the same seed-bound intent before the
-    gateway is invoked, and the gateway itself is invoked here — a
-    caller-supplied verdict is never accepted. Only a genuine slow-allow
-    reaches the downstream step, so no broker action is reachable without an
-    exact gateway allow for this publication request. A deny, degraded,
-    malformed or mismatched envelope or output stops the path with zero
-    broker calls. Failures carry stable messages without envelope, decision,
-    approval, intent or digest values.
+    gateway is invoked — operation, destination repository, source principal,
+    staged digest and correlation key must equal the intent, so the gateway
+    verdict cannot belong to a foreign request. The gateway itself is invoked
+    here — a caller-supplied verdict is never accepted. Only a genuine
+    slow-allow reaches the downstream step, so no broker action is reachable
+    without an exact gateway allow for this publication request. A deny,
+    degraded, malformed or mismatched envelope or output stops the path with
+    zero broker calls. Failures carry stable messages without envelope,
+    decision, approval, intent or digest values.
     """
 
     if not callable(proceed):
@@ -191,9 +193,19 @@ def run_gateway_gate(
         "operation"
     ) != "publish_pull_request":
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
+    if not isinstance(envelope.get("destination"), dict) or envelope[
+        "destination"
+    ].get("repository_id") != intent.repository_id:
+        raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
+    if not isinstance(envelope.get("source"), dict) or envelope["source"].get(
+        "principal_id"
+    ) != intent.process_id:
+        raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
     if not isinstance(envelope.get("payload"), dict) or envelope["payload"].get(
         "content_digest"
     ) != intent.staged_change_digest:
+        raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
+    if envelope.get("correlation_id") != intent.idempotency_key:
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
     try:
         gateway_decision = gateway(envelope, now=moment)

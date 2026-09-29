@@ -731,7 +731,7 @@ class PolicyGateTests(unittest.TestCase):
 def gateway_envelope(intent: PublicationIntent) -> dict:
     return {
         "intent": {"operation": "publish_pull_request"},
-        "destination": {"port": "approval"},
+        "destination": {"port": "approval", "repository_id": intent.repository_id},
         "source": {"protocol": "internal", "principal_id": intent.process_id},
         "security": {"tainted": False, "sensitivity": "internal"},
         "payload": {"content_digest": intent.staged_change_digest},
@@ -890,13 +890,20 @@ class GatewayGateTests(unittest.TestCase):
         canary = "ENVELOPE-CANARY-SECRET"
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
             almost = gateway_envelope(intent)
+            foreign_destination = dict(almost["destination"], repository_id="repository-foreign")
+            foreign_source = dict(almost["source"], principal_id="process-foreign-001")
             mismatched = (
                 None, "not-a-mapping", {},
                 dict(almost, intent={"operation": "merge_pull_request"}),
                 dict(almost, intent={"operation": canary}),
                 dict(almost, payload={"content_digest": "sha256:" + "f" * 64}),
                 dict(almost, payload={"content_digest": canary}),
+                dict(almost, destination=foreign_destination),
+                dict(almost, source=foreign_source),
+                dict(almost, correlation_id="foreign-correlation"),
+                dict(almost, correlation_id=canary),
                 {key: value for key, value in almost.items() if key != "payload"},
+                {key: value for key, value in almost.items() if key != "correlation_id"},
             )
             for envelope in mismatched:
                 with self.subTest(envelope=repr(envelope)[:60]):
@@ -909,6 +916,7 @@ class GatewayGateTests(unittest.TestCase):
                     ) as raised:
                         invoke_gateway_gate(intent, approval, evaluated, gateway, envelope, broker)
                     self.assertNotIn(canary, str(raised.exception))
+                    self.assertNotIn("foreign-correlation", str(raised.exception))
                     self.assertEqual(events, [])
                     self.assertEqual(broker.calls, 0)
 

@@ -8,18 +8,23 @@ identity supplied by a caller.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from typing import Literal
 
+from .digests import sha256_digest
+
 _REPOSITORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}\Z")
 _FULL_COMMIT_OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+SNAPSHOT_DIGEST_CANONICALIZATION = "app-process-snapshot-tree/v1"
 _PREFLIGHT_GIT_ARGUMENTS = frozenset(
     {
         ("rev-parse", "--is-inside-work-tree"),
@@ -236,6 +241,54 @@ def export_local_commit_tree(
     except Exception:
         shutil.rmtree(output_root, ignore_errors=True)
         raise ValueError("pinned snapshot export failed") from None
+
+
+def compute_snapshot_tree_digest(snapshot_path: Path) -> str:
+    """Hash normalized relative paths, executable mode and file bytes."""
+
+    if not isinstance(snapshot_path, Path) or snapshot_path.is_symlink():
+        raise ValueError("pinned snapshot tree path is invalid")
+    try:
+        root = snapshot_path.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("pinned snapshot tree path is invalid")
+        entries: list[dict[str, str]] = []
+        for path in root.rglob("*"):
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError("pinned snapshot tree contains a symlink")
+            if stat.S_ISDIR(metadata.st_mode):
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("pinned snapshot tree contains an unsupported entry")
+            relative = _safe_snapshot_relative_path(path.relative_to(root).as_posix())
+            content_digest = _hash_file(path)
+            entries.append(
+                {
+                    "path": relative.as_posix(),
+                    "mode": "100755" if metadata.st_mode & 0o111 else "100644",
+                    "content_digest": content_digest,
+                }
+            )
+        entries.sort(key=lambda entry: entry["path"])
+    except ValueError:
+        raise
+    except (OSError, RuntimeError):
+        raise ValueError("pinned snapshot tree could not be read") from None
+    return sha256_digest(
+        {
+            "canonicalization": SNAPSHOT_DIGEST_CANONICALIZATION,
+            "files": entries,
+        }
+    )
+
+
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as snapshot_file:
+        for chunk in iter(lambda: snapshot_file.read(64 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 def _safe_snapshot_relative_path(value: str) -> PurePosixPath:

@@ -12,6 +12,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import app_contracts.pinned_snapshot as pinned_snapshot_module
 from app_contracts.pinned_snapshot import (
     PinnedSnapshot,
+    SNAPSHOT_DIGEST_CANONICALIZATION,
+    compute_snapshot_tree_digest,
     export_local_commit_tree,
     open_local_repository,
     resolve_local_commit,
@@ -374,7 +376,7 @@ class LocalCommitExportTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
             self.assertFalse(missing_parent.exists())
 
 
-class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
+class PinnedTreeGitlinkAndTraversalTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
     def test_export_rejects_symlink_entries_without_following_them(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -412,6 +414,64 @@ class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
             self.assertFalse((root / "outside.txt").exists())
             self.assertEqual(list(destination_parent.iterdir()), [])
 
+
+class SnapshotTreeDigestTests(unittest.TestCase):
+    def test_digest_is_stable_for_equivalent_trees_created_in_different_orders(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            (first / "z.txt").write_text("last\n", encoding="utf-8")
+            (first / "каталог").mkdir()
+            (first / "каталог" / "файл.txt").write_text("содержимое\n", encoding="utf-8")
+            (second / "каталог").mkdir()
+            (second / "каталог" / "файл.txt").write_text("содержимое\n", encoding="utf-8")
+            (second / "z.txt").write_text("last\n", encoding="utf-8")
+
+            first_digest = compute_snapshot_tree_digest(first)
+            second_digest = compute_snapshot_tree_digest(second)
+
+        self.assertEqual(first_digest, second_digest)
+        self.assertTrue(first_digest.startswith("sha256:"))
+        self.assertEqual(SNAPSHOT_DIGEST_CANONICALIZATION, "app-process-snapshot-tree/v1")
+
+    def test_digest_changes_when_path_bytes_or_executable_mode_changes(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            file_path = snapshot / "program.txt"
+            file_path.write_text("before\n", encoding="utf-8")
+            baseline = compute_snapshot_tree_digest(snapshot)
+
+            file_path.write_text("after\n", encoding="utf-8")
+            changed_bytes = compute_snapshot_tree_digest(snapshot)
+            self.assertNotEqual(baseline, changed_bytes)
+
+            file_path.write_text("before\n", encoding="utf-8")
+            file_path.rename(snapshot / "renamed.txt")
+            changed_path = compute_snapshot_tree_digest(snapshot)
+            self.assertNotEqual(baseline, changed_path)
+
+            renamed = snapshot / "renamed.txt"
+            renamed.chmod(0o755)
+            changed_mode = compute_snapshot_tree_digest(snapshot)
+            self.assertNotEqual(changed_path, changed_mode)
+
+    def test_digest_rejects_symlink_entries(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            (snapshot / "linked.txt").symlink_to(root / "outside.txt")
+
+            with self.assertRaisesRegex(ValueError, "^pinned snapshot tree contains a symlink$"):
+                compute_snapshot_tree_digest(snapshot)
+
+
+class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
     def test_export_rejects_gitlink_without_initializing_submodule(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

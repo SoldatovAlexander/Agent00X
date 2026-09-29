@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 
 class ExecutionError(ValueError):
@@ -50,6 +51,29 @@ class ExecutionResult:
     evidence_digest: str | None = None
     verification_digest: str | None = None
     failure_code: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkerInput:
+    """Narrow task envelope; filesystem and command capabilities stay outside."""
+
+    process_id: str
+    task_id: str
+    repository_id: str
+    base_commit: str
+    declared_change_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WorkerProposal:
+    """Proposed relative-path text replacements returned as data."""
+
+    changes: tuple[tuple[str, str], ...]
+
+
+@runtime_checkable
+class ProposalWorker(Protocol):
+    def propose(self, task: WorkerInput) -> WorkerProposal: ...
 
 
 def _validate_identity(value: object) -> None:

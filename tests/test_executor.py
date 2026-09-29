@@ -14,6 +14,9 @@ from app_contracts.executor import (
     ExecutionRequest,
     ExecutionResult,
     ExecutionStatus,
+    ProposalWorker,
+    WorkerInput,
+    WorkerProposal,
 )
 
 
@@ -68,6 +71,30 @@ class ExecutionRecordTests(unittest.TestCase):
                     ) as raised:
                         valid_request(**{field: value})
                     self.assertNotIn("unsafe", str(raised.exception))
+
+    def test_worker_contract_exposes_task_metadata_and_text_changes_only(self):
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.received = task
+                return WorkerProposal((("calculator.py", "def add(a, b): return a + b\n"),))
+
+        fake = FakeWorker()
+        task = WorkerInput(
+            process_id="process-local-001",
+            task_id="task-local-001",
+            repository_id="fixture-repository",
+            base_commit="fixture-base-001",
+            declared_change_paths=("calculator.py",),
+        )
+        proposal = fake.propose(task)
+        self.assertIs(fake.received, task)
+        self.assertEqual(proposal.changes[0][0], "calculator.py")
+        self.assertTrue(isinstance(fake, ProposalWorker))
+        self.assertEqual(
+            set(WorkerInput.__dataclass_fields__),
+            {"process_id", "task_id", "repository_id", "base_commit", "declared_change_paths"},
+        )
+        self.assertEqual(set(WorkerProposal.__dataclass_fields__), {"changes"})
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

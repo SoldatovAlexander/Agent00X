@@ -388,9 +388,7 @@ def decided_gate_fixture():
             ["git", "-C", str(repository), "rev-parse", "HEAD"],
             check=True, capture_output=True, text=True,
         ).stdout.strip()
-        lease = export_local_commit_tree(
-            open_local_repository(repository), commit_oid, root
-        )
+        lease = export_local_commit_tree(open_local_repository(repository), commit_oid, root)
         try:
             pin = PinnedSnapshot(
                 repository_id="fixture-repository",
@@ -424,7 +422,6 @@ def decided_gate_fixture():
             seed = build_publication_seed(request, result)
             intent = derive_publication_intent(seed, "agent/process-demo-001")
             staged_change = captured["staged_change"]
-            assert sha256_digest(staged_change) == intent.staged_change_digest
             config = PolicyConfig(
                 version="policy-test-v1",
                 allowed_repositories=frozenset({"fixture-repository"}),
@@ -435,6 +432,7 @@ def decided_gate_fixture():
             engine_intent = {
                 "process_id": intent.process_id,
                 "repository_id": intent.repository_id,
+                "base_commit": intent.base_commit,
                 "operation": "publish_pull_request",
                 "approval_id": "approval-local-001",
                 "expires_at": future,
@@ -453,7 +451,7 @@ def decided_gate_fixture():
                 "approved_intent_digest": sha256_digest(engine_intent),
             }
             policy = DeterministicPolicy(config)
-            decision = policy.decide(
+            evaluated = policy.decide(
                 decision_id="decision-local-001",
                 actuator_request={
                     "operation": "publish_pull_request",
@@ -468,8 +466,8 @@ def decided_gate_fixture():
                 intent=engine_intent,
                 now=FIXED_NOW,
             )
-            assert decision["effect"] == "allow", repr(decision)
-            yield intent, approval, decision, engine_intent
+            assert evaluated["effect"] == "allow", repr(evaluated)
+            yield intent, approval, policy, engine_intent, staged_change, evaluated
         finally:
             lease.close()
 
@@ -481,352 +479,246 @@ class PolicyDownstream(DownstreamPath):
         return ("completed-path", intent, approval, decision)
 
 
+def invoke_policy_gate(intent, approval, policy, engine_intent, staged_change, downstream,
+                       *, now=FIXED_NOW, actuator_id="test-actuator",
+                       decision_id="decision-local-001"):
+    return run_policy_gate(
+        intent, approval, policy, engine_intent, staged_change,
+        decision_id=decision_id, actuator_id=actuator_id, now=now,
+        proceed=downstream.proceed,
+    )
+
+
 class PolicyGateTests(unittest.TestCase):
-    def test_fresh_matching_engine_decision_reaches_downstream_once(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            self.assertEqual(decision["effect"], "allow")
-            self.assertEqual(decision["policy_version"], "policy-test-v1")
+    def test_policy_engine_evaluates_matching_approval_before_downstream_once(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, expected):
             downstream = PolicyDownstream()
-            marker, passed_intent, passed_approval, passed_decision = run_policy_gate(
-                intent, approval, decision, engine_intent, now=FIXED_NOW, proceed=downstream.proceed
+            marker, passed_intent, passed_approval, decision = invoke_policy_gate(
+                intent, approval, policy, engine_intent, staged_change, downstream
             )
             self.assertEqual(marker, "completed-path")
             self.assertIs(passed_intent, intent)
             self.assertIs(passed_approval, approval)
-            self.assertIs(passed_decision, decision)
+            self.assertEqual(decision["effect"], "allow")
+            self.assertEqual(decision["operation"], expected["operation"])
+            self.assertEqual(decision["repository_id"], intent.repository_id)
+            self.assertEqual(decision["staged_change_digest"], intent.staged_change_digest)
             for stage in PolicyDownstream.STAGES:
                 self.assertEqual(downstream.calls[stage], 1, stage)
 
-    def test_missing_decision_stops_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, _decision, _engine_intent):
-            for decision in (None, "not-a-decision", 42, []):
-                with self.subTest(decision=repr(decision)):
-                    downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError,
-                        "^controlled publication: decision is missing$",
-                    ):
-                        run_policy_gate(
-                            intent, approval, decision, _engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
-                    downstream.assert_untouched(self)
+    def test_precomputed_allow_cannot_be_used_as_policy_engine(self):
+        with decided_gate_fixture() as (intent, approval, _policy, engine_intent,
+                                        staged_change, cached_allow):
+            downstream = PolicyDownstream()
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: policy engine is invalid$",
+            ):
+                invoke_policy_gate(
+                    intent, approval, cached_allow, engine_intent, staged_change, downstream
+                )
+            downstream.assert_untouched(self)
 
-    def test_deny_decision_stops_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
+    def test_policy_deny_stops_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _expected):
             downstream = PolicyDownstream()
             with self.assertRaisesRegex(ContractValidationError, "^decision: not allow$"):
-                run_policy_gate(
-                    intent, approval, dict(decision, effect="deny"), engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed,
+                invoke_policy_gate(
+                    intent, approval, policy, engine_intent, staged_change, downstream,
+                    actuator_id="actuator-not-allowlisted",
                 )
             downstream.assert_untouched(self)
 
-    def test_stale_or_malformed_expiry_stops_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
+    def test_stale_or_malformed_engine_result_stops_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, decision):
             cases = [
-                (format_time(FIXED_NOW - timedelta(seconds=1)), "^decision: expired$"),
-                (format_time(FIXED_NOW), "^decision: expired$"),
+                (dict(decision, expires_at=format_time(FIXED_NOW - timedelta(seconds=1))),
+                 "^decision: expired$"),
+                (dict(decision, expires_at=format_time(FIXED_NOW)),
+                 "^decision: expired$"),
+                ({key: value for key, value in decision.items() if key != "expires_at"},
+                 "^decision: expiry is invalid$"),
             ]
-            for expires_at, message in cases:
-                with self.subTest(expires_at=expires_at):
+            for result, message in cases:
+                with self.subTest(message=message):
                     downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(ContractValidationError, message):
-                        run_policy_gate(
-                            intent, approval, dict(decision, expires_at=expires_at),
-                            engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
+                    with patch.object(policy, "decide", return_value=result):
+                        with self.assertRaisesRegex(ContractValidationError, message):
+                            invoke_policy_gate(
+                                intent, approval, policy, engine_intent, staged_change, downstream
+                            )
                     downstream.assert_untouched(self)
-            stale = dict(decision)
-            del stale["expires_at"]
-            downstream = PolicyDownstream()
-            with self.assertRaisesRegex(ContractValidationError, "^decision: expiry is invalid$"):
-                run_policy_gate(
-                    intent, approval, stale, engine_intent, now=FIXED_NOW, proceed=downstream.proceed
-                )
-            downstream.assert_untouched(self)
 
-    def test_mismatched_bindings_stop_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
+    def test_mismatched_engine_result_stops_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, decision):
             cases = [
-                ({"operation": "merge_pull_request"},
-                 "^controlled publication: approval decision binding mismatch$"),
-                ({"repository_id": "repository-foreign"},
+                (dict(decision, operation="merge_pull_request"),
+                 "^controlled publication: decision operation mismatch$"),
+                (dict(decision, repository_id="repository-foreign"),
                  "^controlled publication: decision repository mismatch$"),
-                ({"staged_change_digest": "sha256:" + "f" * 64},
+                (dict(decision, staged_change_digest="sha256:" + "f" * 64),
                  "^controlled publication: decision digest mismatch$"),
+                (dict(decision, policy_version="policy-foreign"),
+                 "^controlled publication: decision policy version mismatch$"),
             ]
-            for override, message in cases:
-                with self.subTest(override=tuple(override)):
+            for result, message in cases:
+                with self.subTest(message=message):
                     downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError, message
-                    ):
-                        run_policy_gate(
-                            intent, approval, dict(decision, **override),
-                            engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
+                    with patch.object(policy, "decide", return_value=result):
+                        with self.assertRaisesRegex(ControlledPublicationError, message):
+                            invoke_policy_gate(
+                                intent, approval, policy, engine_intent, staged_change, downstream
+                            )
                     downstream.assert_untouched(self)
 
-    def test_invalid_wiring_stops_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
+    def test_invalid_policy_engine_and_gate_inputs_stop_before_downstream(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, cached_allow):
             downstream = PolicyDownstream()
-            for proceed in (None, "proceed"):
-                with self.subTest(proceed=repr(proceed)):
+            invalid_inputs = [
+                (None, approval, policy, engine_intent, staged_change, "decision-local-001",
+                 "test-actuator", "^controlled publication: intent is invalid$"),
+                (intent, None, policy, engine_intent, staged_change, "decision-local-001",
+                 "test-actuator", "^controlled publication: approval is missing$"),
+                (intent, approval, cached_allow, engine_intent, staged_change, "decision-local-001",
+                 "test-actuator", "^controlled publication: policy engine is invalid$"),
+                (intent, approval, policy, None, staged_change, "decision-local-001",
+                 "test-actuator", "^controlled publication: engine intent is missing$"),
+                (intent, approval, policy, engine_intent, [], "decision-local-001",
+                 "test-actuator", "^controlled publication: staged change is invalid$"),
+                (intent, approval, policy, engine_intent, staged_change, "",
+                 "test-actuator", "^controlled publication: decision id is invalid$"),
+                (intent, approval, policy, engine_intent, staged_change, "decision-local-001",
+                 "", "^controlled publication: actuator id is invalid$"),
+            ]
+            for (given_intent, given_approval, given_policy, given_engine, staged,
+                 decision_id, actuator_id, message) in invalid_inputs:
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(ControlledPublicationError, message):
+                        run_policy_gate(
+                            given_intent, given_approval, given_policy, given_engine, staged,
+                            decision_id=decision_id, actuator_id=actuator_id, now=FIXED_NOW,
+                            proceed=downstream.proceed,
+                        )
+            with self.assertRaisesRegex(ControlledPublicationError,
+                                        "^controlled publication: clock is invalid$"):
+                invoke_policy_gate(
+                    intent, approval, policy, engine_intent, staged_change, downstream,
+                    now=datetime(2026, 9, 29, 12, 0, 0),
+                )
+            downstream.assert_untouched(self)
+
+    def test_staged_change_and_engine_intent_are_bound_before_policy_call(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _decision):
+            with patch.object(policy, "decide", wraps=policy.decide) as decide:
+                downstream = PolicyDownstream()
+                with self.assertRaisesRegex(
+                    ControlledPublicationError,
+                    "^controlled publication: staged change digest mismatch$",
+                ):
+                    invoke_policy_gate(
+                        intent, approval, policy, engine_intent,
+                        {"different": "staged data"}, downstream,
+                    )
+                decide.assert_not_called()
+                for field, value in (
+                    ("idempotency_key", "foreign-key"),
+                    ("base_commit", "foreign-commit"),
+                ):
+                    foreign = dict(engine_intent, **{field: value})
                     with self.assertRaisesRegex(
                         ControlledPublicationError,
-                        "^controlled publication: downstream step is invalid$",
+                        "^controlled publication: engine intent binding mismatch$",
                     ):
-                        run_policy_gate(
-                            intent, approval, decision, engine_intent,
-                            now=FIXED_NOW, proceed=proceed
+                        invoke_policy_gate(
+                            intent, approval, policy, foreign, staged_change, downstream,
                         )
-            downstream.assert_untouched(self)
-            with self.assertRaisesRegex(
-                ControlledPublicationError, "^controlled publication: intent is invalid$"
-            ):
-                run_policy_gate(
-                    None, approval, decision, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed
-                )
-            downstream.assert_untouched(self)
-            with self.assertRaisesRegex(
-                ControlledPublicationError, "^controlled publication: approval is missing$"
-            ):
-                run_policy_gate(
-                    intent, None, decision, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed
-                )
-            downstream.assert_untouched(self)
-            with self.assertRaisesRegex(
-                ControlledPublicationError, "^controlled publication: clock is invalid$"
-            ):
-                run_policy_gate(
-                    intent, approval, decision, engine_intent,
-                    now=datetime(2026, 9, 29, 12, 0, 0), proceed=downstream.proceed,
-                )
+                    decide.assert_not_called()
             downstream.assert_untouched(self)
 
-    def test_decision_values_never_reach_errors(self):
-        canary = "DECISION-CANARY-SECRET"
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            tampered = dict(decision, principal_id=canary, repository_id="repository-foreign")
-            downstream = PolicyDownstream()
-            with self.assertRaisesRegex(
-                ControlledPublicationError,
-                "^controlled publication: decision repository mismatch$",
-            ) as raised:
-                run_policy_gate(
-                    intent, approval, tampered, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed
-                )
-            self.assertNotIn(canary, str(raised.exception))
-            downstream.assert_untouched(self)
-            stale = dict(decision, decision_id=canary,
-                         expires_at=format_time(FIXED_NOW - timedelta(seconds=1)))
-            with self.assertRaisesRegex(ContractValidationError, "^decision: expired$") as raised:
-                run_policy_gate(
-                    intent, approval, stale, engine_intent, now=FIXED_NOW, proceed=downstream.proceed
-                )
-            self.assertNotIn(canary, str(raised.exception))
-            downstream.assert_untouched(self)
-
-
-class PolicyGateApprovalRemediationTests(unittest.TestCase):
-    def test_expired_approval_stops_policy_gate_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            for expires_at in (
-                format_time(FIXED_NOW - timedelta(hours=1)),
-                format_time(FIXED_NOW),
-            ):
-                with self.subTest(expires_at=expires_at):
-                    downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError,
-                        "^controlled publication: approval expired$",
-                    ):
-                        run_policy_gate(
-                            intent, dict(approval, expires_at=expires_at), decision,
-                            engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
-                    downstream.assert_untouched(self)
-
-    def test_foreign_approval_bindings_stop_policy_gate_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
+    def test_expired_or_mismatched_approval_stops_before_policy_and_downstream(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _decision):
             cases = [
-                {"process_id": "process-foreign-001"},
-                {"repository_id": "repository-foreign"},
-                {"staged_change_digest": "sha256:" + "f" * 64},
+                (dict(approval, expires_at=format_time(FIXED_NOW)), "approval expired"),
+                (dict(approval, expires_at=format_time(FIXED_NOW - timedelta(seconds=1))),
+                 "approval expired"),
+                (dict(approval, approved_intent_digest="sha256:" + "f" * 64),
+                 "approval binding is invalid"),
             ]
-            for override in cases:
-                with self.subTest(override=tuple(override)):
+            with patch.object(policy, "decide", wraps=policy.decide) as decide:
+                for bad_approval, message in cases:
                     downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError,
-                        "^controlled publication: approval binding mismatch$",
-                    ):
-                        run_policy_gate(
-                            intent, dict(approval, **override), decision,
-                            engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
-                    downstream.assert_untouched(self)
-            stripped = dict(approval)
-            del stripped["process_id"]
+                    with self.subTest(message=message):
+                        with self.assertRaisesRegex(
+                            ControlledPublicationError,
+                            f"^controlled publication: {message}$",
+                        ):
+                            invoke_policy_gate(
+                                intent, bad_approval, policy, engine_intent,
+                                staged_change, downstream,
+                            )
+                        downstream.assert_untouched(self)
+                decide.assert_not_called()
             downstream = PolicyDownstream()
-            with self.assertRaisesRegex(
-                ControlledPublicationError,
-                "^controlled publication: approval binding mismatch$",
-            ):
-                run_policy_gate(
-                    intent, stripped, decision, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed
+            with self.assertRaisesRegex(ContractValidationError, "^decision: not allow$"):
+                invoke_policy_gate(
+                    intent, dict(approval, approval_id="approval-foreign"), policy,
+                    engine_intent, staged_change, downstream,
                 )
             downstream.assert_untouched(self)
 
-    def test_malformed_approval_expiry_stops_policy_gate_before_downstream(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            for expires_at in (None, "", "not-a-time"):
-                with self.subTest(expires_at=repr(expires_at)):
-                    downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError,
-                        "^controlled publication: approval expiry is invalid$",
-                    ):
-                        run_policy_gate(
-                            intent, dict(approval, expires_at=expires_at), decision,
-                            engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
-                    downstream.assert_untouched(self)
-
-    def test_foreign_approval_values_never_reach_errors(self):
-        canary = "POLICY-APPROVAL-CANARY"
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            foreign = dict(
-                approval, approval_id=canary,
-                staged_change_digest="sha256:" + "f" * 64,
+    def test_substituted_approval_and_old_allow_are_not_accepted(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, old_allow):
+            forged_engine = dict(engine_intent, approval_id="approval-substituted")
+            forged_approval = dict(
+                approval, approval_id="approval-substituted",
+                approved_intent_digest=sha256_digest(forged_engine),
             )
             downstream = PolicyDownstream()
             with self.assertRaisesRegex(
                 ControlledPublicationError,
-                "^controlled publication: approval binding mismatch$",
+                "^controlled publication: policy engine is invalid$",
+            ):
+                invoke_policy_gate(
+                    intent, forged_approval, old_allow, forged_engine,
+                    staged_change, downstream,
+                )
+            downstream.assert_untouched(self)
+
+    def test_error_messages_do_not_expose_approval_or_decision_values(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, decision):
+            canary = "APPROVAL-DECISION-CANARY"
+            forged = dict(approval, approval_id=canary,
+                          approved_intent_digest="sha256:" + "f" * 64)
+            downstream = PolicyDownstream()
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: approval binding is invalid$",
             ) as raised:
-                run_policy_gate(
-                    intent, foreign, decision, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed
+                invoke_policy_gate(
+                    intent, forged, policy, engine_intent, staged_change, downstream
                 )
             self.assertNotIn(canary, str(raised.exception))
             downstream.assert_untouched(self)
-
-    def test_matching_approval_and_decision_still_pass_policy_gate(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            downstream = PolicyDownstream()
-            marker, passed_intent, passed_approval, passed_decision = run_policy_gate(
-                intent, approval, decision, engine_intent,
-                now=FIXED_NOW, proceed=downstream.proceed,
-            )
-            self.assertEqual(marker, "completed-path")
-            self.assertIs(passed_approval, approval)
-            self.assertIs(passed_decision, decision)
-            for stage in PolicyDownstream.STAGES:
-                self.assertEqual(downstream.calls[stage], 1, stage)
-
-
-class PolicyGateApprovalIdentityRemediationTests(unittest.TestCase):
-    def test_substituted_approval_id_and_digest_stop_policy_gate(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            forged = dict(
-                approval,
-                approval_id="approval-forged-001",
-                approved_intent_digest="sha256:" + "f" * 64,
-            )
-            downstream = PolicyDownstream()
-            with self.assertRaisesRegex(
-                ControlledPublicationError,
-                "^controlled publication: approval intent binding mismatch$",
-            ) as raised:
-                run_policy_gate(
-                    intent, forged, decision, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed,
-                )
-            self.assertNotIn("approval-forged-001", str(raised.exception))
+            foreign_result = dict(decision, repository_id=canary)
+            with patch.object(policy, "decide", return_value=foreign_result):
+                with self.assertRaisesRegex(
+                    ControlledPublicationError,
+                    "^controlled publication: decision repository mismatch$",
+                ) as raised:
+                    invoke_policy_gate(
+                        intent, approval, policy, engine_intent, staged_change, downstream
+                    )
+            self.assertNotIn(canary, str(raised.exception))
             downstream.assert_untouched(self)
-            forged_id_only = dict(approval, approval_id="approval-forged-001")
-            downstream = PolicyDownstream()
-            with self.assertRaisesRegex(
-                ControlledPublicationError,
-                "^controlled publication: approval identity mismatch$",
-            ) as raised:
-                run_policy_gate(
-                    intent, forged_id_only, decision, engine_intent,
-                    now=FIXED_NOW, proceed=downstream.proceed,
-                )
-            self.assertNotIn("approval-forged-001", str(raised.exception))
-            downstream.assert_untouched(self)
-
-    def test_foreign_engine_intent_stops_policy_gate(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            foreign_engine = dict(engine_intent, staged_change_digest="sha256:" + "f" * 64)
-            downstream = PolicyDownstream()
-            with self.assertRaisesRegex(
-                ControlledPublicationError,
-                "^controlled publication: approval intent binding mismatch$",
-            ):
-                run_policy_gate(
-                    intent, approval, decision, foreign_engine,
-                    now=FIXED_NOW, proceed=downstream.proceed,
-                )
-            downstream.assert_untouched(self)
-            rebound_approval = dict(
-                approval, approved_intent_digest=sha256_digest(foreign_engine)
-            )
-            downstream = PolicyDownstream()
-            with self.assertRaisesRegex(
-                ControlledPublicationError,
-                "^controlled publication: engine intent binding mismatch$",
-            ):
-                run_policy_gate(
-                    intent, rebound_approval, decision, foreign_engine,
-                    now=FIXED_NOW, proceed=downstream.proceed,
-                )
-            downstream.assert_untouched(self)
-
-    def test_malformed_engine_intent_stops_policy_gate(self):
-        with decided_gate_fixture() as (intent, approval, decision, _engine_intent):
-            for engine_intent in (None, "not-a-mapping", []):
-                with self.subTest(engine_intent=repr(engine_intent)):
-                    downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError,
-                        "^controlled publication: engine intent is missing$",
-                    ):
-                        run_policy_gate(
-                            intent, approval, decision, engine_intent,
-                            now=FIXED_NOW, proceed=downstream.proceed,
-                        )
-                    downstream.assert_untouched(self)
-
-    def test_approval_operation_and_version_must_match_decision(self):
-        with decided_gate_fixture() as (intent, approval, decision, engine_intent):
-            for field, value in (
-                ("operation", "merge_pull_request"),
-                ("policy_version", "policy-foreign-v9"),
-            ):
-                with self.subTest(field=field):
-                    downstream = PolicyDownstream()
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError,
-                        "^controlled publication: approval decision binding mismatch$",
-                    ):
-                        run_policy_gate(
-                            intent, dict(approval, **{field: value}), decision,
-                            engine_intent, now=FIXED_NOW, proceed=downstream.proceed,
-                        )
-                    downstream.assert_untouched(self)
 
 
 if __name__ == "__main__":

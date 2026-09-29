@@ -94,6 +94,11 @@ def build_publication_seed(
         raise PublicationSeedError("publication seed: staged digest is missing")
     if result.snapshot_origin != "local_git_commit" or result.snapshot_tree_digest is None:
         raise PublicationSeedError("publication seed: snapshot origin is unverified")
+    for value in (result.patch_digest, result.evidence_digest, result.verification_digest):
+        _validate_digest(value)
+    if verifier.evidence_origin != "local_test" or result.evidence_origin != "local_test":
+        raise PublicationSeedError("publication seed: evidence origin is invalid")
+    _validate_digest(verifier.replay_result_digest)
     try:
         bindings_match = (
             verifier.process_id == request.process_id

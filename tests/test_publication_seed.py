@@ -559,5 +559,113 @@ class BuildPublicationSeedTests(unittest.TestCase):
             self.assertNotIn(canary, str(raised.exception))
 
 
+class HandBuiltEvidenceRemediationTests(unittest.TestCase):
+    def test_hand_built_result_with_missing_digests_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            forged_verifier = replace(
+                result.verifier_result,
+                patch_digest=None,
+                evidence_digest=None,
+                verification_digest=None,
+                replay_result_digest=None,
+                evidence_origin="remote_attested",
+            )
+            forged_result = replace(
+                result,
+                patch_digest=None,
+                evidence_digest=None,
+                verification_digest=None,
+                verifier_result=forged_verifier,
+                evidence_origin="remote_attested",
+            )
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication seed: digest is invalid$",
+            ) as raised:
+                build_publication_seed(request, forged_result)
+            self.assertNotIn("remote_attested", str(raised.exception))
+
+    def test_each_missing_canonical_digest_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            for field in ("patch_digest", "evidence_digest", "verification_digest"):
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: digest is invalid$",
+                    ):
+                        build_publication_seed(request, replace(result, **{field: None}))
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: digest is invalid$",
+                    ):
+                        build_publication_seed(request, replace(result, **{field: "not-a-digest"}))
+
+    def test_verifier_side_missing_digest_cannot_match(self):
+        with pinned_verified_execution() as (request, result):
+            for field in ("patch_digest", "evidence_digest", "verification_digest"):
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: execution binding mismatch$",
+                    ):
+                        build_publication_seed(
+                            request,
+                            replace(
+                                result,
+                                verifier_result=replace(result.verifier_result, **{field: None}),
+                            ),
+                        )
+
+    def test_forged_evidence_origin_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            with self.subTest(origin="verifier"):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication seed: evidence origin is invalid$",
+                ) as raised:
+                    build_publication_seed(
+                        request,
+                        replace(
+                            result,
+                            verifier_result=replace(
+                                result.verifier_result, evidence_origin="remote_attested"),
+                        ),
+                    )
+                self.assertNotIn("remote_attested", str(raised.exception))
+            with self.subTest(origin="result"):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication seed: evidence origin is invalid$",
+                ) as raised:
+                    build_publication_seed(
+                        request, replace(result, evidence_origin="remote_attested"))
+                self.assertNotIn("remote_attested", str(raised.exception))
+
+    def test_missing_or_malformed_replay_digest_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            for replay in (None, "not-a-digest", "sha256:" + "z" * 64):
+                with self.subTest(replay=repr(replay)):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: digest is invalid$",
+                    ) as raised:
+                        build_publication_seed(
+                            request,
+                            replace(
+                                result,
+                                verifier_result=replace(
+                                    result.verifier_result, replay_result_digest=replay),
+                            ),
+                        )
+                    self.assertNotIn("not-a-digest", str(raised.exception))
+
+    def test_matching_pinned_result_still_builds_after_remediation(self):
+        with pinned_verified_execution() as (request, result):
+            seed = build_publication_seed(request, result)
+            self.assertEqual(seed.staged_change_digest, result.staged_change_digest)
+            self.assertEqual(seed.verdict, "pass")
+            self.assertEqual(seed.snapshot_origin, "local_git_commit")
+
+
 if __name__ == "__main__":
     unittest.main()

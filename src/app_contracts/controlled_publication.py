@@ -1,10 +1,13 @@
-"""First controlled-publication gate: a fresh approval bound to a seed intent.
+"""Controlled-publication gates: approval, then policy decision.
 
-Only a caller-provided approval that is fresh and bound to the exact
-seed-bound intent passes, verified through the existing authority contract.
-This module never creates approvals, recovers expired ones, or calls
-policy, gateway, broker or provider code: the single downstream step runs
-only via an injected ``proceed`` callable after every check passes.
+Only a caller-provided fresh approval bound to the exact seed-bound intent
+passes the first gate, verified through the existing authority contract, and
+only a fresh allow decision bound to the same intent passes the second gate,
+verified field-by-field with the existing decision-use contract. The Policy
+Engine stays the sole decision source: this module never synthesizes,
+relaxes, caches or re-timestamps decisions. Neither gate calls policy,
+gateway, broker or provider code: each downstream step runs only via an
+injected ``proceed`` callable after every check passes.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar
 
-from .authority import check_intent_approved
+from .authority import check_decision_usable, check_intent_approved
 from .publication_seed import PublicationIntent
 
 
@@ -49,6 +52,43 @@ def run_approval_gate(
     if _require_approval_expiry(approval) <= moment:
         raise ControlledPublicationError("controlled publication: approval expired")
     return proceed(intent)
+
+
+def run_policy_gate(
+    intent: PublicationIntent,
+    approval: Any,
+    decision: Any,
+    *,
+    now: datetime,
+    proceed: Callable[[PublicationIntent, Any, dict], T],
+) -> T:
+    """Pass the approved intent downstream only with a fresh matching decision.
+
+    The decision effect, operation, repository and staged digest are verified
+    against the same seed-bound intent, and its allow lifetime is verified
+    through the existing decision-use contract, all before the downstream
+    step runs. A stale, mismatched or deny decision stops the path with zero
+    downstream calls. Failures carry stable messages without decision,
+    approval, intent or digest values.
+    """
+
+    if not callable(proceed):
+        raise ControlledPublicationError("controlled publication: downstream step is invalid")
+    if not isinstance(intent, PublicationIntent):
+        raise ControlledPublicationError("controlled publication: intent is invalid")
+    if not isinstance(approval, dict):
+        raise ControlledPublicationError("controlled publication: approval is missing")
+    if not isinstance(decision, dict):
+        raise ControlledPublicationError("controlled publication: decision is missing")
+    moment = _require_clock(now)
+    if decision.get("operation") != "publish_pull_request":
+        raise ControlledPublicationError("controlled publication: decision operation mismatch")
+    if decision.get("repository_id") != intent.repository_id:
+        raise ControlledPublicationError("controlled publication: decision repository mismatch")
+    if decision.get("staged_change_digest") != intent.staged_change_digest:
+        raise ControlledPublicationError("controlled publication: decision digest mismatch")
+    check_decision_usable(decision, now=moment)
+    return proceed(intent, approval, decision)
 
 
 def _require_clock(now: Any) -> datetime:

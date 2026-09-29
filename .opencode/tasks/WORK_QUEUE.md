@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 4/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 5/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3879,7 +3879,7 @@ Commit: ALLOWED
   passed; full suite: 518 passed, 1 skipped.
 
 ## EXP-312 — export the exact commit tree without checkout state
-Статус: READY
+Статус: ACCEPTED
 Цель: materialize snapshot content from the resolved commit tree, excluding working-tree changes.
 Гипотеза: exporting the commit object prevents uncommitted files from contaminating executor input.
 Зависит от: EXP-311
@@ -3898,9 +3898,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `f5ddd6a` экспортирует данные blob-объектов выбранного
+  commit, не применяя worktree/index и archive substitutions; dirty/untracked
+  файлы исключены, HEAD/status исходного repo не изменились. Targeted tests: 16
+  passed; full suite: 520 passed, 1 skipped.
 
 ## EXP-313 — reject unsafe tree entries during snapshot export
-Статус: DRAFT
+Статус: READY
 Цель: reject symlinks, submodules and unsupported tree entries before executor use.
 Гипотеза: a pinned tree with only regular files/directories has a bounded local materialization contract.
 Зависит от: EXP-312

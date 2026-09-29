@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 10/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 11/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -4040,7 +4040,7 @@ Commit: ALLOWED
   closes the session. Targeted tests: 57 passed; full suite: 535 passed, 1 skipped.
 
 ## EXP-318 — bind executor request and worker input to a pinned snapshot
-Статус: READY
+Статус: ACCEPTED
 Цель: bind executor/Worker records to the exact pinned tree and keep a derived sandbox workspace writable.
 Гипотеза: worker-facing metadata preserves provenance without exposing host paths, while sandbox permission normalization preserves preparation behavior.
 Зависит от: EXP-317
@@ -4062,9 +4062,15 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `41028f4` связывает request с pinned local record,
+  передаёт Worker только repository id/OID/tree digest/origin без host path и
+  запрещает legacy request в `require_pinned_snapshot` режиме. Local/Docker
+  sandbox оставляют snapshot read-only, а производный workspace owner-writable.
+  Targeted: 45 tests, 1 skipped; full: 539 passed, 1 skipped.
 
 ## EXP-319 — bind prepared artifacts to the pinned tree
-Статус: DRAFT
+Статус: READY
 Цель: verify prepared change base commit and source digests against pinned snapshot identity.
 Гипотеза: staged metadata cannot claim a different base than the exact exported tree.
 Зависит от: EXP-318

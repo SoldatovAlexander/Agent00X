@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import FrozenInstanceError, asdict
+from contextlib import contextmanager
+from dataclasses import FrozenInstanceError, asdict, replace
 import json
 from pathlib import Path
 import shutil
@@ -32,6 +33,7 @@ from app_contracts.pinned_snapshot import (
 from app_contracts.publication_seed import (
     PublicationSeed,
     PublicationSeedError,
+    build_publication_seed,
 )
 import app_contracts.publication_seed as seed_module
 
@@ -295,7 +297,7 @@ class PublicationSeedTests(unittest.TestCase):
                     called_names.add(node.func.attr.lower())
         forbidden_modules = {
             "gateway", "broker", "actuator", "publication", "github_app",
-            "authority", "executor", "repository_process",
+            "authority",
         }
         self.assertTrue(
             all(
@@ -308,6 +310,253 @@ class PublicationSeedTests(unittest.TestCase):
                 called_names
             )
         )
+
+    def test_seed_module_takes_no_collaborators_and_performs_no_effects(self):
+        source = Path(seed_module.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "build_publication_seed"
+        )
+        self.assertEqual(
+            [argument.arg for argument in function.args.args],
+            ["request", "result"],
+        )
+        self.assertEqual(function.args.vararg, None)
+        self.assertEqual(function.args.kwarg, None)
+
+
+@contextmanager
+def pinned_verified_execution(process_id="process-local-001", content_marker="seed-bound change"):
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        repository = root / "source-repository"
+        shutil.copytree(ROOT / "fixtures/repository/project", repository)
+        subprocess.run(["git", "init", "--quiet", str(repository)], check=True)
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(repository), "-c", "user.name=Seed Test",
+                "-c", "user.email=seed@example.invalid", "commit", "--quiet", "-m",
+                "fixture snapshot",
+            ],
+            check=True,
+        )
+        commit_oid = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        lease = export_local_commit_tree(
+            open_local_repository(repository), commit_oid, root
+        )
+        try:
+            pin = PinnedSnapshot(
+                repository_id="fixture-repository",
+                commit_oid=commit_oid,
+                tree_digest=compute_snapshot_tree_digest(lease.path),
+                snapshot_path=lease.path,
+            )
+            request = ExecutionRequest(
+                process_id=process_id,
+                task_id="task-local-001",
+                repository_id=pin.repository_id,
+                base_commit=pin.commit_oid,
+                snapshot_path=lease.path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-c", "print('ok')"),
+                pinned_snapshot=pin,
+            )
+
+            class PinnedWorker:
+                def propose(self, task: WorkerInput) -> WorkerProposal:
+                    original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                    return WorkerProposal((("calculator.py", original + f"\n# {content_marker}\n"),))
+
+            result = run_local_execution(
+                request, PinnedWorker(), verifier=AcceptingVerifier(),
+                require_pinned_snapshot=True,
+            )
+            assert result.status == ExecutionStatus.VERIFIED, repr(result)
+            yield request, result
+        finally:
+            lease.close()
+
+
+class BuildPublicationSeedTests(unittest.TestCase):
+    def test_matching_pinned_result_builds_single_correct_seed(self):
+        with pinned_verified_execution() as (request, result):
+            seed = build_publication_seed(request, result)
+            expected = PublicationSeed(
+                process_id=request.process_id,
+                repository_id=request.repository_id,
+                base_commit=request.base_commit,
+                staged_change_digest=result.staged_change_digest,
+                verified_contents_digest=result.verified_contents_digest,
+                verifier_id=result.verifier_result.verifier_id,
+                verdict="pass",
+                replay_result_digest=result.verifier_result.replay_result_digest,
+                snapshot_tree_digest=result.snapshot_tree_digest,
+                snapshot_origin="local_git_commit",
+            )
+            self.assertEqual(seed, expected)
+            self.assertEqual(seed.snapshot_tree_digest, request.pinned_snapshot.tree_digest)
+            self.assertEqual(seed.base_commit, request.pinned_snapshot.commit_oid)
+            twin = build_publication_seed(request, result)
+            self.assertEqual(twin, seed)
+            self.assertIsNot(twin, seed)
+
+    def test_non_verified_status_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            for status in (ExecutionStatus.PREPARED, ExecutionStatus.FAILED):
+                with self.subTest(status=status):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: execution status is not verified$",
+                    ):
+                        build_publication_seed(request, replace(result, status=status))
+
+    def test_fail_and_blocked_verdicts_are_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            for verdict in (VerifierVerdict.FAIL, VerifierVerdict.BLOCKED):
+                with self.subTest(verdict=verdict):
+                    denied = replace(
+                        result,
+                        verifier_result=replace(result.verifier_result, verdict=verdict),
+                    )
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: verifier verdict is not pass$",
+                    ):
+                        build_publication_seed(request, denied)
+
+    def test_missing_verifier_evidence_and_digests_are_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication seed: verifier evidence is missing$",
+            ):
+                build_publication_seed(request, replace(result, verifier_result=None))
+            for field in ("staged_change_digest", "verified_contents_digest"):
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: staged digest is missing$",
+                    ):
+                        build_publication_seed(request, replace(result, **{field: None}))
+
+    def test_unverified_snapshot_origin_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication seed: snapshot origin is unverified$",
+            ):
+                build_publication_seed(
+                    request,
+                    replace(
+                        result,
+                        snapshot_origin="unverified_local_test",
+                        snapshot_tree_digest=None,
+                    ),
+                )
+
+    def test_unpinned_request_is_rejected_before_verifier_evidence(self):
+        unpinned = valid_request()
+        unpinned_result = run_local_execution(
+            unpinned, SeedWorker(), verifier=AcceptingVerifier()
+        )
+        self.assertEqual(unpinned_result.status, ExecutionStatus.VERIFIED)
+        with self.assertRaisesRegex(
+            PublicationSeedError,
+            "^publication seed: pinned snapshot is required$",
+        ):
+            build_publication_seed(unpinned, unpinned_result)
+
+    def test_binding_mismatch_is_rejected(self):
+        with pinned_verified_execution() as (request, result):
+            tampered_cases = [
+                ("process", replace(
+                    result.verifier_result, process_id="process-foreign-001")),
+                ("base", replace(
+                    result.verifier_result, base_commit="b" * 40)),
+                ("tree", replace(
+                    result.verifier_result,
+                    snapshot_tree_digest="sha256:" + "f" * 64)),
+                ("patch", replace(
+                    result.verifier_result, patch_digest="sha256:" + "f" * 64)),
+                ("evidence", replace(
+                    result.verifier_result, evidence_digest="sha256:" + "f" * 64)),
+                ("verification", replace(
+                    result.verifier_result, verification_digest="sha256:" + "f" * 64)),
+                ("contents", replace(
+                    result.verifier_result,
+                    verified_contents_digest="sha256:" + "f" * 64)),
+            ]
+            for label, verifier_result in tampered_cases:
+                with self.subTest(binding=label):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication seed: execution binding mismatch$",
+                    ):
+                        build_publication_seed(
+                            request, replace(result, verifier_result=verifier_result))
+            with self.subTest(binding="result-tree"):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication seed: execution binding mismatch$",
+                ):
+                    build_publication_seed(
+                        request,
+                        replace(result, snapshot_tree_digest="sha256:" + "f" * 64),
+                    )
+
+    def test_cross_pair_request_and_result_are_rejected(self):
+        with pinned_verified_execution(
+            process_id="process-local-001"
+        ) as (first_request, _first_result):
+            with pinned_verified_execution(
+                process_id="process-local-002"
+            ) as (second_request, second_result):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication seed: execution binding mismatch$",
+                ):
+                    build_publication_seed(first_request, second_result)
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication seed: execution binding mismatch$",
+                ):
+                    build_publication_seed(second_request, _first_result)
+
+    def test_malformed_inputs_and_errors_carry_no_raw_values(self):
+        canary = "BUILD-SEED-CANARY-CONTENT"
+        with pinned_verified_execution(content_marker=canary) as (request, result):
+            malformed_inputs = [
+                (None, result, "publication seed: execution request is invalid"),
+                ("not-a-request", result, "publication seed: execution request is invalid"),
+                (request, None, "publication seed: execution result is invalid"),
+                (request, object(), "publication seed: execution result is invalid"),
+            ]
+            for bad_request, bad_result, message in malformed_inputs:
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError, f"^{message}$"
+                    ) as raised:
+                        build_publication_seed(bad_request, bad_result)
+                    self.assertNotIn(canary, str(raised.exception))
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication seed: execution binding mismatch$",
+            ) as raised:
+                build_publication_seed(
+                    request,
+                    replace(
+                        result,
+                        verifier_result=replace(
+                            result.verifier_result, process_id="process-foreign-001"),
+                    ),
+                )
+            self.assertNotIn(canary, str(raised.exception))
 
 
 if __name__ == "__main__":

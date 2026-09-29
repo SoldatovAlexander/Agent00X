@@ -2,8 +2,9 @@
 
 A seed carries bounded identifiers, digests, a verifier verdict and a snapshot
 origin only. It never carries prompts, file contents, command output,
-credentials, capabilities or approvals. Fail-closed construction from a pinned
-execution request and result is added separately.
+credentials, capabilities or approvals. :func:`build_publication_seed`
+accepts a seed only from a matching pinned request and verified execution
+result, failing closed before any downstream collaborator could use it.
 """
 
 from __future__ import annotations
@@ -11,6 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Literal
+
+from .executor import ExecutionRequest, ExecutionResult, ExecutionStatus, VerifierResult, VerifierVerdict
+from .pinned_snapshot import PinnedSnapshot
 
 
 class PublicationSeedError(ValueError):
@@ -58,6 +62,67 @@ class PublicationSeed:
                 _validate_digest(value)
         if self.snapshot_origin not in _SNAPSHOT_ORIGINS:
             raise PublicationSeedError("publication seed: snapshot origin is invalid")
+
+
+def build_publication_seed(
+    request: ExecutionRequest, result: ExecutionResult
+) -> PublicationSeed:
+    """Build the single seed bound to one matching pinned verified execution.
+
+    Only a pinned request paired with a verified result carrying the same
+    process, repository, base commit, snapshot tree and verifier evidence
+    produces a seed. Every other input fails closed with a stable,
+    payload-free error before any downstream collaborator is involved; this
+    function takes no collaborators and performs no effects.
+    """
+
+    if not isinstance(request, ExecutionRequest):
+        raise PublicationSeedError("publication seed: execution request is invalid")
+    if not isinstance(result, ExecutionResult):
+        raise PublicationSeedError("publication seed: execution result is invalid")
+    pin = request.pinned_snapshot
+    if not isinstance(pin, PinnedSnapshot):
+        raise PublicationSeedError("publication seed: pinned snapshot is required")
+    if result.status is not ExecutionStatus.VERIFIED:
+        raise PublicationSeedError("publication seed: execution status is not verified")
+    verifier = result.verifier_result
+    if not isinstance(verifier, VerifierResult):
+        raise PublicationSeedError("publication seed: verifier evidence is missing")
+    if verifier.verdict is not VerifierVerdict.PASS:
+        raise PublicationSeedError("publication seed: verifier verdict is not pass")
+    if result.staged_change_digest is None or result.verified_contents_digest is None:
+        raise PublicationSeedError("publication seed: staged digest is missing")
+    if result.snapshot_origin != "local_git_commit" or result.snapshot_tree_digest is None:
+        raise PublicationSeedError("publication seed: snapshot origin is unverified")
+    try:
+        bindings_match = (
+            verifier.process_id == request.process_id
+            and pin.repository_id == request.repository_id
+            and pin.commit_oid == request.base_commit
+            and verifier.base_commit == request.base_commit
+            and pin.tree_digest == result.snapshot_tree_digest
+            and verifier.snapshot_tree_digest == result.snapshot_tree_digest
+            and verifier.patch_digest == result.patch_digest
+            and verifier.evidence_digest == result.evidence_digest
+            and verifier.verification_digest == result.verification_digest
+            and verifier.verified_contents_digest == result.verified_contents_digest
+        )
+    except Exception:
+        raise PublicationSeedError("publication seed: execution binding is invalid") from None
+    if not bindings_match:
+        raise PublicationSeedError("publication seed: execution binding mismatch")
+    return PublicationSeed(
+        process_id=request.process_id,
+        repository_id=request.repository_id,
+        base_commit=request.base_commit,
+        staged_change_digest=result.staged_change_digest,
+        verified_contents_digest=result.verified_contents_digest,
+        verifier_id=verifier.verifier_id,
+        verdict=verifier.verdict.value,
+        replay_result_digest=verifier.replay_result_digest,
+        snapshot_tree_digest=result.snapshot_tree_digest,
+        snapshot_origin=result.snapshot_origin,
+    )
 
 
 def _validate_identity(value: object) -> None:

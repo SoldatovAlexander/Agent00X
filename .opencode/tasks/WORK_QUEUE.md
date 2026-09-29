@@ -4041,19 +4041,22 @@ Commit: ALLOWED
 
 ## EXP-318 — bind executor request and worker input to a pinned snapshot
 Статус: READY
-Цель: add exact snapshot OID and content digest to executor and worker-facing records.
-Гипотеза: Worker proposals can be traced to one content-addressed local base.
+Цель: bind executor/Worker records to the exact pinned tree and keep a derived sandbox workspace writable.
+Гипотеза: worker-facing metadata preserves provenance without exposing host paths, while sandbox permission normalization preserves preparation behavior.
 Зависит от: EXP-317
 Среда исполнения: local
 Внешняя цель: none
 Вне scope: model invocation, mutable ref resolution, credentials, remote origins.
 Разрешённые пути:
+- src/app_contracts/sandbox.py
 - src/app_contracts/executor.py
+- tests/test_sandbox.py
 - tests/test_executor.py
 Критерии приёмки:
 - worker receives pinned repository id, full OID and tree digest, never provider secrets or host path.
 - legacy unpinned request is explicitly denied in the pinned execution path.
 - tests cover binding and ensure no host absolute path is passed to Worker.
+- local and Docker sandbox workspaces derived from a read-only input remain owner-writable; sandbox snapshots and caller source remain read-only/unchanged.
 Проверки:
 - PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 Разрешённые внешние команды:

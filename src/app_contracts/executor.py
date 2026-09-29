@@ -14,6 +14,7 @@ from typing import Protocol, runtime_checkable
 
 from .repository_process import prepare_change
 from .sandbox import LocalProcessSandboxBackend
+from .digests import sha256_digest
 
 
 class ExecutionError(ValueError):
@@ -60,6 +61,7 @@ class ExecutionResult:
     patch_digest: str | None = None
     evidence_digest: str | None = None
     verification_digest: str | None = None
+    verified_contents_digest: str | None = None
     failure_code: str | None = None
 
 
@@ -192,12 +194,16 @@ def run_local_execution(
             or staged.get("base_commit") != request.base_commit
         ):
             raise ExecutionError("execution preparation: binding mismatch")
+        verified_contents = getattr(prepared, "verified_contents", None)
+        if not isinstance(verified_contents, tuple) or not verified_contents:
+            raise ExecutionError("execution preparation: verified contents are missing")
         return ExecutionResult(
             status=ExecutionStatus.PREPARED,
             prepared_change_id=staged["staged_change_id"],
             patch_digest=staged["patch_digest"],
             evidence_digest=staged["evidence_digest"],
             verification_digest=staged["verification_digest"],
+            verified_contents_digest=sha256_digest(verified_contents),
         )
     finally:
         close = getattr(sandbox, "close", None)

@@ -25,6 +25,7 @@ from app_contracts.executor import (
 )
 from app_contracts.validator import ContractValidationError
 from app_contracts.repository_process import prepare_change
+from app_contracts.digests import sha256_digest
 
 
 def valid_request(**overrides) -> ExecutionRequest:
@@ -178,7 +179,8 @@ class ExecutionRecordTests(unittest.TestCase):
                 self.calls += 1
                 self.task = task
                 content = (ROOT / "fixtures/repository/project/calculator.py").read_text()
-                return WorkerProposal((("calculator.py", content + "\n\ndef subtract(a, b):\n    return a - b\n"),))
+                self.content = content + "\n\ndef subtract(a, b):\n    return a - b\n"
+                return WorkerProposal((("calculator.py", self.content),))
 
         worker = FakeWorker()
         with patch(
@@ -196,11 +198,19 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertTrue(result.patch_digest.startswith("sha256:"))
         self.assertTrue(result.evidence_digest.startswith("sha256:"))
         self.assertTrue(result.verification_digest.startswith("sha256:"))
+        self.assertTrue(result.verified_contents_digest.startswith("sha256:"))
         self.assertTrue(all(len(digest.removeprefix("sha256:")) == 64 for digest in (
             result.patch_digest,
             result.evidence_digest,
             result.verification_digest,
+            result.verified_contents_digest,
         )))
+        self.assertEqual(
+            result.verified_contents_digest,
+            sha256_digest((("calculator.py", worker.content),)),
+        )
+        self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
+        self.assertNotIn("publishable", ExecutionResult.__dataclass_fields__)
 
     def test_local_coordinator_returns_no_success_when_preparation_fails(self):
         class FakeWorker:

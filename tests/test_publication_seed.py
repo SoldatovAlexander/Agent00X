@@ -31,9 +31,11 @@ from app_contracts.pinned_snapshot import (
     open_local_repository,
 )
 from app_contracts.publication_seed import (
+    PublicationIntent,
     PublicationSeed,
     PublicationSeedError,
     build_publication_seed,
+    derive_publication_intent,
 )
 import app_contracts.publication_seed as seed_module
 
@@ -665,6 +667,116 @@ class HandBuiltEvidenceRemediationTests(unittest.TestCase):
             self.assertEqual(seed.staged_change_digest, result.staged_change_digest)
             self.assertEqual(seed.verdict, "pass")
             self.assertEqual(seed.snapshot_origin, "local_git_commit")
+
+
+@contextmanager
+def seeded_intent(branch="agent/process-demo-001"):
+    with pinned_verified_execution() as (request, result):
+        seed = build_publication_seed(request, result)
+        yield seed, derive_publication_intent(seed, branch)
+
+
+class DerivePublicationIntentTests(unittest.TestCase):
+    def test_matching_seed_and_allowlisted_branch_derive_canonical_intent(self):
+        with seeded_intent() as (seed, intent):
+            self.assertEqual(intent.process_id, seed.process_id)
+            self.assertEqual(intent.repository_id, seed.repository_id)
+            self.assertEqual(intent.base_commit, seed.base_commit)
+            self.assertEqual(intent.branch, "agent/process-demo-001")
+            self.assertEqual(intent.staged_change_digest, seed.staged_change_digest)
+            self.assertEqual(
+                intent.idempotency_key,
+                f"publish/process-demo-001/{seed.staged_change_digest}",
+            )
+            key_body = intent.idempotency_key[len("publish/"):]
+            key_parts = key_body.split("/")
+            self.assertTrue(intent.idempotency_key.startswith("publish/"))
+            self.assertGreaterEqual(len(key_parts), 2)
+            self.assertFalse(any(part == "" for part in key_parts))
+            twin = derive_publication_intent(seed, "agent/process-demo-001")
+            self.assertEqual(twin, intent)
+            self.assertIsNot(twin, intent)
+
+    def test_intent_has_exact_minimal_shape(self):
+        with seeded_intent() as (_seed, intent):
+            self.assertEqual(
+                frozenset(PublicationIntent.__dataclass_fields__),
+                frozenset(
+                    {
+                        "process_id", "repository_id", "base_commit", "branch",
+                        "staged_change_digest", "idempotency_key",
+                    }
+                ),
+            )
+            with self.assertRaises(FrozenInstanceError):
+                intent.branch = "agent/replaced-001"  # type: ignore[misc]
+            forbidden_fields = {
+                "approval", "policy_effect", "gateway", "broker", "token",
+                "credential", "credentials", "operation", "prompt", "content",
+                "stdout", "stderr", "patch", "snapshot_path", "capability",
+            }
+            self.assertTrue(forbidden_fields.isdisjoint(PublicationIntent.__dataclass_fields__))
+
+    def test_malformed_branch_is_rejected_before_downstream(self):
+        canary = "INTENT-BRANCH-CANARY"
+        with pinned_verified_execution() as (request, result):
+            seed = build_publication_seed(request, result)
+            malformed = (
+                None, 42, "", "  ", "main", "process/demo-001", "agent/",
+                "agent//demo-001", "agent/has space", "agent/trailing ",
+                " agent/leading", f"agent/bad\n{canary}", "agent/back\\slash",
+            )
+            for branch in malformed:
+                with self.subTest(branch=repr(branch)):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication intent: branch is invalid$",
+                    ) as raised:
+                        derive_publication_intent(seed, branch)
+                    self.assertNotIn(canary, str(raised.exception))
+
+    def test_non_seed_input_is_rejected(self):
+        for value in (None, object(), "not-a-seed", {"process_id": "process-local-001"}):
+            with self.subTest(value=type(value).__name__):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication intent: seed is invalid$",
+                ):
+                    derive_publication_intent(value, "agent/process-demo-001")
+
+    def test_substituted_branch_key_or_digest_is_rejected(self):
+        with seeded_intent() as (seed, intent):
+            with self.subTest(substitution="branch"):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication intent: idempotency key mismatch$",
+                ):
+                    replace(intent, branch="agent/process-other-001")
+            with self.subTest(substitution="digest"):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication intent: idempotency key mismatch$",
+                ):
+                    replace(intent, staged_change_digest="sha256:" + "f" * 64)
+            with self.subTest(substitution="key"):
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication intent: idempotency key mismatch$",
+                ):
+                    replace(
+                        intent,
+                        idempotency_key=f"publish/process-demo-001/{'sha256:' + 'f' * 64}",
+                    )
+
+    def test_cross_seed_key_is_rejected(self):
+        with seeded_intent() as (_first_seed, first_intent):
+            with seeded_intent(branch="agent/process-demo-002") as (_second_seed, second_intent):
+                self.assertNotEqual(first_intent.idempotency_key, second_intent.idempotency_key)
+                with self.assertRaisesRegex(
+                    PublicationSeedError,
+                    "^publication intent: idempotency key mismatch$",
+                ):
+                    replace(first_intent, idempotency_key=second_intent.idempotency_key)
 
 
 if __name__ == "__main__":

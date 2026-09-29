@@ -23,6 +23,7 @@ class PublicationSeedError(ValueError):
 
 _VERDICTS = ("pass", "fail", "blocked")
 _SNAPSHOT_ORIGINS = ("local_git_commit", "unverified_local_test")
+_BRANCH_NAMESPACE = "agent/"
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _VERIFIER_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -148,3 +149,72 @@ def _validate_digest(value: object) -> None:
 def _validate_verifier_id(value: object) -> None:
     if not isinstance(value, str) or _VERIFIER_ID_PATTERN.fullmatch(value) is None:
         raise PublicationSeedError("publication seed: verifier identity is invalid")
+
+
+@dataclass(frozen=True)
+class PublicationIntent:
+    """Minimal seed-bound publication input; carries no authority proof.
+
+    The repository, base commit, process and staged digest are copied from one
+    accepted seed, and the idempotency key is the canonical derivation of the
+    explicit branch and staged digest. Any substitution is rejected at this
+    boundary, before policy, gateway or broker code could observe the intent.
+    """
+
+    process_id: str
+    repository_id: str
+    base_commit: str
+    branch: str
+    staged_change_digest: str
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        for value in (self.process_id, self.repository_id, self.base_commit):
+            _validate_identity(value)
+        _validate_branch(self.branch)
+        _validate_digest(self.staged_change_digest)
+        if self.idempotency_key != _canonical_intent_key(self.branch, self.staged_change_digest):
+            raise PublicationSeedError("publication intent: idempotency key mismatch")
+
+
+def derive_publication_intent(seed: PublicationSeed, branch: str) -> PublicationIntent:
+    """Derive the single canonical intent for one accepted seed and branch.
+
+    The branch must explicitly satisfy the existing local agent-namespace
+    constraints; the repository is never chosen here and always stays
+    seed-bound. This function takes no collaborators and performs no effects.
+    """
+
+    if not isinstance(seed, PublicationSeed):
+        raise PublicationSeedError("publication intent: seed is invalid")
+    _validate_branch(branch)
+    return PublicationIntent(
+        process_id=seed.process_id,
+        repository_id=seed.repository_id,
+        base_commit=seed.base_commit,
+        branch=branch,
+        staged_change_digest=seed.staged_change_digest,
+        idempotency_key=_canonical_intent_key(branch, seed.staged_change_digest),
+    )
+
+
+def _canonical_intent_key(branch: str, staged_change_digest: str) -> str:
+    return f"publish/{branch.removeprefix(_BRANCH_NAMESPACE)}/{staged_change_digest}"
+
+
+def _validate_branch(value: object) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
+        or "\\" in value
+        or not value.startswith(_BRANCH_NAMESPACE)
+    ):
+        raise PublicationSeedError("publication intent: branch is invalid")
+    suffix = value.removeprefix(_BRANCH_NAMESPACE)
+    if not suffix or any(part == "" for part in suffix.split("/")):
+        raise PublicationSeedError("publication intent: branch is invalid")

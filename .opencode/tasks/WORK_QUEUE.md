@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 12/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 20/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -4097,7 +4097,7 @@ Commit: ALLOWED
   SQLite ResourceWarnings unrelated to this card).
 
 ## EXP-320 — define replayable independent verification input
-Статус: READY
+Статус: ACCEPTED
 Цель: define typed verifier input bound to base pin, prepared files and allowlisted test command.
 Гипотеза: verifier can independently replay checks without trusting Worker output claims.
 Зависит от: EXP-319
@@ -4116,9 +4116,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: immutable verifier input binds repository/base snapshot,
+  declared paths, prepared contents and exact allowlisted command/timeout; bounded
+  shape/scope checks reject before verifier execution. Commit `aba62e9`; 540 tests
+  passed, 1 opt-in Docker test skipped. No remote or publication action.
 
 ## EXP-321 — implement a second local sandbox verification pass
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: rerun the allowlisted command in a newly created sandbox from the pinned base with the prepared files applied.
 Гипотеза: a separate workspace and second command execution detect test/evidence drift without trusting Worker-authored status.
 Зависит от: EXP-320
@@ -4137,9 +4142,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: pinned requests now replay the exact request command once
+  in a fresh backend session from the pinned tree with bounded prepared files;
+  replay failures stay non-pass and both sessions close. Commit `cf50b9d`; 541
+  tests passed, 1 opt-in Docker test skipped. Fakes only; no isolation claim.
 
 ## EXP-322 — validate independent verifier result binding
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: require verifier output to bind process, base pin, prepared digests and replay evidence.
 Гипотеза: stale or cross-run verifier results cannot produce VERIFIED status.
 Зависит от: EXP-321
@@ -4158,9 +4168,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: verifier output now binds process, base OID, snapshot tree,
+  prepared digests and the bounded pinned-replay result digest; mismatches reject
+  before VERIFIED promotion. Commit `5b2579a`; 541 tests passed, 1 opt-in Docker
+  test skipped. No attestation claim.
 
 ## EXP-323 — sanitize pinned snapshot and verifier evidence
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: expose bounded provenance and verdict codes without raw paths, command output or contents.
 Гипотеза: evidence remains useful for Control Plane review while excluding sensitive material.
 Зависит от: EXP-322
@@ -4181,9 +4196,15 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: execution evidence exposes local snapshot origin and
+  digests/status/limitations only; verifier digests are shape-bounded and blocker
+  codes capped at 16. Sentinel checks exclude path, contents, command and output
+  strings. Commits `435a659`, `eadc7e8`; 541 tests passed, 1 opt-in Docker test
+  skipped.
 
 ## EXP-324 — cover snapshot and verifier denial ordering
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: compose negative cases across repository, tree, sandbox-copy and verifier failures.
 Гипотеза: every trust mismatch stops before the next collaborator and cleans owned resources.
 Зависит от: EXP-323
@@ -4202,9 +4223,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: regression coverage proves malformed pin binding/tree digest
+  and replay denial stop before downstream verification, success call order is
+  explicit, and all owned temporary sandboxes plus snapshot leases are cleaned.
+  Commit `db659ca`; 542 tests passed, 1 opt-in Docker test skipped.
 
 ## EXP-325 — enforce the local-only snapshot boundary
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: add regression checks that pinned snapshot and local verifier code cannot reach remote or publication adapters.
 Гипотеза: an explicit local-only import/call boundary prevents accidental expansion into network side effects.
 Зависит от: EXP-324
@@ -4223,9 +4249,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: static fixtures prove forbidden HTTP/GitHub/credential import
+  detection without importing them; captured real local Git calls and explicit
+  negative cases stay inside the read-only object-operation allowlist. Commit
+  `f936ed4`; 545 tests passed, 1 opt-in Docker test skipped; no network calls.
 
 ## EXP-326 — exercise the complete pinned-input verification path
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: add one end-to-end local test from exact Git commit export through executor and second-pass verification.
 Гипотеза: composing pinned tree and independent local replay preserves identity and order across module boundaries.
 Зависит от: EXP-325
@@ -4244,9 +4275,15 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: temporary local Git repository proves exact commit export
+  excludes dirty/untracked source, preserves OID/tree binding through worker and
+  verifier, and exercises success plus snapshot/verifier denials with cleanup and
+  unchanged source status. Commit `7820e67`; 546 tests passed, 1 opt-in Docker test
+  skipped.
 
 ## EXP-327 — reconcile Batch AG evidence and R2 stage status
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: document local pinned snapshot and second-pass verifier evidence and remaining gaps.
 Гипотеза: implementation status can describe local object provenance without implying remote or production trust.
 Зависит от: EXP-326
@@ -4266,6 +4303,12 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: README and status/plan docs now distinguish exact local
+  commit/tree pin plus local replay from remote provenance, trusted production
+  verification and publication. R2 remains in progress; AF 1/3 and AG 2/3 are
+  20/20 each; AH remains separately gated. Commit `bb71f8d`; full suite 546
+  passed, 1 opt-in Docker test skipped.
 
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.

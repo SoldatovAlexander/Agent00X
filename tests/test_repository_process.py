@@ -84,6 +84,18 @@ class RepositoryProcessTests(unittest.TestCase):
         self.assertEqual(first_manifest[0].content, first_content)
         self.assertEqual(second_manifest[0].content, second_content)
 
+    def test_cross_workspace_manifest_substitution_is_denied(self):
+        first, second = self.twin_sandboxes()
+        prepared = prepare_change(
+            first, process_id="process-twin-substitution", task_id="task-twin-substitution",
+            changes={"calculator.py": self.new_calculator}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
+            build_publish_manifest(second, prepared, {"calculator.py": "ignored"})
+        valid = build_publish_manifest(first, prepared, {"calculator.py": "ignored"})
+        self.assertEqual(valid[0].content, self.new_calculator)
+
     def prepare(self):
         sandbox = self.backend.create(self.fixture, {"python3"})
         self.addCleanup(sandbox.close)

@@ -116,6 +116,31 @@ class RepositoryProcessTests(unittest.TestCase):
         latest = build_publish_manifest(sandbox, second, {"calculator.py": "ignored"})
         self.assertEqual(latest[0].content, second_content)
 
+    def test_twin_writer_evidence_is_process_bound_and_excludes_other_content(self):
+        first_sandbox, second_sandbox = self.twin_sandboxes()
+        first_content = self.new_calculator + "\n# writer-one-private-marker\n"
+        second_content = self.new_calculator + "\n# writer-two-private-marker\n"
+        first = prepare_change(
+            first_sandbox, process_id="process-evidence-first", task_id="task-evidence-first",
+            changes={"calculator.py": first_content}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        second = prepare_change(
+            second_sandbox, process_id="process-evidence-second", task_id="task-evidence-second",
+            changes={"calculator.py": second_content}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        first_evidence = json.dumps({"evidence": first.evidence_bundle, "verification": first.verification_report})
+        second_evidence = json.dumps({"evidence": second.evidence_bundle, "verification": second.verification_report})
+        self.assertEqual(first.evidence_bundle["process_id"], "process-evidence-first")
+        self.assertEqual(second.evidence_bundle["process_id"], "process-evidence-second")
+        self.assertEqual(first.verification_report["process_id"], "process-evidence-first")
+        self.assertEqual(second.verification_report["process_id"], "process-evidence-second")
+        self.assertNotIn("writer-two-private-marker", first_evidence)
+        self.assertNotIn("writer-one-private-marker", second_evidence)
+        self.assertNotIn(first_content, second_evidence)
+        self.assertNotIn(second_content, first_evidence)
+
     def prepare(self):
         sandbox = self.backend.create(self.fixture, {"python3"})
         self.addCleanup(sandbox.close)

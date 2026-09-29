@@ -176,7 +176,9 @@ class ExecutionRecordTests(unittest.TestCase):
                             self.applied_contents = (
                                 self.workspace / "calculator.py"
                             ).read_text(encoding="utf-8")
-                        return CommandResult(tuple(argv), code, "ok", "")
+                        return CommandResult(
+                            tuple(argv), code, "REPLAY-STDOUT-CANARY", "REPLAY-STDERR-CANARY"
+                        )
 
                     def close(self):
                         self.closed = True
@@ -225,6 +227,15 @@ class ExecutionRecordTests(unittest.TestCase):
                     self.assertEqual(result.status, ExecutionStatus.VERIFIED)
                     self.assertEqual(verifier.calls, 1)
                     self.assertEqual(result.snapshot_origin, "local_git_commit")
+                    serialized_result = repr(result)
+                    for sentinel in (
+                        str(request.snapshot_path),
+                        worker.content,
+                        "allowlisted",
+                        "REPLAY-STDOUT-CANARY",
+                        "REPLAY-STDERR-CANARY",
+                    ):
+                        self.assertNotIn(sentinel, serialized_result)
                     self.assertNotIn("snapshot_path", ExecutionResult.__dataclass_fields__)
                     self.assertNotIn("verified_contents", ExecutionResult.__dataclass_fields__)
                     self.assertNotIn("test_command", ExecutionResult.__dataclass_fields__)
@@ -675,6 +686,7 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertNotIn(proposal_canary, serialized)
         self.assertNotIn(command_canary, serialized)
         self.assertEqual(result.evidence_origin, "local_test")
+        self.assertEqual(result.snapshot_origin, "unverified_local_test")
         self.assertIn("injected_worker", result.limitations)
         self.assertIn("remote_snapshot_unverified", result.limitations)
         self.assertIn("publication_not_attempted", result.limitations)

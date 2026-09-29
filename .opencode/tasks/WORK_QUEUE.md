@@ -2960,6 +2960,247 @@ Commit: ALLOWED
   to the two authorized status documents; full suite: 465 tests passed,
   1 skipped.
 
+## Этап Observer durability and restart — 1 batch, 8 карточек
+
+## Batch AE — local SQLite observation journal
+
+Цель batch: проверить локальное сохранение событий и checkpoint между
+переоткрытиями процесса и fail-closed поведение pre-dispatch gate. Это не
+реализует collector и не доказывает production durability, внешнюю
+неизменяемость, многопроцессную конкурентность или восстановление при отказе
+носителя.
+
+### Состав этапа
+
+- Всего batch: 1.
+- Всего карточек: 8.
+- Сначала выполняются контракт и базовый reopen, затем append/checkpoint,
+  причинность, атомарный gate, отказные сценарии и сверка статуса.
+
+## EXP-280 — add versioned SQLite observation journal shell
+Статус: ACCEPTED
+Цель: добавить локальный SQLite store с версионированной пустой схемой и явным жизненным циклом.
+Гипотеза: file-backed backend может открываться повторно, не меняя in-memory ObservationStore и не скрывая несовместимую схему.
+Зависит от: EXP-279
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: collector, permissions/access-control, production deployment, fsync guarantees, concurrent writers, migration beyond initial schema.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- SQLiteObservationStore accepts an explicit database path, creates a versioned empty journal, and reopens it with zero events/checkpoints.
+- unsupported schema versions and malformed database initialization fail closed with a stable store error; no automatic destructive repair occurs.
+- existing ObservationStore behavior remains unchanged.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- this card establishes schema/open lifecycle only; it does not yet persist records.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `c661abb` added a versioned local SQLite schema,
+  explicit close/context-manager lifecycle, and stable fail-closed handling for
+  unsupported or malformed schema without repair. Targeted observation-store
+  tests: 43 passed; full suite: 468 passed, 1 skipped.
+
+## EXP-281 — persist observation events across reopen
+Статус: ACCEPTED
+Цель: сохранить schema-valid events и insertion cursors в локальном SQLite журнале.
+Гипотеза: reopen восстанавливает исходный порядок и idempotency index.
+Зависит от: EXP-280
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: concurrent writers, tamper-proof storage, collector.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- appended events and cursors survive close/reopen in insertion order.
+- identical event_id/content remains idempotent after reopen; changed content conflicts without altering history.
+- malformed events are rejected before durable insertion.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- journal persistence does not yet include checkpoint writes or atomic gate semantics.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `24f1389` persists validated events and stable
+  cursors, restores insertion order, and preserves identical-ID idempotency and
+  conflict behavior after reopen. Targeted tests: 45 passed; full suite: 470
+  passed, 1 skipped.
+
+## EXP-282 — persist checkpoints and trigger validation
+Статус: ACCEPTED
+Цель: сохранить checkpoints и проверить их привязку к восстановленному event journal.
+Гипотеза: checkpoint validation после reopen использует тот же trigger, cursor и process/run/branch binding.
+Зависит от: EXP-281
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: snapshot restore, artifact availability, external authorization.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- valid checkpoints survive reopen and retain insertion order.
+- identical checkpoint ID/content is idempotent after reopen; conflicting content is denied without mutation.
+- unknown trigger, mismatched ownership, and incorrect cursor remain denied after reopen.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- checkpoint rows are persisted independently until the later atomic-gate card.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `53216fa` persists checkpoints and validates
+  trigger identity, ownership, and cursor against reopened event history;
+  duplicate IDs remain idempotent/conflicting as specified. Targeted tests: 46
+  passed; full suite: 471 passed, 1 skipped.
+
+## EXP-283 — preserve invocation causality after restart
+Статус: ACCEPTED
+Цель: проверить result-to-intent causality на восстановленном event history.
+Гипотеза: persisted order and event content suffice to preserve current causality checks across reopen.
+Зависит от: EXP-282
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: causal completeness beyond recorded events, collector correctness.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- valid result references resolve to the original intent cursor after reopen.
+- missing, later, non-intent, and ambiguous invocation references remain denied after reopen.
+- returned event/checkpoint data remains detached from stored content.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- causal checks use only recorded local history; they do not establish collector completeness.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `eebf870` confirms result-to-intent cursor and
+  missing/later/non-intent/ambiguous rejection after reopen, plus detached
+  readback. Targeted tests: 48 passed; full suite: 473 passed, 1 skipped.
+
+## EXP-284 — make checkpoint and intent persistence atomic for SQLite gate
+Статус: ACCEPTED
+Цель: не допустить частично сохранённую пару checkpoint/intent при отказе SQLite до dispatch.
+Гипотеза: один backend transaction фиксирует обе записи до вызова dispatch.
+Зависит от: EXP-283
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: rollback внешнего эффекта после dispatch, distributed transactions, production Gateway.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- SQLite-backed gated dispatch commits checkpoint and intent together before dispatch starts.
+- either persistence error leaves neither new record durable and dispatch is not called.
+- in-memory gate contract and existing collaborators retain their documented behavior.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- SQLite transaction covers local records only; dispatch remains an external side effect.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `97d4a3f` commits the checkpoint/intent pair
+  before dispatch and rolls both back on an injected SQLite insert failure.
+  Targeted tests: 50 passed; full suite: 475 passed, 1 skipped.
+
+## EXP-285 — inject journal failures around pre-dispatch commit
+Статус: ACCEPTED
+Цель: проверить fail-closed dispatch behavior при ошибках до commit и reopen после них.
+Гипотеза: ошибки записи/commit не стартуют side effect и не оставляют частичную durable history.
+Зависит от: EXP-284
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: power-loss simulation, filesystem corruption guarantees, external side effects.
+Разрешённые пути:
+- tests/test_observation_store.py
+- src/app_contracts/observation_store.py
+Критерии приёмки:
+- deterministic injected failures before/during transaction commit leave dispatch uncalled.
+- reopening after rollback shows no partial checkpoint/intent pair.
+- successful commit followed by dispatch error preserves the committed intent for reconciliation; it does not retry dispatch automatically.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- deterministic SQLite trigger failures do not simulate power loss or media failure.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `17dc00f` verifies failure before writes and
+  failure after the checkpoint insert roll back without dispatch; after a
+  committed pair, a dispatch exception leaves reconciliation evidence and is
+  not retried. Targeted tests: 52 passed; full suite: 477 passed, 1 skipped.
+
+## EXP-286 — reject corrupted or incompatible observation journals
+Статус: ACCEPTED
+Цель: закрепить безопасный отказ при повреждённой или несовместимой локальной базе.
+Гипотеза: journal open/replay never silently truncates, rewrites, or accepts malformed persisted rows.
+Зависит от: EXP-285
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: repair tooling, backup/restore, tamper evidence, migration framework.
+Разрешённые пути:
+- src/app_contracts/observation_store.py
+- tests/test_observation_store.py
+Критерии приёмки:
+- malformed persisted event/checkpoint and unsupported schema version produce stable fail-closed errors without payload leakage.
+- opening corrupt input does not delete or rewrite the database.
+- valid journal behavior remains covered by the full suite.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- local validation detects malformed content and digest/cursor mismatch, not intentional tampering by a privileged writer.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `e0b8de2` rejects malformed persisted events and
+  checkpoints at open with a stable non-leaking error and does not rewrite the
+  corrupt rows. Existing unsupported-version/schema checks remain intact.
+  Targeted tests: 53 passed; full suite: 478 passed, 1 skipped.
+
+## EXP-287 — reconcile observer implementation and evidence status
+Статус: ACCEPTED
+Цель: синхронизировать README и operational status с принятыми локальными SQLite tests.
+Гипотеза: явное описание подтвержденной file-backed семантики не смешивает её с production collector или инфраструктурной durability.
+Зависит от: EXP-286
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: roadmap changes and production claims.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+- docs/28-observer-and-learning.md
+Критерии приёмки:
+- documented observer status distinguishes in-memory contracts from the newly tested SQLite backend.
+- scope explicitly excludes collector, access control, real power-loss/storage guarantees, and multi-process concurrency.
+- full test inventory and date are reconciled without external security claims.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- documentation describes local unit evidence only; runtime instrumentation and production storage remain absent.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `ad7aaa7` updates README and documents 27/28 with
+  local SQLite reopen, checkpoint, causality, pre-dispatch transaction and
+  corrupt-record evidence, while retaining collector, access-control,
+  multi-process and infrastructure durability gaps. Full suite: 478 passed,
+  1 skipped.
+
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

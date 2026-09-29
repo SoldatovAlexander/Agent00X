@@ -323,13 +323,57 @@ class ExecutionRecordTests(unittest.TestCase):
                 raise RuntimeError("injected worker failure")
 
         backend = TrackingBackend()
-        with self.assertRaisesRegex(RuntimeError, "^injected worker failure$"):
-            run_local_execution(
-                valid_request(), FailingWorker(), verifier=AcceptingVerifier(),
-                sandbox_backend=backend,
-            )
+        result = run_local_execution(
+            valid_request(), FailingWorker(), verifier=AcceptingVerifier(),
+            sandbox_backend=backend,
+        )
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "worker-failed")
         self.assertEqual(backend.closed, 1)
         self.assertIsInstance(backend, ExecutorSandboxBackend)
+
+    def test_worker_timeout_is_not_retried_or_exposed(self):
+        class TimedOutWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                raise TimeoutError("SECRET worker payload")
+
+        worker = TimedOutWorker()
+        result = run_local_execution(valid_request(), worker, verifier=AcceptingVerifier())
+        self.assertEqual(worker.calls, 1)
+        self.assertEqual(result.failure_code, "worker-failed")
+        self.assertIsNone(result.prepared_change_id)
+        self.assertNotIn("SECRET", repr(result))
+
+    def test_verifier_exception_is_not_retried_or_exposed(self):
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", original + "\n# local change\n"),))
+
+        class TimedOutVerifier:
+            def __init__(self):
+                self.calls = 0
+
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                self.calls += 1
+                raise TimeoutError("SECRET verifier response")
+
+        verifier = TimedOutVerifier()
+        result = run_local_execution(
+            valid_request(test_command=("python3", "-c", "print('ok')")),
+            FakeWorker(),
+            verifier=verifier,
+        )
+        self.assertEqual(verifier.calls, 1)
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "verifier-failed")
+        self.assertIsNone(result.prepared_change_id)
+        self.assertTrue(result.evidence_digest.startswith("sha256:"))
+        self.assertNotIn("SECRET", repr(result))
 
     def test_malformed_sandbox_session_fails_before_worker_and_attempts_cleanup(self):
         class MalformedBackend:

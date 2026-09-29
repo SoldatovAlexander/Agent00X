@@ -220,7 +220,14 @@ def run_local_execution(
             base_commit=request.base_commit,
             declared_change_paths=request.declared_change_paths,
         )
-        proposal = validate_worker_proposal(worker.propose(worker_input), request)
+        try:
+            raw_proposal = worker.propose(worker_input)
+        except Exception:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                failure_code="worker-failed",
+            )
+        proposal = validate_worker_proposal(raw_proposal, request)
         prepared = prepare_change(
             sandbox,
             process_id=request.process_id,
@@ -249,7 +256,18 @@ def run_local_execution(
             verification_digest=staged["verification_digest"],
             verified_contents_digest=verified_contents_digest,
         )
-        verifier_result = validate_verifier_result(verify(verifier_input), verifier_input)
+        try:
+            raw_verifier_result = verify(verifier_input)
+        except Exception:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                failure_code="verifier-failed",
+            )
+        verifier_result = validate_verifier_result(raw_verifier_result, verifier_input)
         if verifier_result.verdict != VerifierVerdict.PASS:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,

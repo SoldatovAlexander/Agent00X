@@ -17,6 +17,7 @@ from app_contracts.executor import (
     ProposalWorker,
     WorkerInput,
     WorkerProposal,
+    validate_worker_proposal,
 )
 
 
@@ -95,6 +96,30 @@ class ExecutionRecordTests(unittest.TestCase):
             {"process_id", "task_id", "repository_id", "base_commit", "declared_change_paths"},
         )
         self.assertEqual(set(WorkerProposal.__dataclass_fields__), {"changes"})
+
+    def test_worker_proposal_validator_rejects_malformed_values_without_echo(self):
+        malformed = (
+            None,
+            {"changes": (("calculator.py", "secret-content"),)},
+            WorkerProposal(()),
+            WorkerProposal([("calculator.py", "content")]),
+            WorkerProposal(((None, "content"),)),
+            WorkerProposal((("calculator.py", object()),)),
+            WorkerProposal((("calculator.py", "content"), object())),
+        )
+        for proposal in malformed:
+            with self.subTest(proposal=type(proposal).__name__):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution proposal: shape is invalid$"
+                ) as raised:
+                    validate_worker_proposal(proposal)
+                self.assertNotIn("secret-content", str(raised.exception))
+
+    def test_worker_proposal_validator_returns_detached_immutable_record(self):
+        original = WorkerProposal((("calculator.py", "safe content"),))
+        validated = validate_worker_proposal(original)
+        self.assertEqual(validated, original)
+        self.assertIsNot(validated, original)
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

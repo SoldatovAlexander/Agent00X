@@ -76,6 +76,25 @@ class ProposalWorker(Protocol):
     def propose(self, task: WorkerInput) -> WorkerProposal: ...
 
 
+def validate_worker_proposal(value: object) -> WorkerProposal:
+    """Validate and detach the worker's untrusted, non-empty text proposal."""
+
+    if type(value) is not WorkerProposal or not isinstance(value.changes, tuple) or not value.changes:
+        raise ExecutionError("execution proposal: shape is invalid")
+    detached: list[tuple[str, str]] = []
+    for change in value.changes:
+        if (
+            type(change) is not tuple
+            or len(change) != 2
+            or not isinstance(change[0], str)
+            or not change[0]
+            or not isinstance(change[1], str)
+        ):
+            raise ExecutionError("execution proposal: shape is invalid")
+        detached.append((change[0], change[1]))
+    return WorkerProposal(tuple(detached))
+
+
 def _validate_identity(value: object) -> None:
     if (
         not isinstance(value, str)

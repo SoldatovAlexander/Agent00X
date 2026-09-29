@@ -112,14 +112,56 @@ class ExecutionRecordTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ExecutionError, "^execution proposal: shape is invalid$"
                 ) as raised:
-                    validate_worker_proposal(proposal)
+                    validate_worker_proposal(proposal, valid_request())
                 self.assertNotIn("secret-content", str(raised.exception))
 
     def test_worker_proposal_validator_returns_detached_immutable_record(self):
         original = WorkerProposal((("calculator.py", "safe content"),))
-        validated = validate_worker_proposal(original)
+        validated = validate_worker_proposal(original, valid_request())
         self.assertEqual(validated, original)
         self.assertIsNot(validated, original)
+
+    def test_worker_proposal_validator_enforces_scope_and_normalized_path_uniqueness(self):
+        for changes in (
+            (("../calculator.py", "content"),),
+            (("/tmp/calculator.py", "content"),),
+            (("other.py", "content"),),
+            (("calculator.py", "one"), ("calculator.py", "two")),
+        ):
+            with self.subTest(changes=tuple(path for path, _ in changes)):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution proposal: scope is invalid$"
+                ):
+                    validate_worker_proposal(WorkerProposal(changes), valid_request())
+
+    def test_worker_proposal_validator_enforces_file_count_and_utf8_size_limits(self):
+        paths = tuple(f"file-{index}.py" for index in range(21))
+        request = valid_request(declared_change_paths=paths)
+        proposal = WorkerProposal(tuple((path, "x") for path in paths))
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution proposal: limits exceeded$"
+        ):
+            validate_worker_proposal(proposal, request)
+
+        total_paths = tuple(f"total-{index}.py" for index in range(10))
+        total_request = valid_request(declared_change_paths=total_paths)
+        total_proposal = WorkerProposal(tuple((path, "x" * 100_000) for path in total_paths))
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution proposal: limits exceeded$"
+        ):
+            validate_worker_proposal(total_proposal, total_request)
+
+        oversized = WorkerProposal((("calculator.py", "x" * 100_001),))
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution proposal: limits exceeded$"
+        ):
+            validate_worker_proposal(oversized, valid_request())
+
+        invalid_unicode = WorkerProposal((("calculator.py", "\ud800"),))
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution proposal: content is invalid$"
+        ):
+            validate_worker_proposal(invalid_unicode, valid_request())
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

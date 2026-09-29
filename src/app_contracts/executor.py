@@ -9,11 +9,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import posixpath
 from typing import Protocol, runtime_checkable
 
 
 class ExecutionError(ValueError):
     """A local execution request or collaborator result is invalid."""
+
+
+MAX_PROPOSAL_FILES = 20
+MAX_PROPOSAL_PATH_BYTES = 240
+MAX_PROPOSAL_FILE_BYTES = 100_000
+MAX_PROPOSAL_TOTAL_BYTES = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -76,12 +83,15 @@ class ProposalWorker(Protocol):
     def propose(self, task: WorkerInput) -> WorkerProposal: ...
 
 
-def validate_worker_proposal(value: object) -> WorkerProposal:
-    """Validate and detach the worker's untrusted, non-empty text proposal."""
+def validate_worker_proposal(value: object, request: ExecutionRequest) -> WorkerProposal:
+    """Validate, scope and detach the worker's bounded text proposal."""
 
     if type(value) is not WorkerProposal or not isinstance(value.changes, tuple) or not value.changes:
         raise ExecutionError("execution proposal: shape is invalid")
     detached: list[tuple[str, str]] = []
+    normalized_paths: set[str] = set()
+    total_bytes = 0
+    declared_paths = {posixpath.normpath(path) for path in request.declared_change_paths}
     for change in value.changes:
         if (
             type(change) is not tuple
@@ -91,7 +101,32 @@ def validate_worker_proposal(value: object) -> WorkerProposal:
             or not isinstance(change[1], str)
         ):
             raise ExecutionError("execution proposal: shape is invalid")
-        detached.append((change[0], change[1]))
+        path, content = change
+        try:
+            path_bytes = path.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ExecutionError("execution proposal: scope is invalid") from exc
+        normalized_path = posixpath.normpath(path)
+        if (
+            not _is_safe_relative_path(path)
+            or len(path_bytes) > MAX_PROPOSAL_PATH_BYTES
+            or normalized_path in normalized_paths
+            or normalized_path not in declared_paths
+        ):
+            raise ExecutionError("execution proposal: scope is invalid")
+        normalized_paths.add(normalized_path)
+        try:
+            content_bytes = content.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ExecutionError("execution proposal: content is invalid") from exc
+        if len(content_bytes) > MAX_PROPOSAL_FILE_BYTES:
+            raise ExecutionError("execution proposal: limits exceeded")
+        total_bytes += len(path_bytes) + len(content_bytes)
+        if total_bytes > MAX_PROPOSAL_TOTAL_BYTES:
+            raise ExecutionError("execution proposal: limits exceeded")
+        detached.append((path, content))
+    if len(detached) > MAX_PROPOSAL_FILES:
+        raise ExecutionError("execution proposal: limits exceeded")
     return WorkerProposal(tuple(detached))
 
 
@@ -157,6 +192,7 @@ def _is_safe_relative_path(value: object) -> bool:
         or "//" in value
         or "/./" in value
         or value.endswith("/.")
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         return False
     path = Path(value)

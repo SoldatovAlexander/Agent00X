@@ -530,6 +530,47 @@ class PublicationRecoveryTests(unittest.TestCase):
             self.assertEqual(recovered.pull_request_id, 1)
             self.assertEqual(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]).pull_request_id, 1)
 
+    def test_recovery_rejects_receipt_with_mismatched_bindings(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+
+            class ReceiptEndpoint:
+                def __init__(self, receipt):
+                    self.receipt = receipt
+                    self.publish_calls = 0
+
+                def find_by_idempotency_key(self, key):
+                    return self.receipt
+
+                def publish_pull_request(self, request):
+                    self.publish_calls += 1
+                    raise AssertionError("recovery must not republish")
+
+            valid = {
+                "repository_id": self.request["repository_id"],
+                "branch": self.request["branch"],
+                "staged_change_digest": self.request["staged_change_digest"],
+                "idempotency_key": self.request["idempotency_key"],
+            }
+            mismatches = (
+                {"repository_id": "github-installation/42/repository/999"},
+                {"branch": "agent/other-process"},
+                {"staged_change_digest": "sha256:" + "c" * 64},
+                {"idempotency_key": "publish/other-process/sha256:" + "a" * 64},
+            )
+            for mismatch in mismatches:
+                receipt_fields = dict(valid)
+                receipt_fields.update(mismatch)
+                endpoint = ReceiptEndpoint(MockPullRequest(pull_request_id=7, **receipt_fields))
+                with self.subTest(field=next(iter(mismatch))):
+                    with self.assertRaisesRegex(ValueError, "^publication receipt mismatch$"):
+                        recover_publication(journal, endpoint, self.request["process_id"])
+                    record = journal.get(self.request["process_id"])
+                    self.assertEqual(record.status, "attempting")
+                    self.assertIsNone(record.pull_request_id)
+                    self.assertEqual(endpoint.publish_calls, 0)
+
     def test_malformed_recovery_journal_denied_without_calls(self):
         with PublicationJournal(self.database) as journal:
             self._prepare(journal)

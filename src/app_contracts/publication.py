@@ -117,6 +117,7 @@ class PublicationJournal:
         expected_key = f"publish/{branch.removeprefix('agent/')}/{digest}"
         if (
             expected_key != record.idempotency_key
+            or pull_request.idempotency_key != record.idempotency_key
             or pull_request.repository_id != record.repository_id
         ):
             raise ValueError("publication receipt mismatch")

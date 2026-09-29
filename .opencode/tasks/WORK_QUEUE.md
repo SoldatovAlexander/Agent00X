@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 5/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 6/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3905,7 +3905,7 @@ Commit: ALLOWED
   passed; full suite: 520 passed, 1 skipped.
 
 ## EXP-313 — reject unsafe tree entries during snapshot export
-Статус: READY
+Статус: ACCEPTED
 Цель: reject symlinks, submodules and unsupported tree entries before executor use.
 Гипотеза: a pinned tree with only regular files/directories has a bounded local materialization contract.
 Зависит от: EXP-312
@@ -3924,9 +3924,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `91f653b` fail-closed отклоняет symlink, gitlink,
+  traversal, absolute/drive-like и `.git` пути; partial output удаляется, outside
+  path не читается и не записывается. Targeted tests: 19 passed; full suite: 523
+  passed, 1 skipped.
 
 ## EXP-314 — compute a deterministic snapshot content digest
-Статус: DRAFT
+Статус: READY
 Цель: hash the exported tree using a versioned canonical path/content representation.
 Гипотеза: equal trees yield equal digests independent of filesystem enumeration order.
 Зависит от: EXP-313

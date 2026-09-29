@@ -32,6 +32,7 @@ MAX_SNAPSHOT_PATH_BYTES = 240
 MAX_SNAPSHOT_FILE_BYTES = 100_000
 MAX_SNAPSHOT_TOTAL_BYTES = 1_000_000
 MAX_SNAPSHOT_TREE_LIST_BYTES = 8_000_000
+_SNAPSHOT_OWNER_TOKEN = object()
 _PREFLIGHT_GIT_ARGUMENTS = frozenset(
     {
         ("rev-parse", "--is-inside-work-tree"),
@@ -50,6 +51,46 @@ class LocalGitRepository:
 
     root_path: Path = field(repr=False)
     object_format: Literal["sha1", "sha256"]
+
+
+class OwnedLocalSnapshot:
+    """Explicit lease for one read-only temporary snapshot tree."""
+
+    def __init__(self, root_path: Path, *, _owner_token: object) -> None:
+        if _owner_token is not _SNAPSHOT_OWNER_TOKEN:
+            raise ValueError("pinned snapshot ownership token is invalid")
+        self._root_path = root_path
+        self._closed = False
+
+    @property
+    def path(self) -> Path:
+        if self._closed:
+            raise ValueError("pinned snapshot lease is closed")
+        return self._root_path
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            _make_snapshot_writable(self._root_path)
+            shutil.rmtree(self._root_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise ValueError("pinned snapshot cleanup failed") from None
+        self._closed = True
+
+    def __enter__(self) -> "OwnedLocalSnapshot":
+        if self._closed:
+            raise ValueError("pinned snapshot lease is closed")
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
 
 @dataclass(frozen=True)
@@ -232,7 +273,7 @@ def export_local_commit_tree(
     repository: LocalGitRepository,
     commit_oid: str,
     destination_parent: Path,
-) -> Path:
+) -> OwnedLocalSnapshot:
     """Copy regular file blobs from one commit into an owned temporary tree."""
 
     resolved_commit = resolve_local_commit(repository, commit_oid)
@@ -301,8 +342,10 @@ def export_local_commit_tree(
             with target.open("xb") as snapshot_file:
                 snapshot_file.write(content)
             target.chmod(0o755 if mode == "100755" else 0o644)
-        return output_root
+        _make_snapshot_read_only(output_root)
+        return OwnedLocalSnapshot(output_root, _owner_token=_SNAPSHOT_OWNER_TOKEN)
     except Exception:
+        _make_snapshot_writable(output_root)
         shutil.rmtree(output_root, ignore_errors=True)
         raise ValueError("pinned snapshot export failed") from None
 
@@ -365,6 +408,30 @@ def _hash_file(path: Path) -> str:
         for chunk in iter(lambda: snapshot_file.read(64 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def _make_snapshot_read_only(root: Path) -> None:
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        metadata = path.lstat()
+        if stat.S_ISDIR(metadata.st_mode):
+            path.chmod(0o555)
+        elif stat.S_ISREG(metadata.st_mode):
+            path.chmod(0o555 if metadata.st_mode & 0o111 else 0o444)
+        else:
+            raise ValueError("pinned snapshot tree contains an unsupported entry")
+    root.chmod(0o555)
+
+
+def _make_snapshot_writable(root: Path) -> None:
+    if not root.exists():
+        return
+    for path in root.rglob("*"):
+        metadata = path.lstat()
+        if stat.S_ISDIR(metadata.st_mode):
+            path.chmod(0o700)
+        elif stat.S_ISREG(metadata.st_mode):
+            path.chmod(0o600)
+    root.chmod(0o700)
 
 
 def _safe_snapshot_relative_path(value: str) -> PurePosixPath:

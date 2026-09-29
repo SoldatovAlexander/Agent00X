@@ -16,6 +16,7 @@ from app_contracts.pinned_snapshot import (
     MAX_SNAPSHOT_PATH_BYTES,
     MAX_SNAPSHOT_TREE_LIST_BYTES,
     MAX_SNAPSHOT_TOTAL_BYTES,
+    OwnedLocalSnapshot,
     PinnedSnapshot,
     SNAPSHOT_DIGEST_CANONICALIZATION,
     compute_snapshot_tree_digest,
@@ -144,6 +145,34 @@ class _LocalGitRepositoryTestSupport:
                 text=True,
             )
         return path
+
+    def _create_two_file_commit(self, root: Path) -> tuple[Path, str]:
+        repository_path = self._create_repository(root)
+        (repository_path / "four").write_bytes(b"data")
+        (repository_path / "two").write_bytes(b"123")
+        subprocess.run(
+            ["git", "-C", str(repository_path), "add", "four", "two"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "git", "-C", str(repository_path), "-c", "user.name=Snapshot Test",
+                "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
+                "add bounded files",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        commit_oid = subprocess.run(
+            ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        return repository_path, commit_oid
 
 
 class LocalGitRepositoryPreflightTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
@@ -338,12 +367,12 @@ class LocalCommitExportTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
             destination_parent = root / "exports"
             destination_parent.mkdir()
 
-            exported = export_local_commit_tree(repository, commit_oid, destination_parent)
-
-            self.assertEqual(
-                (exported / "version.txt").read_text(encoding="utf-8"), "$Format:%H$\n"
-            )
-            self.assertFalse((exported / "untracked.txt").exists())
+            with export_local_commit_tree(repository, commit_oid, destination_parent) as exported:
+                snapshot_path = exported.path
+                self.assertEqual(
+                    (snapshot_path / "version.txt").read_text(encoding="utf-8"), "$Format:%H$\n"
+                )
+                self.assertFalse((snapshot_path / "untracked.txt").exists())
             self.assertEqual(
                 subprocess.run(
                     ["git", "-C", str(repository_path), "status", "--porcelain"],
@@ -362,6 +391,53 @@ class LocalCommitExportTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
                 ).stdout,
                 head_before,
             )
+
+    def test_export_is_read_only_and_lease_close_removes_only_owned_tree(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = self._create_two_file_commit(root)
+            repository = open_local_repository(repository_path)
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+
+            lease = export_local_commit_tree(repository, commit_oid, destination_parent)
+            snapshot_path = lease.path
+            self.assertFalse(snapshot_path.stat().st_mode & 0o222)
+            for path in snapshot_path.rglob("*"):
+                self.assertFalse(path.stat().st_mode & 0o222)
+            self.assertNotIn(str(snapshot_path), repr(lease))
+
+            lease.close()
+            lease.close()
+
+            self.assertTrue(lease.closed)
+            self.assertFalse(snapshot_path.exists())
+            self.assertTrue(destination_parent.is_dir())
+            self.assertTrue(repository_path.is_dir())
+            with self.assertRaisesRegex(ValueError, "^pinned snapshot lease is closed$"):
+                _ = lease.path
+
+    def test_context_exit_cleans_owned_tree_even_after_error(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = self._create_two_file_commit(root)
+            repository = open_local_repository(repository_path)
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+            snapshot_path = None
+
+            with self.assertRaisesRegex(RuntimeError, "^controlled test failure$"):
+                with export_local_commit_tree(repository, commit_oid, destination_parent) as lease:
+                    snapshot_path = lease.path
+                    raise RuntimeError("controlled test failure")
+
+            self.assertIsNotNone(snapshot_path)
+            self.assertFalse(snapshot_path.exists())
+            self.assertTrue(repository_path.is_dir())
+
+    def test_snapshot_lease_cannot_be_constructed_without_provider_token(self):
+        with self.assertRaisesRegex(ValueError, "^pinned snapshot ownership token is invalid$"):
+            OwnedLocalSnapshot(Path("/private/tmp/not-owned"), _owner_token=object())
 
     def test_export_rejects_invalid_destination_before_creating_output(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -421,34 +497,6 @@ class PinnedTreeGitlinkAndTraversalTests(_LocalGitRepositoryTestSupport, unittes
 
 
 class SnapshotLimitTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
-    def _create_two_file_commit(self, root: Path) -> tuple[Path, str]:
-        repository_path = self._create_repository(root)
-        (repository_path / "four").write_bytes(b"data")
-        (repository_path / "two").write_bytes(b"123")
-        subprocess.run(
-            ["git", "-C", str(repository_path), "add", "four", "two"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        subprocess.run(
-            [
-                "git", "-C", str(repository_path), "-c", "user.name=Snapshot Test",
-                "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
-                "add bounded files",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        commit_oid = subprocess.run(
-            ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        return repository_path, commit_oid
-
     def test_exact_file_count_path_file_and_total_size_limits_are_allowed(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -462,10 +510,9 @@ class SnapshotLimitTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
                 patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_FILE_BYTES", 4),
                 patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_TOTAL_BYTES", 14),
             ):
-                exported = export_local_commit_tree(repository, commit_oid, destination_parent)
-
-            self.assertEqual((exported / "four").read_bytes(), b"data")
-            self.assertEqual((exported / "two").read_bytes(), b"123")
+                with export_local_commit_tree(repository, commit_oid, destination_parent) as exported:
+                    self.assertEqual((exported.path / "four").read_bytes(), b"data")
+                    self.assertEqual((exported.path / "two").read_bytes(), b"123")
 
     def test_each_snapshot_limit_rejects_first_over_limit_input(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -609,6 +656,23 @@ class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
             root = Path(temporary_directory)
             module_path = self._create_repository(root / "module-parent")
             outer_path = self._create_repository(root / "outer-parent")
+            (outer_path / "a.txt").write_text("copied before gitlink\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(outer_path), "add", "a.txt"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(outer_path), "-c", "user.name=Snapshot Test",
+                    "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
+                    "add ordinary file",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             module_oid = subprocess.run(
                 ["git", "-C", str(module_path), "rev-parse", "HEAD"],
                 check=True,

@@ -96,6 +96,26 @@ class RepositoryProcessTests(unittest.TestCase):
         valid = build_publish_manifest(first, prepared, {"calculator.py": "ignored"})
         self.assertEqual(valid[0].content, self.new_calculator)
 
+    def test_same_workspace_interleaving_denies_stale_manifest_and_keeps_latest_consistent(self):
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        first_content = self.new_calculator
+        second_content = first_content + "\n\ndef multiply(left: int, right: int) -> int:\n    return left * right\n"
+        first = prepare_change(
+            sandbox, process_id="process-interleave-first", task_id="task-interleave-first",
+            changes={"calculator.py": first_content}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        second = prepare_change(
+            sandbox, process_id="process-interleave-second", task_id="task-interleave-second",
+            changes={"calculator.py": second_content}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
+            build_publish_manifest(sandbox, first, {"calculator.py": "ignored"})
+        latest = build_publish_manifest(sandbox, second, {"calculator.py": "ignored"})
+        self.assertEqual(latest[0].content, second_content)
+
     def prepare(self):
         sandbox = self.backend.create(self.fixture, {"python3"})
         self.addCleanup(sandbox.close)

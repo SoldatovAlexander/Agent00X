@@ -24,6 +24,7 @@ _PREFLIGHT_GIT_ARGUMENTS = frozenset(
         ("rev-parse", "--show-toplevel"),
         ("rev-parse", "--absolute-git-dir"),
         ("rev-parse", "--show-object-format"),
+        ("rev-parse", "--verify", "--end-of-options"),
     }
 )
 
@@ -99,7 +100,7 @@ def open_local_repository(repository_path: Path) -> LocalGitRepository:
 def _run_local_git(repository_path: Path, arguments: tuple[str, ...]) -> str:
     """Run one enumerated local read-only metadata query with sanitized failure."""
 
-    if arguments not in _PREFLIGHT_GIT_ARGUMENTS:
+    if not _is_allowlisted_local_git_arguments(arguments):
         raise ValueError("pinned snapshot local Git operation is not allowlisted")
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -123,3 +124,36 @@ def _run_local_git(repository_path: Path, arguments: tuple[str, ...]) -> str:
     if completed.returncode != 0:
         raise ValueError("pinned snapshot local Git preflight failed")
     return completed.stdout.strip()
+
+
+def resolve_local_commit(repository: LocalGitRepository, commit_oid: str) -> str:
+    """Resolve one full object id as a commit without symbolic or remote lookup."""
+
+    if not isinstance(repository, LocalGitRepository):
+        raise ValueError("pinned snapshot repository handle is invalid")
+    expected_length = 40 if repository.object_format == "sha1" else 64
+    if (
+        not isinstance(commit_oid, str)
+        or len(commit_oid) != expected_length
+        or not _FULL_COMMIT_OID.fullmatch(commit_oid)
+    ):
+        raise ValueError("pinned snapshot commit identity is invalid")
+    resolved = _run_local_git(
+        repository.root_path,
+        ("rev-parse", "--verify", "--end-of-options", f"{commit_oid}^{{commit}}"),
+    )
+    if resolved != commit_oid:
+        raise ValueError("pinned snapshot commit identity did not resolve exactly")
+    return resolved
+
+
+def _is_allowlisted_local_git_arguments(arguments: tuple[str, ...]) -> bool:
+    if arguments in _PREFLIGHT_GIT_ARGUMENTS:
+        return True
+    return (
+        len(arguments) == 4
+        and arguments[:3] == ("rev-parse", "--verify", "--end-of-options")
+        and isinstance(arguments[3], str)
+        and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\^\{commit\}", arguments[3])
+        is not None
+    )

@@ -9,7 +9,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.pinned_snapshot import PinnedSnapshot, open_local_repository
+from app_contracts.pinned_snapshot import (
+    PinnedSnapshot,
+    open_local_repository,
+    resolve_local_commit,
+)
 
 
 class PinnedSnapshotRecordTests(unittest.TestCase):
@@ -110,7 +114,7 @@ class PinnedSnapshotRecordTests(unittest.TestCase):
             )
 
 
-class LocalGitRepositoryPreflightTests(unittest.TestCase):
+class _LocalGitRepositoryTestSupport:
     def _create_repository(self, root: Path, *, bare: bool = False) -> Path:
         path = root / ("repo.git" if bare else "repo")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +135,9 @@ class LocalGitRepositoryPreflightTests(unittest.TestCase):
                 text=True,
             )
         return path
+
+
+class LocalGitRepositoryPreflightTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
 
     def test_preflight_accepts_worktree_and_resolves_repository_root(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -208,6 +215,68 @@ class LocalGitRepositoryPreflightTests(unittest.TestCase):
 
         self.assertNotIn("secret-token", str(raised.exception))
         self.assertNotIn("private.invalid", str(raised.exception))
+
+
+class LocalCommitResolutionTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
+    def test_resolves_an_exact_full_commit_oid_from_local_objects(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository_path = self._create_repository(Path(temporary_directory))
+            repository = open_local_repository(repository_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            self.assertEqual(resolve_local_commit(repository, commit_oid), commit_oid)
+
+    def test_rejects_symbolic_abbreviated_missing_and_non_commit_objects(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository_path = self._create_repository(Path(temporary_directory))
+            repository = open_local_repository(repository_path)
+            tree_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD^{tree}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            for invalid in ("HEAD", commit_oid[:12], "f" * 40, tree_oid):
+                with self.subTest(input_kind="symbolic" if invalid == "HEAD" else "object"):
+                    with self.assertRaises(ValueError) as raised:
+                        resolve_local_commit(repository, invalid)
+                    self.assertNotIn(invalid, str(raised.exception))
+
+    def test_resolver_uses_only_exact_commit_object_query(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            repository_path = self._create_repository(Path(temporary_directory))
+            local_repository = open_local_repository(repository_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            with patch(
+                "app_contracts.pinned_snapshot.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, commit_oid + "\n", ""),
+            ) as run:
+                resolved = resolve_local_commit(local_repository, commit_oid)
+
+        self.assertEqual(resolved, commit_oid)
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command[3:],
+            ["rev-parse", "--verify", "--end-of-options", f"{commit_oid}^{{commit}}"],
+        )
 
 
 if __name__ == "__main__":

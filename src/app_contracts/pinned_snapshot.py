@@ -13,10 +13,12 @@ import os
 from pathlib import Path
 from pathlib import PurePosixPath
 import re
+import selectors
 import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Literal
 
 from .digests import sha256_digest
@@ -25,6 +27,11 @@ _REPOSITORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}\Z")
 _FULL_COMMIT_OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 SNAPSHOT_DIGEST_CANONICALIZATION = "app-process-snapshot-tree/v1"
+MAX_SNAPSHOT_FILES = 10_000
+MAX_SNAPSHOT_PATH_BYTES = 240
+MAX_SNAPSHOT_FILE_BYTES = 100_000
+MAX_SNAPSHOT_TOTAL_BYTES = 1_000_000
+MAX_SNAPSHOT_TREE_LIST_BYTES = 8_000_000
 _PREFLIGHT_GIT_ARGUMENTS = frozenset(
     {
         ("rev-parse", "--is-inside-work-tree"),
@@ -134,12 +141,63 @@ def _run_local_git(repository_path: Path, arguments: tuple[str, ...]) -> str:
     return completed.stdout.strip()
 
 
-def _run_local_git_bytes(repository_path: Path, arguments: tuple[str, ...]) -> bytes:
+def _run_local_git_bytes(
+    repository_path: Path,
+    arguments: tuple[str, ...],
+    *,
+    max_output_bytes: int = MAX_SNAPSHOT_TOTAL_BYTES,
+) -> bytes:
     """Return raw local Git object data under the same command allowlist."""
 
-    if not _is_allowlisted_local_git_arguments(arguments):
+    if (
+        not _is_allowlisted_local_git_arguments(arguments)
+        or isinstance(max_output_bytes, bool)
+        or not isinstance(max_output_bytes, int)
+        or max_output_bytes < 0
+    ):
         raise ValueError("pinned snapshot local Git operation is not allowlisted")
-    environment = {
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            ["git", "-C", str(repository_path), *arguments],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=_git_environment(),
+        )
+        assert process.stdout is not None
+        output = bytearray()
+        deadline = time.monotonic() + 10
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    process.kill()
+                    process.wait()
+                    raise ValueError("pinned snapshot local Git object read failed")
+                chunk = os.read(process.stdout.fileno(), 64 * 1024)
+                if not chunk:
+                    break
+                if len(output) + len(chunk) > max_output_bytes:
+                    process.kill()
+                    process.wait()
+                    raise ValueError("pinned snapshot Git output limit exceeded")
+                output.extend(chunk)
+        if process.wait(timeout=max(0.01, deadline - time.monotonic())) != 0:
+            raise ValueError("pinned snapshot local Git object read failed")
+        return bytes(output)
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("pinned snapshot local Git object read failed") from None
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait()
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+
+
+def _git_environment() -> dict[str, str]:
+    return {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "LANG": "C.UTF-8",
         "GIT_TERMINAL_PROMPT": "0",
@@ -147,20 +205,6 @@ def _run_local_git_bytes(repository_path: Path, arguments: tuple[str, ...]) -> b
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
     }
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(repository_path), *arguments],
-            capture_output=True,
-            text=False,
-            timeout=10,
-            check=False,
-            env=environment,
-        )
-    except (OSError, subprocess.SubprocessError):
-        raise ValueError("pinned snapshot local Git object read failed") from None
-    if completed.returncode != 0:
-        raise ValueError("pinned snapshot local Git object read failed")
-    return completed.stdout
 
 
 def resolve_local_commit(repository: LocalGitRepository, commit_oid: str) -> str:
@@ -205,11 +249,19 @@ def export_local_commit_tree(
         listing = _run_local_git_bytes(
             repository.root_path,
             ("ls-tree", "-r", "-z", "--full-tree", f"{resolved_commit}^{{tree}}"),
+            max_output_bytes=MAX_SNAPSHOT_TREE_LIST_BYTES,
         )
+        file_count = 0
+        total_bytes = 0
         for record in listing.split(b"\0"):
             if not record:
                 continue
+            file_count += 1
+            if file_count > MAX_SNAPSHOT_FILES:
+                raise ValueError("pinned snapshot file count limit exceeded")
             metadata, raw_path = record.split(b"\t", 1)
+            if not raw_path or len(raw_path) > MAX_SNAPSHOT_PATH_BYTES:
+                raise ValueError("pinned snapshot path length limit exceeded")
             mode_raw, kind_raw, object_oid_raw = metadata.split(b" ", 2)
             mode = mode_raw.decode("ascii")
             kind = kind_raw.decode("ascii")
@@ -229,8 +281,20 @@ def export_local_commit_tree(
             )
             if not file_size_text.isdecimal():
                 raise ValueError("pinned snapshot blob size is invalid")
-            content = _run_local_git_bytes(repository.root_path, ("cat-file", "blob", object_oid))
-            if len(content) != int(file_size_text):
+            if len(file_size_text) > len(str(MAX_SNAPSHOT_FILE_BYTES)):
+                raise ValueError("pinned snapshot file size limit exceeded")
+            file_size = int(file_size_text)
+            if file_size > MAX_SNAPSHOT_FILE_BYTES:
+                raise ValueError("pinned snapshot file size limit exceeded")
+            total_bytes += len(raw_path) + file_size
+            if total_bytes > MAX_SNAPSHOT_TOTAL_BYTES:
+                raise ValueError("pinned snapshot total size limit exceeded")
+            content = _run_local_git_bytes(
+                repository.root_path,
+                ("cat-file", "blob", object_oid),
+                max_output_bytes=MAX_SNAPSHOT_FILE_BYTES,
+            )
+            if len(content) != file_size:
                 raise ValueError("pinned snapshot blob size changed")
             target = output_root.joinpath(*relative_path.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +317,8 @@ def compute_snapshot_tree_digest(snapshot_path: Path) -> str:
         if not root.is_dir():
             raise ValueError("pinned snapshot tree path is invalid")
         entries: list[dict[str, str]] = []
+        file_count = 0
+        total_bytes = 0
         for path in root.rglob("*"):
             metadata = path.lstat()
             if stat.S_ISLNK(metadata.st_mode):
@@ -262,6 +328,16 @@ def compute_snapshot_tree_digest(snapshot_path: Path) -> str:
             if not stat.S_ISREG(metadata.st_mode):
                 raise ValueError("pinned snapshot tree contains an unsupported entry")
             relative = _safe_snapshot_relative_path(path.relative_to(root).as_posix())
+            path_bytes = relative.as_posix().encode("utf-8")
+            file_count += 1
+            total_bytes += len(path_bytes) + metadata.st_size
+            if (
+                file_count > MAX_SNAPSHOT_FILES
+                or len(path_bytes) > MAX_SNAPSHOT_PATH_BYTES
+                or metadata.st_size > MAX_SNAPSHOT_FILE_BYTES
+                or total_bytes > MAX_SNAPSHOT_TOTAL_BYTES
+            ):
+                raise ValueError("pinned snapshot tree limits exceeded")
             content_digest = _hash_file(path)
             entries.append(
                 {

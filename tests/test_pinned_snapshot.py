@@ -11,6 +11,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import app_contracts.pinned_snapshot as pinned_snapshot_module
 from app_contracts.pinned_snapshot import (
+    MAX_SNAPSHOT_FILE_BYTES,
+    MAX_SNAPSHOT_FILES,
+    MAX_SNAPSHOT_PATH_BYTES,
+    MAX_SNAPSHOT_TREE_LIST_BYTES,
+    MAX_SNAPSHOT_TOTAL_BYTES,
     PinnedSnapshot,
     SNAPSHOT_DIGEST_CANONICALIZATION,
     compute_snapshot_tree_digest,
@@ -415,6 +420,123 @@ class PinnedTreeGitlinkAndTraversalTests(_LocalGitRepositoryTestSupport, unittes
             self.assertEqual(list(destination_parent.iterdir()), [])
 
 
+class SnapshotLimitTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
+    def _create_two_file_commit(self, root: Path) -> tuple[Path, str]:
+        repository_path = self._create_repository(root)
+        (repository_path / "four").write_bytes(b"data")
+        (repository_path / "two").write_bytes(b"123")
+        subprocess.run(
+            ["git", "-C", str(repository_path), "add", "four", "two"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "git", "-C", str(repository_path), "-c", "user.name=Snapshot Test",
+                "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
+                "add bounded files",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        commit_oid = subprocess.run(
+            ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        return repository_path, commit_oid
+
+    def test_exact_file_count_path_file_and_total_size_limits_are_allowed(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = self._create_two_file_commit(root)
+            repository = open_local_repository(repository_path)
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+            with (
+                patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_FILES", 2),
+                patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_PATH_BYTES", 4),
+                patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_FILE_BYTES", 4),
+                patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_TOTAL_BYTES", 14),
+            ):
+                exported = export_local_commit_tree(repository, commit_oid, destination_parent)
+
+            self.assertEqual((exported / "four").read_bytes(), b"data")
+            self.assertEqual((exported / "two").read_bytes(), b"123")
+
+    def test_each_snapshot_limit_rejects_first_over_limit_input(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = self._create_two_file_commit(root)
+            repository = open_local_repository(repository_path)
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+            cases = (
+                ("MAX_SNAPSHOT_FILES", 1),
+                ("MAX_SNAPSHOT_PATH_BYTES", 3),
+                ("MAX_SNAPSHOT_FILE_BYTES", 3),
+                ("MAX_SNAPSHOT_TOTAL_BYTES", 13),
+            )
+            for constant, limit in cases:
+                with self.subTest(limit=constant), patch.object(
+                    pinned_snapshot_module, constant, limit
+                ):
+                    with self.assertRaisesRegex(ValueError, "^pinned snapshot export failed$"):
+                        export_local_commit_tree(repository, commit_oid, destination_parent)
+                    self.assertEqual(list(destination_parent.iterdir()), [])
+
+    def test_blob_is_not_read_when_declared_size_exceeds_file_limit(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = self._create_two_file_commit(root)
+            repository = open_local_repository(repository_path)
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+            original = pinned_snapshot_module._run_local_git_bytes
+            blob_reads = []
+
+            def observe_blob_reads(path, arguments, **kwargs):
+                if arguments[:2] == ("cat-file", "blob"):
+                    blob_reads.append(arguments)
+                return original(path, arguments, **kwargs)
+
+            with (
+                patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_FILE_BYTES", 3),
+                patch(
+                    "app_contracts.pinned_snapshot._run_local_git_bytes",
+                    side_effect=observe_blob_reads,
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, "^pinned snapshot export failed$"):
+                    export_local_commit_tree(repository, commit_oid, destination_parent)
+
+            self.assertEqual(blob_reads, [])
+
+    def test_git_object_output_limit_is_enforced_while_streaming(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = self._create_two_file_commit(root)
+            repository = open_local_repository(repository_path)
+            arguments = ("ls-tree", "-r", "-z", "--full-tree", f"{commit_oid}^{{tree}}")
+            listing = pinned_snapshot_module._run_local_git_bytes(
+                repository.root_path,
+                arguments,
+                max_output_bytes=MAX_SNAPSHOT_TREE_LIST_BYTES,
+            )
+
+            exact = pinned_snapshot_module._run_local_git_bytes(
+                repository.root_path, arguments, max_output_bytes=len(listing)
+            )
+            self.assertEqual(exact, listing)
+            with self.assertRaisesRegex(ValueError, "^pinned snapshot Git output limit exceeded$"):
+                pinned_snapshot_module._run_local_git_bytes(
+                    repository.root_path, arguments, max_output_bytes=len(listing) - 1
+                )
+
+
 class SnapshotTreeDigestTests(unittest.TestCase):
     def test_digest_is_stable_for_equivalent_trees_created_in_different_orders(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -469,6 +591,16 @@ class SnapshotTreeDigestTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "^pinned snapshot tree contains a symlink$"):
                 compute_snapshot_tree_digest(snapshot)
+
+    def test_digest_enforces_file_size_limits_before_reading_contents(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot = Path(temporary_directory) / "snapshot"
+            snapshot.mkdir()
+            (snapshot / "payload.bin").write_bytes(b"four")
+
+            with patch.object(pinned_snapshot_module, "MAX_SNAPSHOT_FILE_BYTES", 3):
+                with self.assertRaisesRegex(ValueError, "^pinned snapshot tree limits exceeded$"):
+                    compute_snapshot_tree_digest(snapshot)
 
 
 class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
@@ -530,10 +662,10 @@ class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
             malicious_listing = f"100644 blob {'a' * 40}\t../../outside.txt\0".encode()
             original = pinned_snapshot_module._run_local_git_bytes
 
-            def with_malicious_listing(path, arguments):
+            def with_malicious_listing(path, arguments, **kwargs):
                 if arguments[0] == "ls-tree":
                     return malicious_listing
-                return original(path, arguments)
+                return original(path, arguments, **kwargs)
 
             with patch(
                 "app_contracts.pinned_snapshot._run_local_git_bytes",

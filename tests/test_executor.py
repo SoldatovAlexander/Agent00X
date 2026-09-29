@@ -150,10 +150,13 @@ class ExecutionRecordTests(unittest.TestCase):
                 self.replay_returncode = replay_returncode
                 self.sessions = []
                 self.commands = []
+                self.events = []
+                self.temp_roots = []
 
             def create(self, snapshot: Path, allowed_commands: set[str]):
                 temporary = tempfile.TemporaryDirectory()
                 root = Path(temporary.name)
+                self.temp_roots.append(root)
                 copied_snapshot = root / "snapshot"
                 workspace = root / "workspace"
                 shutil.copytree(snapshot, copied_snapshot)
@@ -164,12 +167,14 @@ class ExecutionRecordTests(unittest.TestCase):
 
                 class Session:
                     def __init__(self):
+                        self.index = len(backend.sessions) + 1
                         self.snapshot = copied_snapshot
                         self.workspace = workspace
                         self.closed = False
                         self.initial_tree_digest = compute_snapshot_tree_digest(self.snapshot)
 
                     def run(self, argv, timeout_seconds=30):
+                        backend.events.append(f"sandbox.run.{self.index}")
                         backend.commands.append((tuple(argv), timeout_seconds, self))
                         code = backend.replay_returncode if len(backend.sessions) == 2 else 0
                         if len(backend.sessions) == 2:
@@ -181,15 +186,21 @@ class ExecutionRecordTests(unittest.TestCase):
                         )
 
                     def close(self):
+                        backend.events.append(f"sandbox.close.{self.index}")
                         self.closed = True
                         temporary.cleanup()
 
+                self.events.append(f"sandbox.create.{len(self.sessions) + 1}")
                 session = Session()
                 self.sessions.append(session)
                 return session
 
         class FakeWorker:
+            def __init__(self, events):
+                self.events = events
+
             def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.events.append("worker.propose")
                 original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
                 self.content = original + "\n# independently replayed\n"
                 return WorkerProposal((("calculator.py", self.content),))
@@ -200,8 +211,15 @@ class ExecutionRecordTests(unittest.TestCase):
                 test_command=command, test_timeout_seconds=17
             ) as request:
                 backend = FakeBackend(replay_returncode)
-                worker = FakeWorker()
-                verifier = AcceptingVerifier()
+                worker = FakeWorker(backend.events)
+
+                class OrderedVerifier(AcceptingVerifier):
+                    def verify(self, prepared: VerifierInput) -> VerifierResult:
+                        backend.events.append("verifier.verify")
+                        return super().verify(prepared)
+
+                verifier = OrderedVerifier()
+                lease_path = request.snapshot_path
                 result = run_local_execution(
                     request,
                     worker,
@@ -220,6 +238,19 @@ class ExecutionRecordTests(unittest.TestCase):
                 self.assertTrue(replay.closed)
                 self.assertEqual(len(backend.commands), 2)
                 self.assertEqual(backend.commands[1][:2], (command, 17))
+                expected_events = [
+                    "sandbox.create.1",
+                    "worker.propose",
+                    "sandbox.run.1",
+                    "sandbox.create.2",
+                    "sandbox.run.2",
+                    "sandbox.close.2",
+                ]
+                if replay_returncode == 0:
+                    expected_events.append("verifier.verify")
+                expected_events.append("sandbox.close.1")
+                self.assertEqual(backend.events, expected_events)
+                self.assertTrue(all(not root.exists() for root in backend.temp_roots))
                 self.assertEqual(
                     replay.applied_contents, worker.content
                 )
@@ -260,6 +291,7 @@ class ExecutionRecordTests(unittest.TestCase):
                     self.assertEqual(result.status, ExecutionStatus.FAILED)
                     self.assertEqual(result.failure_code, "verification-replay-failed")
                     self.assertEqual(verifier.calls, 0)
+            self.assertFalse(lease_path.exists())
 
     def test_request_is_an_immutable_local_preparation_record(self):
         request = valid_request()
@@ -572,6 +604,77 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertEqual(prepare.call_count, 0)
         self.assertEqual(verifier.calls, 0)
         self.assertEqual(backend.closed, 1)
+
+    def test_pinned_tree_mismatch_and_commit_binding_stop_before_collaborators(self):
+        class FakeBackend:
+            def __init__(self):
+                self.created = 0
+                self.closed = 0
+                self.temp_roots = []
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                self.created += 1
+                temporary = tempfile.TemporaryDirectory()
+                root = Path(temporary.name)
+                self.temp_roots.append(root)
+                copied_snapshot = root / "snapshot"
+                workspace = root / "workspace"
+                shutil.copytree(snapshot, copied_snapshot)
+                shutil.copytree(snapshot, workspace)
+                for path in (workspace, *workspace.rglob("*")):
+                    path.chmod(path.stat().st_mode | 0o200)
+                backend = self
+
+                class Session:
+                    def __init__(self):
+                        self.snapshot = copied_snapshot
+                        self.workspace = workspace
+
+                    def run(self, argv, timeout_seconds=30):
+                        raise AssertionError("no command should run")
+
+                    def close(self):
+                        backend.closed += 1
+                        temporary.cleanup()
+
+                return Session()
+
+        class CountingWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        with pinned_test_request() as request:
+            backend = FakeBackend()
+            worker = CountingWorker()
+            verifier = AcceptingVerifier()
+            wrong_tree = replace(
+                request.pinned_snapshot, tree_digest="sha256:" + "f" * 64
+            )
+            tampered_request = replace(request, pinned_snapshot=wrong_tree)
+            with patch("app_contracts.executor.prepare_change") as prepare:
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution snapshot: digest mismatch$"
+                ):
+                    run_local_execution(
+                        tampered_request, worker, verifier=verifier, sandbox_backend=backend
+                    )
+            self.assertEqual(backend.created, 1)
+            self.assertEqual(backend.closed, 1)
+            self.assertEqual(worker.calls, 0)
+            self.assertEqual(verifier.calls, 0)
+            prepare.assert_not_called()
+            self.assertTrue(all(not root.exists() for root in backend.temp_roots))
+
+            malformed_backend = FakeBackend()
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution request: pinned snapshot binding is invalid$"
+            ):
+                replace(request, base_commit="a" * 40)
+            self.assertEqual(malformed_backend.created, 0)
 
     def test_local_coordinator_returns_no_success_when_preparation_fails(self):
         class FakeWorker:

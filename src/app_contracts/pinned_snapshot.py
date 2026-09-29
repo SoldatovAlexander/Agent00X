@@ -8,13 +8,32 @@ identity supplied by a caller.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import re
+import subprocess
 from typing import Literal
 
 _REPOSITORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}\Z")
 _FULL_COMMIT_OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_PREFLIGHT_GIT_ARGUMENTS = frozenset(
+    {
+        ("rev-parse", "--is-inside-work-tree"),
+        ("rev-parse", "--is-bare-repository"),
+        ("rev-parse", "--show-toplevel"),
+        ("rev-parse", "--absolute-git-dir"),
+        ("rev-parse", "--show-object-format"),
+    }
+)
+
+
+@dataclass(frozen=True)
+class LocalGitRepository:
+    """A validated local Git repository handle; its host path stays private."""
+
+    root_path: Path = field(repr=False)
+    object_format: Literal["sha1", "sha256"]
 
 
 @dataclass(frozen=True)
@@ -42,3 +61,65 @@ class PinnedSnapshot:
             raise ValueError("pinned snapshot local path is invalid")
         if self.evidence_origin != "local_git_commit":
             raise ValueError("pinned snapshot evidence origin is invalid")
+
+
+def open_local_repository(repository_path: Path) -> LocalGitRepository:
+    """Validate a local repository using read-only Git metadata commands only."""
+
+    if not isinstance(repository_path, Path):
+        raise ValueError("pinned snapshot repository path is invalid")
+    try:
+        candidate = repository_path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ValueError("pinned snapshot repository path is invalid") from None
+    if not candidate.is_dir():
+        raise ValueError("pinned snapshot repository path is invalid")
+
+    bare = _run_local_git(candidate, ("rev-parse", "--is-bare-repository")) == "true"
+    if bare:
+        root_path = Path(
+            _run_local_git(candidate, ("rev-parse", "--absolute-git-dir"))
+        ).resolve(strict=True)
+    else:
+        inside_work_tree = _run_local_git(
+            candidate, ("rev-parse", "--is-inside-work-tree")
+        )
+        if inside_work_tree != "true":
+            raise ValueError("pinned snapshot path is not a local Git repository")
+        root_path = Path(
+            _run_local_git(candidate, ("rev-parse", "--show-toplevel"))
+        ).resolve(strict=True)
+
+    object_format = _run_local_git(root_path, ("rev-parse", "--show-object-format"))
+    if object_format not in ("sha1", "sha256"):
+        raise ValueError("pinned snapshot repository object format is unsupported")
+    return LocalGitRepository(root_path=root_path, object_format=object_format)
+
+
+def _run_local_git(repository_path: Path, arguments: tuple[str, ...]) -> str:
+    """Run one enumerated local read-only metadata query with sanitized failure."""
+
+    if arguments not in _PREFLIGHT_GIT_ARGUMENTS:
+        raise ValueError("pinned snapshot local Git operation is not allowlisted")
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "LANG": "C.UTF-8",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repository_path), *arguments],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError("pinned snapshot local Git preflight failed") from None
+    if completed.returncode != 0:
+        raise ValueError("pinned snapshot local Git preflight failed")
+    return completed.stdout.strip()

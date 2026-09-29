@@ -141,6 +141,50 @@ class RepositoryProcessTests(unittest.TestCase):
         self.assertNotIn(first_content, second_evidence)
         self.assertNotIn(second_content, first_evidence)
 
+    def test_twin_workspace_adversarial_catalog_emits_no_manifest_on_conflict(self):
+        first_sandbox, second_sandbox = self.twin_sandboxes()
+        prepared_first = prepare_change(
+            first_sandbox, process_id="process-catalog-first", task_id="task-catalog-first",
+            changes={"calculator.py": self.new_calculator}, test_command=["python3", "-m", "unittest", "-v"],
+            now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+        prepared_second = prepare_change(
+            second_sandbox, process_id="process-catalog-second", task_id="task-catalog-second",
+            changes={"calculator.py": self.new_calculator + "\n# second writer\n"},
+            test_command=["python3", "-m", "unittest", "-v"], now=TWIN_NOW, **TWIN_BASE_METADATA,
+        )
+
+        with self.subTest(case="workspace-substitution"):
+            with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
+                build_publish_manifest(second_sandbox, prepared_first, {"calculator.py": "ignored"})
+
+        with self.subTest(case="stale-after-intervening-write"):
+            same_workspace = self.backend.create(self.fixture, {"python3"})
+            self.addCleanup(same_workspace.close)
+            stale = prepare_change(
+                same_workspace, process_id="process-catalog-stale", task_id="task-catalog-stale",
+                changes={"calculator.py": self.new_calculator}, test_command=["python3", "-m", "unittest", "-v"],
+                now=TWIN_NOW, **TWIN_BASE_METADATA,
+            )
+            prepare_change(
+                same_workspace, process_id="process-catalog-latest", task_id="task-catalog-latest",
+                changes={"calculator.py": self.new_calculator + "\n# latest writer\n"},
+                test_command=["python3", "-m", "unittest", "-v"], now=TWIN_NOW, **TWIN_BASE_METADATA,
+            )
+            with self.assertRaisesRegex(ContractValidationError, "verified workspace content changed"):
+                build_publish_manifest(same_workspace, stale, {"calculator.py": "ignored"})
+
+        with self.subTest(case="duplicate-path-conflict"):
+            with self.assertRaisesRegex(ContractValidationError, "duplicate paths"):
+                build_publish_manifest(
+                    first_sandbox, prepared_first,
+                    {"calculator.py": "ignored", "calculator.py/": "ignored"},
+                )
+
+        valid = build_publish_manifest(second_sandbox, prepared_second, {"calculator.py": "ignored"})
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(valid[0].content, prepared_second.verified_contents[0][1])
+
     def prepare(self):
         sandbox = self.backend.create(self.fixture, {"python3"})
         self.addCleanup(sandbox.close)

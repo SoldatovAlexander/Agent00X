@@ -250,6 +250,7 @@ class GitHubAppPublicationChannel:
         self._post_json = post_json or _post_json
         self._get_json = get_json or _get_json
         self._put_json = put_json or _put_json
+        self._file_reconciliation_required: set[str] = set()
 
     def reconcile_branch(self, branch: str) -> bool | None:
         """Read-only check whether the scoped branch already exists.
@@ -320,6 +321,8 @@ class GitHubAppPublicationChannel:
             raise ContractValidationError("GitHub actuator: staged change patch digest is invalid")
         if not isinstance(branch, str) or not branch.startswith("agent/process-") or len(branch) <= len("agent/process-"):
             raise ContractValidationError("GitHub actuator: branch is outside the agent namespace")
+        if branch in self._file_reconciliation_required:
+            raise GitHubAppBrokerError("GitHub verified-file reconciliation required before retry")
         validated: list[tuple[str, str]] = []
         for file in files:
             path, content, content_digest = getattr(file, "path", None), getattr(file, "content", None), getattr(file, "content_digest", None)
@@ -340,10 +343,16 @@ class GitHubAppPublicationChannel:
             self._post_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/git/refs"), self._headers(), {"ref": f"refs/heads/{branch}", "sha": base_commit})
         commit_sha = ""
         for path, content in validated:
-            response = self._put_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/contents/{quote(path)}"), self._headers(), {"message": f"Apply verified staged change {patch_digest}", "content": base64.b64encode(content.encode("utf-8")).decode("ascii"), "branch": branch})
-            commit = response.get("commit")
-            if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):
-                raise GitHubAppBrokerError("GitHub verified-file response is missing commit SHA")
+            try:
+                response = self._put_json(urljoin(self._config.api_url + "/", f"repos/{self._config.repository}/contents/{quote(path)}"), self._headers(), {"message": f"Apply verified staged change {patch_digest}", "content": base64.b64encode(content.encode("utf-8")).decode("ascii"), "branch": branch})
+                commit = response.get("commit")
+                if not isinstance(commit, dict) or not isinstance(commit.get("sha"), str):
+                    raise GitHubAppBrokerError("GitHub verified-file response is missing commit SHA")
+            except Exception as error:
+                self._file_reconciliation_required.add(branch)
+                if isinstance(error, GitHubAppBrokerError):
+                    raise
+                raise GitHubAppBrokerError("GitHub verified-file publication failed") from error
             commit_sha = commit["sha"]
         return commit_sha
 

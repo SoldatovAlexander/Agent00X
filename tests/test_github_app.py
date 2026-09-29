@@ -968,7 +968,7 @@ class GitHubReconciliationTests(unittest.TestCase):
             lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
             lambda _url, _headers, _payload: (_ for _ in ()).throw(RuntimeError("injected failure after branch")),
         ))
-        with self.assertRaisesRegex(RuntimeError, "injected failure after branch"):
+        with self.assertRaisesRegex(GitHubAppBrokerError, "verified-file publication failed"):
             channel.publish_verified_files(
                 branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
             )
@@ -998,6 +998,24 @@ class GitHubReconciliationTests(unittest.TestCase):
                 branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
             )
         self.assertEqual(calls, [])
+
+    def test_unknown_file_write_blocks_blind_retry_on_same_channel(self):
+        puts = []
+        channel = self._channel((
+            lambda _url, _headers, payload: {"ref": payload["ref"]},
+            lambda _url, _headers: ProviderTranscriptFixtures.matching_branch_payload(),
+            lambda _url, _headers, payload: puts.append(payload) or (_ for _ in ()).throw(RuntimeError("lost file-write outcome")),
+        ))
+        with self.assertRaisesRegex(GitHubAppBrokerError, "verified-file publication failed"):
+            channel.publish_verified_files(
+                branch=_FIXTURE_BRANCH, staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(len(puts), 1)
+        with self.assertRaisesRegex(GitHubAppBrokerError, "reconciliation required before retry"):
+            channel.publish_verified_files(
+                branch=_FIXTURE_BRANCH, staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(len(puts), 1)
 
     def test_unknown_branch_fixture_denies_write_without_side_effect(self):
         for payload in ProviderTranscriptFixtures.unknown_branch_payloads():

@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей, 20/20 карточек.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG подготовлен — 0/20.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3766,6 +3766,437 @@ Commit: ALLOWED
   R2 отмечен незавершённым, а Batch AF — локальным executor shell без claims о
   реальном LLM, remote snapshot, production sandbox или publication. Полный
   suite: 504 passed, 1 skipped.
+
+## Batch AG — pinned local snapshot и независимая проверка (20 карточек)
+
+Цель batch: связать local executor с содержимым точного локального Git commit и
+вторым независимым локальным verification pass. Только локальные Git object
+database и injected development backends; запрещены fetch/push, remote URL,
+credentials, LLM runtime и publication. Это не доказывает remote provenance,
+production isolation или trust independence от host.
+
+## EXP-308 — define the pinned local snapshot record
+Статус: READY
+Цель: создать immutable typed record для local snapshot provenance.
+Гипотеза: единый record позволит явно связать repository id, full commit id, tree digest и extracted path.
+Зависит от: EXP-307
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: remote Git operations, credentials, Worker runtime, publication.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- record frozen и не содержит secrets, remote URLs или credentials.
+- поля distinguish caller repository identity, exact commit object id, content digest, local path и evidence origin.
+- tests cover construction, immutability and safe repr without absolute host path disclosure.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-309 — validate pinned snapshot identities
+Статус: DRAFT
+Цель: fail closed on malformed repo id, commit OID, digest and evidence origin.
+Гипотеза: strict syntax validation prevents symbolic refs and untyped provenance from being presented as pinned evidence.
+Зависит от: EXP-308
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: remote resolution, GitHub metadata, credentials.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- commit identity is a full lowercase SHA-1 or SHA-256 object id; symbolic refs and abbreviations are rejected.
+- digest and origin values are constrained and invalid inputs fail without echoing values.
+- negative table tests cover bool/non-text/short/upper/special forms.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-310 — preflight a local repository without consulting remotes
+Статус: DRAFT
+Цель: validate a repository directory as a local Git worktree or bare repository.
+Гипотеза: local object access can be constrained without reading remote configuration or contacting a server.
+Зависит от: EXP-309
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: fetch/push, remote URLs, credential helpers, .env or Git config output.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- implementation invokes only explicit read-only local Git commands and never reads/prints remote configuration.
+- malformed, missing and non-repository paths fail closed with sanitized errors.
+- temp-repo tests prove no remote or credential-related command is invoked.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-311 — resolve only an exact local commit object
+Статус: DRAFT
+Цель: resolve a caller-provided full commit OID against the local object database.
+Гипотеза: object type and exact identity checks reject tags, trees, missing objects and symbolic revision expressions.
+Зависит от: EXP-310
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: revision names, remote refs, fetch, network.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- resolver accepts only a full OID and verifies it resolves to a commit object.
+- missing object, tree/blob/tag and ambiguous inputs fail closed without fallback.
+- temp-repo tests cover success and each rejected object class.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-312 — export the exact commit tree without checkout state
+Статус: DRAFT
+Цель: materialize snapshot content from the resolved commit tree, excluding working-tree changes.
+Гипотеза: exporting the commit object prevents uncommitted files from contaminating executor input.
+Зависит от: EXP-311
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: checkout/branch mutation, index mutation, remotes, publication.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- export reads only the selected commit tree and does not mutate HEAD, index or worktree.
+- dirty and untracked files are absent from the exported snapshot.
+- temp-repo tests assert source Git state is unchanged before and after export.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-313 — reject unsafe tree entries during snapshot export
+Статус: DRAFT
+Цель: reject symlinks, submodules and unsupported tree entries before executor use.
+Гипотеза: a pinned tree with only regular files/directories has a bounded local materialization contract.
+Зависит от: EXP-312
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: following links, initializing submodules, external file reads.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- symlink and gitlink entries are rejected, never dereferenced or initialized.
+- extraction paths are validated against traversal and absolute-path escape.
+- malicious-tree tests prove no outside path is read or written.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-314 — compute a deterministic snapshot content digest
+Статус: DRAFT
+Цель: hash the exported tree using a versioned canonical path/content representation.
+Гипотеза: equal trees yield equal digests independent of filesystem enumeration order.
+Зависит от: EXP-313
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: signatures, remote attestations, claims of authorship.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- digest includes normalized relative paths and bytes and names its canonicalization version.
+- ordering is deterministic and changing a path or byte changes the digest.
+- tests cover unicode names/content and stable repeated computation.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-315 — bound snapshot file count and total bytes
+Статус: DRAFT
+Цель: set explicit limits for tree entries, path bytes, individual files and total bytes.
+Гипотеза: bounded exports prevent oversized repository objects from exhausting local resources.
+Зависит от: EXP-314
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: configurable unbounded quotas or automatic retries.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- limits are named constants and checked before unbounded allocation/write.
+- boundary and over-limit tests cover each dimension.
+- errors are stable and do not expose file contents or host paths.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-316 — make snapshot lifecycle explicit and read-only
+Статус: DRAFT
+Цель: provide explicit close/context lifecycle for temporary pinned snapshots.
+Гипотеза: owned temporary state is cleaned on success/failure and cannot silently outlive its lease.
+Зависит от: EXP-315
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: persistent artifact storage, broad directory cleanup.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- only the provider-owned exact temp root is removed; caller repository is untouched.
+- cleanup is idempotent and attempted on partial export failure.
+- tests cover context exit, repeated close and failed materialization cleanup.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-317 — verify snapshot identity after sandbox copying
+Статус: DRAFT
+Цель: bind the sandbox's read-only snapshot copy to the pinned tree digest.
+Гипотеза: executor can detect copy substitution before invoking Worker.
+Зависит от: EXP-316
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: production sandbox guarantees, host race elimination claims.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- mismatch is detected before worker or preparation calls and sandbox is closed.
+- tests substitute one copied file and assert fail-closed call ordering.
+- limitations explicitly retain local process/race caveats.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-318 — bind executor request and worker input to a pinned snapshot
+Статус: DRAFT
+Цель: add exact snapshot OID and content digest to executor and worker-facing records.
+Гипотеза: Worker proposals can be traced to one content-addressed local base.
+Зависит от: EXP-317
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: model invocation, mutable ref resolution, credentials, remote origins.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- worker receives pinned repository id, full OID and tree digest, never provider secrets or host path.
+- legacy unpinned request is explicitly denied in the pinned execution path.
+- tests cover binding and ensure no host absolute path is passed to Worker.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-319 — bind prepared artifacts to the pinned tree
+Статус: DRAFT
+Цель: verify prepared change base commit and source digests against pinned snapshot identity.
+Гипотеза: staged metadata cannot claim a different base than the exact exported tree.
+Зависит от: EXP-318
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: approval and publication decisions.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- mismatch between requested OID, prepared metadata and pinned snapshot fails before verifier invocation.
+- success carries the pin digest into bounded execution result metadata.
+- negative tests assert no downstream verifier call.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-320 — define replayable independent verification input
+Статус: DRAFT
+Цель: define typed verifier input bound to base pin, prepared files and allowlisted test command.
+Гипотеза: verifier can independently replay checks without trusting Worker output claims.
+Зависит от: EXP-319
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: sharing Worker process, credentials, publication capability.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- input is immutable, bounded and includes no host path, raw logs or secret-bearing environment.
+- test command and changed file set remain within the originating request scope.
+- shape and mismatch cases reject before verifier execution.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-321 — implement a second local sandbox verification pass
+Статус: DRAFT
+Цель: rerun the allowlisted command in a newly created sandbox from the pinned base with the prepared files applied.
+Гипотеза: a separate workspace and second command execution detect test/evidence drift without trusting Worker-authored status.
+Зависит от: EXP-320
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker integration, security certification, automatic repair or retry.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- verifier uses a separate sandbox session and checks the same pinned tree digest before applying bounded changes.
+- command runs exactly once with request allowlist/timeout; failures return non-pass and close the second session.
+- tests use fake backend only; local process isolation is not described as production assurance.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-322 — validate independent verifier result binding
+Статус: DRAFT
+Цель: require verifier output to bind process, base pin, prepared digests and replay evidence.
+Гипотеза: stale or cross-run verifier results cannot produce VERIFIED status.
+Зависит от: EXP-321
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: cryptographic attestation of verifier identity.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- wrong process, base OID, tree digest, patch/evidence digest or replay result fails closed.
+- only explicit pass over the exact input yields VERIFIED.
+- negative matrix proves no later collaborator or result promotion after mismatch.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-323 — sanitize pinned snapshot and verifier evidence
+Статус: DRAFT
+Цель: expose bounded provenance and verdict codes without raw paths, command output or contents.
+Гипотеза: evidence remains useful for Control Plane review while excluding sensitive material.
+Зависит от: EXP-322
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: secret scanning claims, full audit service.
+Разрешённые пути:
+- src/app_contracts/pinned_snapshot.py
+- src/app_contracts/executor.py
+- tests/test_pinned_snapshot.py
+- tests/test_executor.py
+Критерии приёмки:
+- evidence contains stable ids/digests/status/limitations only and labels local origin.
+- secrets, absolute host paths, raw stdout/stderr and file contents are absent.
+- tests inject sentinel strings and verify absence from repr/errors/results.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-324 — cover snapshot and verifier denial ordering
+Статус: DRAFT
+Цель: compose negative cases across repository, tree, sandbox-copy and verifier failures.
+Гипотеза: every trust mismatch stops before the next collaborator and cleans owned resources.
+Зависит от: EXP-323
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: live remote tests or container security claims.
+Разрешённые пути:
+- tests/test_executor.py
+- tests/test_pinned_snapshot.py
+Критерии приёмки:
+- malformed commit/tree, digest mismatch and replay denial prove downstream calls are absent.
+- success proves separate sandbox sessions and exact ordered calls.
+- all failures verify cleanup of provider-owned and sandbox-owned temporary state.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-325 — enforce the local-only snapshot boundary
+Статус: DRAFT
+Цель: add regression checks that pinned snapshot and local verifier code cannot reach remote or publication adapters.
+Гипотеза: an explicit local-only import/call boundary prevents accidental expansion into network side effects.
+Зависит от: EXP-324
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: implementing remote capability, publication, credentials.
+Разрешённые пути:
+- tests/test_pinned_snapshot.py
+- tests/test_executor.py
+Критерии приёмки:
+- static/import-boundary tests reject direct GitHub, HTTP, credential-broker or publication-client dependencies in the pinned local path.
+- allowlisted Git subprocess arguments are constrained to read-only local object operations; no `fetch`, `push` or remote URL use.
+- tests fail on a deliberately injected forbidden dependency fixture without importing or contacting external services.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-326 — exercise the complete pinned-input verification path
+Статус: DRAFT
+Цель: add one end-to-end local test from exact Git commit export through executor and second-pass verification.
+Гипотеза: composing pinned tree and independent local replay preserves identity and order across module boundaries.
+Зависит от: EXP-325
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real model, remote repository, Docker, publication.
+Разрешённые пути:
+- tests/test_pinned_snapshot.py
+- tests/test_executor.py
+Критерии приёмки:
+- temporary Git repo fixture proves uncommitted/untracked content is excluded and exact OID/tree digest reaches verifier.
+- success proves separate sandbox sessions, one worker call and one verification command.
+- injected snapshot/verifier denial proves fail-closed ordering and cleanup without touching repository source state.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+
+## EXP-327 — reconcile Batch AG evidence and R2 stage status
+Статус: DRAFT
+Цель: document local pinned snapshot and second-pass verifier evidence and remaining gaps.
+Гипотеза: implementation status can describe local object provenance without implying remote or production trust.
+Зависит от: EXP-326
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: roadmap reorder, remote operations, publication, credentials.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+- docs/24-mvp-final-plan.md
+Критерии приёмки:
+- R2 remains in progress, Batch AF 1/3 and AG 2/3 counts are accurate.
+- status distinguishes local Git commit/tree pin and local second-pass verifier from remote provenance and independently trusted production verification.
+- full suite result and date are accurate; publication/reconciliation remain gated.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
 
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.

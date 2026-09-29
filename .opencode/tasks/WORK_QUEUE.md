@@ -2743,6 +2743,223 @@ Commit: ALLOWED
   исключают API atomicity и durable/external recovery. Scope ограничен двумя
   разрешёнными документами; полный suite: 459 tests passed, 1 skipped.
 
+## Этап Workspace concurrency boundary — 1 batch, 8 карточек
+
+## Batch AD — deterministic preparation isolation
+
+Цель batch: проверить границу two-writer подготовки на ephemeral local
+workspaces. Не заявляет filesystem locking, Docker isolation или безопасность
+при реальной конкурентной записи без явного evidence.
+
+## EXP-272 — define twin sandbox preparation fixtures
+Статус: ACCEPTED
+Цель: добавить deterministic twin sandbox fixtures с общим immutable snapshot и разными workspace roots.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: production locks, Docker, network и изменение sandbox backend.
+Разрешённые пути:
+- tests/test_repository_process.py
+Критерии приёмки:
+- fixtures создают два ephemeral workspace без общих mutable paths;
+- aware clock и canonical base metadata общие, credential values отсутствуют.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- fixtures не являются concurrency primitive.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `ff79ab6` добавил twin ephemeral sandbox
+  fixtures с distinct workspace/snapshot roots, common immutable source,
+  canonical metadata и aware clock без credential values. Scope ограничен
+  `tests/test_repository_process.py`; полный suite: 460 tests passed,
+  1 skipped.
+
+## EXP-273 — prove independent preparations preserve snapshots
+Статус: ACCEPTED
+Цель: выполнить два different changes against twin sandboxes и проверить независимые patch/digest/verified contents.
+Зависит от: EXP-272
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: shared workspace mutation.
+Разрешённые пути:
+- tests/test_repository_process.py
+Критерии приёмки:
+- два prepared changes имеют distinct process/digest evidence;
+- каждый manifest читается только из соответствующего workspace.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- sequential deterministic simulation only.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `47f83b5` выполнил two independent preparations
+  against twin sandboxes и подтвердил distinct patch/process evidence и
+  workspace-bound manifests. Scope ограничен `tests/test_repository_process.py`;
+  полный suite: 461 tests passed, 1 skipped.
+
+## EXP-274 — deny manifest cross-workspace substitution
+Статус: ACCEPTED
+Цель: доказать fail-closed при попытке export manifest одного prepared change из другого workspace.
+Зависит от: EXP-273
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: new locking mechanism.
+Разрешённые пути:
+- tests/test_repository_process.py
+Критерии приёмки:
+- substitution gives stable error and no publishable files;
+- legitimate same-workspace manifest remains valid.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- does not prove OS-level isolation.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `6b33c5a` доказал fail-closed cross-workspace
+  substitution: чужой workspace не выдаёт publishable files, тогда как
+  matching workspace export сохраняется valid. Scope ограничен
+  `tests/test_repository_process.py`; полный suite: 462 tests passed,
+  1 skipped.
+
+## EXP-275 — model deterministic same-workspace interleaving
+Статус: ACCEPTED
+Цель: описать sequential interleaving двух prepare attempts на одном workspace.
+Зависит от: EXP-273
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: threads, multiprocessing и filesystem locking.
+Разрешённые пути:
+- tests/test_repository_process.py
+Критерии приёмки:
+- stale prepared manifest is denied after intervening write;
+- later prepared change remains internally consistent.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- deterministic model, not concurrent execution proof.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `9040408` моделирует два sequential prepare
+  вызова на одном workspace. Старый prepared manifest fail-closed после
+  intervening write, latest manifest остаётся согласованным. Scope ограничен
+  `tests/test_repository_process.py`; полный suite: 463 tests passed,
+  1 skipped.
+
+## EXP-276 — assert no cross-writer evidence leakage
+Статус: ACCEPTED
+Цель: убедиться, что evidence/verification одного writer не включает content/digests другого.
+Зависит от: EXP-273
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: host logs and telemetry.
+Разрешённые пути:
+- tests/test_repository_process.py
+Критерии приёмки:
+- evidence fields remain process-bound and do not echo other writer content;
+- diagnostics use stable errors.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- no claim about host-level leakage.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `970829e` подтвердил process-bound evidence и
+  verification IDs, исключающие содержимое другого twin writer. Scope
+  ограничен `tests/test_repository_process.py`; полный suite: 464 tests
+  passed, 1 skipped.
+
+## EXP-277 — catalog twin-workspace adversarial cases
+Статус: ACCEPTED
+Цель: собрать substitution, stale manifest и path-conflict cases в compact regression catalog.
+Зависит от: EXP-274
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: new runtime orchestration.
+Разрешённые пути:
+- tests/test_repository_process.py
+Критерии приёмки:
+- every adversarial case asserts no publishable output;
+- valid twin-workspace preparation remains covered.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- catalog is not a lock proof.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `9a31d51` собрал substitution, stale manifest
+  и duplicate-path conflicts в compact catalog. Ни один отказ не выдаёт
+  manifest, legitimate twin export сохраняется. Scope ограничен
+  `tests/test_repository_process.py`; полный suite: 465 tests passed,
+  1 skipped.
+
+## EXP-278 — document workspace concurrency proof boundary
+Статус: ACCEPTED
+Цель: distinguish deterministic interleaving evidence from real parallel writer and filesystem guarantees.
+Зависит от: EXP-277
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: operational status rewrite and external tests.
+Разрешённые пути:
+- docs/31-proof-boundary-traceability.md
+- docs/32-local-publication-chain-spec.md
+Критерии приёмки:
+- documents link exact tests and retain concurrency/locking as unproven;
+- no Docker or backend isolation claim.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- local test evidence only.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `6cea7fb` связал proof map/specification с
+  `tests/test_repository_process.py` и отличил deterministic interleaving от
+  реальных parallel writers, filesystem locks, crash safety и backend
+  isolation. Scope ограничен двумя разрешёнными документами; полный suite:
+  465 tests passed, 1 skipped.
+
+## EXP-279 — reconcile operational status for Batch AD
+Статус: ACCEPTED
+Цель: update factual inventory after accepted deterministic workspace matrix.
+Зависит от: EXP-278
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: roadmap and production claims.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- local deterministic coverage is separated from locking/concurrent-writer proof;
+- verified test inventory is recorded without external security claim.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- status remains local evidence.
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `6b94c7a` reconciled README and implementation
+  status with Batch AD's deterministic twin-workspace and same-workspace
+  interleaving evidence. It explicitly leaves real concurrent writers,
+  filesystem locks, crash safety and backend isolation unproven. Scope limited
+  to the two authorized status documents; full suite: 465 tests passed,
+  1 skipped.
+
 Ограничения и риски:
 - закрывает только локальную связь prepared change → manifest, не GitHub publication chain.
 Результат Control Plane:

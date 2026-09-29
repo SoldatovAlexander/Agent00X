@@ -313,6 +313,23 @@ def run_local_execution(
             verified_contents=verified_contents,
             verified_contents_digest=verified_contents_digest,
         )
+        if request.pinned_snapshot is not None:
+            try:
+                _run_pinned_verifier_replay(
+                    request=request,
+                    backend=backend,
+                    source_sandbox=sandbox,
+                    verified_contents=verified_contents,
+                )
+            except Exception:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    patch_digest=staged["patch_digest"],
+                    evidence_digest=staged["evidence_digest"],
+                    verification_digest=staged["verification_digest"],
+                    verified_contents_digest=verified_contents_digest,
+                    failure_code="verification-replay-failed",
+                )
         try:
             raw_verifier_result = verify(verifier_input)
         except Exception:
@@ -477,6 +494,73 @@ def _build_verifier_input(
         verification_digest=staged["verification_digest"],
         verified_contents_digest=verified_contents_digest,
     )
+
+
+def _run_pinned_verifier_replay(
+    *,
+    request: ExecutionRequest,
+    backend: ExecutorSandboxBackend,
+    source_sandbox: object,
+    verified_contents: tuple[tuple[str, str], ...],
+) -> None:
+    """Replay the request command in a fresh copy of the pinned base plus prepared files."""
+
+    pin = request.pinned_snapshot
+    if pin is None:
+        raise ExecutionError("execution verifier replay: pinned snapshot is required")
+    session = backend.create(request.snapshot_path, set(request.allowed_commands))
+    try:
+        if (
+            session is source_sandbox
+            or not isinstance(getattr(session, "snapshot", None), Path)
+            or not isinstance(getattr(session, "workspace", None), Path)
+            or not callable(getattr(session, "run", None))
+            or not callable(getattr(session, "close", None))
+            or session.workspace == getattr(source_sandbox, "workspace", None)
+            or session.snapshot == getattr(source_sandbox, "snapshot", None)
+            or session.workspace == session.snapshot
+            or session.workspace.resolve()
+            == getattr(source_sandbox, "workspace").resolve()
+            or session.snapshot.resolve()
+            == getattr(source_sandbox, "snapshot").resolve()
+        ):
+            raise ExecutionError("execution verifier replay: session is invalid")
+        if (
+            compute_snapshot_tree_digest(request.snapshot_path) != pin.tree_digest
+            or compute_snapshot_tree_digest(session.snapshot) != pin.tree_digest
+            or compute_snapshot_tree_digest(session.workspace) != pin.tree_digest
+        ):
+            raise ExecutionError("execution verifier replay: pinned tree mismatch")
+        root = session.workspace.resolve(strict=True)
+        for relative_path, content in verified_contents:
+            if not _is_safe_relative_path(relative_path):
+                raise ExecutionError("execution verifier replay: prepared path is invalid")
+            target = session.workspace.joinpath(*Path(relative_path).parts)
+            parent = target.parent
+            missing_parents: list[Path] = []
+            while parent != session.workspace and not parent.exists():
+                missing_parents.append(parent)
+                parent = parent.parent
+            if parent.is_symlink() or not parent.is_dir():
+                raise ExecutionError("execution verifier replay: prepared path is invalid")
+            resolved_parent = parent.resolve(strict=True)
+            if not resolved_parent.is_relative_to(root):
+                raise ExecutionError("execution verifier replay: prepared path is invalid")
+            for missing in reversed(missing_parents):
+                missing.mkdir()
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ExecutionError("execution verifier replay: prepared path is invalid")
+            target.write_text(content, encoding="utf-8")
+        replay = session.run(request.test_command, timeout_seconds=request.test_timeout_seconds)
+        if (
+            getattr(replay, "argv", None) != request.test_command
+            or isinstance(getattr(replay, "returncode", None), bool)
+            or not isinstance(getattr(replay, "returncode", None), int)
+            or replay.returncode != 0
+        ):
+            raise ExecutionError("execution verifier replay: command failed")
+    finally:
+        session.close()
 
 
 def validate_verifier_result(value: object, expected: VerifierInput) -> VerifierResult:

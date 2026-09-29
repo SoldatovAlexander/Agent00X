@@ -139,6 +139,93 @@ class AcceptingVerifier:
 
 
 class ExecutionRecordTests(unittest.TestCase):
+    def test_pinned_verifier_replays_command_in_fresh_sandbox_and_closes_it(self):
+        from app_contracts.sandbox import CommandResult
+
+        class FakeBackend:
+            def __init__(self, replay_returncode=0):
+                self.replay_returncode = replay_returncode
+                self.sessions = []
+                self.commands = []
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                temporary = tempfile.TemporaryDirectory()
+                root = Path(temporary.name)
+                copied_snapshot = root / "snapshot"
+                workspace = root / "workspace"
+                shutil.copytree(snapshot, copied_snapshot)
+                shutil.copytree(snapshot, workspace)
+                for path in (workspace, *workspace.rglob("*")):
+                    path.chmod(path.stat().st_mode | 0o200)
+                backend = self
+
+                class Session:
+                    def __init__(self):
+                        self.snapshot = copied_snapshot
+                        self.workspace = workspace
+                        self.closed = False
+                        self.initial_tree_digest = compute_snapshot_tree_digest(self.snapshot)
+
+                    def run(self, argv, timeout_seconds=30):
+                        backend.commands.append((tuple(argv), timeout_seconds, self))
+                        code = backend.replay_returncode if len(backend.sessions) == 2 else 0
+                        if len(backend.sessions) == 2:
+                            self.applied_contents = (
+                                self.workspace / "calculator.py"
+                            ).read_text(encoding="utf-8")
+                        return CommandResult(tuple(argv), code, "ok", "")
+
+                    def close(self):
+                        self.closed = True
+                        temporary.cleanup()
+
+                session = Session()
+                self.sessions.append(session)
+                return session
+
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                self.content = original + "\n# independently replayed\n"
+                return WorkerProposal((("calculator.py", self.content),))
+
+        command = ("python3", "-c", "print('allowlisted')")
+        for replay_returncode in (0, 1):
+            with self.subTest(replay_returncode=replay_returncode), pinned_test_request(
+                test_command=command, test_timeout_seconds=17
+            ) as request:
+                backend = FakeBackend(replay_returncode)
+                worker = FakeWorker()
+                verifier = AcceptingVerifier()
+                result = run_local_execution(
+                    request,
+                    worker,
+                    verifier=verifier,
+                    sandbox_backend=backend,
+                    require_pinned_snapshot=True,
+                )
+
+                self.assertEqual(len(backend.sessions), 2)
+                first, replay = backend.sessions
+                self.assertIsNot(first, replay)
+                self.assertNotEqual(first.workspace, replay.workspace)
+                self.assertEqual(first.initial_tree_digest, request.pinned_snapshot.tree_digest)
+                self.assertEqual(replay.initial_tree_digest, request.pinned_snapshot.tree_digest)
+                self.assertTrue(first.closed)
+                self.assertTrue(replay.closed)
+                self.assertEqual(len(backend.commands), 2)
+                self.assertEqual(backend.commands[1][:2], (command, 17))
+                self.assertEqual(
+                    replay.applied_contents, worker.content
+                )
+                if replay_returncode == 0:
+                    self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+                    self.assertEqual(verifier.calls, 1)
+                else:
+                    self.assertEqual(result.status, ExecutionStatus.FAILED)
+                    self.assertEqual(result.failure_code, "verification-replay-failed")
+                    self.assertEqual(verifier.calls, 0)
+
     def test_request_is_an_immutable_local_preparation_record(self):
         request = valid_request()
 

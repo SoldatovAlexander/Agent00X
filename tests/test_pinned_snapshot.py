@@ -1,0 +1,56 @@
+from dataclasses import FrozenInstanceError, fields
+from pathlib import Path
+import sys
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from app_contracts.pinned_snapshot import PinnedSnapshot
+
+
+class PinnedSnapshotRecordTests(unittest.TestCase):
+    def test_record_carries_local_commit_tree_and_origin(self):
+        snapshot = PinnedSnapshot(
+            repository_id="repo-demo-001",
+            commit_oid="a" * 40,
+            tree_digest="sha256:" + "b" * 64,
+            snapshot_path=Path("/private/tmp/snapshot-demo-001"),
+        )
+
+        self.assertEqual(snapshot.repository_id, "repo-demo-001")
+        self.assertEqual(snapshot.commit_oid, "a" * 40)
+        self.assertEqual(snapshot.tree_digest, "sha256:" + "b" * 64)
+        self.assertEqual(snapshot.snapshot_path, Path("/private/tmp/snapshot-demo-001"))
+        self.assertEqual(snapshot.evidence_origin, "local_git_commit")
+
+    def test_record_is_immutable(self):
+        snapshot = PinnedSnapshot(
+            repository_id="repo-demo-001",
+            commit_oid="a" * 40,
+            tree_digest="sha256:" + "b" * 64,
+            snapshot_path=Path("/private/tmp/snapshot-demo-001"),
+        )
+
+        with self.assertRaises(FrozenInstanceError):
+            snapshot.commit_oid = "c" * 40
+
+    def test_repr_hides_host_path_and_record_has_no_secret_capability_fields(self):
+        host_path = "/private/tmp/snapshot-secret-host-path"
+        snapshot = PinnedSnapshot(
+            repository_id="repo-demo-001",
+            commit_oid="a" * 40,
+            tree_digest="sha256:" + "b" * 64,
+            snapshot_path=Path(host_path),
+        )
+
+        self.assertNotIn(host_path, repr(snapshot))
+        self.assertIn("repo-demo-001", repr(snapshot))
+        self.assertEqual(
+            {item.name for item in fields(PinnedSnapshot)},
+            {"repository_id", "commit_oid", "tree_digest", "snapshot_path", "evidence_origin"},
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

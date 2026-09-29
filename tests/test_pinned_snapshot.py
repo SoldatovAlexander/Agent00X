@@ -9,6 +9,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+import app_contracts.pinned_snapshot as pinned_snapshot_module
 from app_contracts.pinned_snapshot import (
     PinnedSnapshot,
     export_local_commit_tree,
@@ -371,6 +372,118 @@ class LocalCommitExportTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "^pinned snapshot destination is invalid$"):
                 export_local_commit_tree(repository, commit_oid, missing_parent)
             self.assertFalse(missing_parent.exists())
+
+
+class PinnedTreeSafetyTests(_LocalGitRepositoryTestSupport, unittest.TestCase):
+    def test_export_rejects_symlink_entries_without_following_them(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path = self._create_repository(root)
+            (repository_path / "link.txt").symlink_to(root / "outside.txt")
+            subprocess.run(
+                ["git", "-C", str(repository_path), "add", "link.txt"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(repository_path), "-c", "user.name=Snapshot Test",
+                    "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
+                    "add symlink",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            repository = open_local_repository(repository_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+
+            with self.assertRaisesRegex(ValueError, "^pinned snapshot export failed$"):
+                export_local_commit_tree(repository, commit_oid, destination_parent)
+
+            self.assertFalse((root / "outside.txt").exists())
+            self.assertEqual(list(destination_parent.iterdir()), [])
+
+    def test_export_rejects_gitlink_without_initializing_submodule(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            module_path = self._create_repository(root / "module-parent")
+            outer_path = self._create_repository(root / "outer-parent")
+            module_oid = subprocess.run(
+                ["git", "-C", str(module_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "-C", str(outer_path), "update-index", "--add", "--cacheinfo", f"160000,{module_oid},module"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git", "-C", str(outer_path), "-c", "user.name=Snapshot Test",
+                    "-c", "user.email=snapshot@example.invalid", "commit", "--quiet", "-m",
+                    "add gitlink",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            repository = open_local_repository(outer_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(outer_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+
+            with self.assertRaisesRegex(ValueError, "^pinned snapshot export failed$"):
+                export_local_commit_tree(repository, commit_oid, destination_parent)
+
+            self.assertEqual(list(destination_parent.iterdir()), [])
+
+    def test_export_rejects_traversal_path_before_outside_write(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path = self._create_repository(root)
+            repository = open_local_repository(repository_path)
+            commit_oid = subprocess.run(
+                ["git", "-C", str(repository_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            destination_parent = root / "exports"
+            destination_parent.mkdir()
+            malicious_listing = f"100644 blob {'a' * 40}\t../../outside.txt\0".encode()
+            original = pinned_snapshot_module._run_local_git_bytes
+
+            def with_malicious_listing(path, arguments):
+                if arguments[0] == "ls-tree":
+                    return malicious_listing
+                return original(path, arguments)
+
+            with patch(
+                "app_contracts.pinned_snapshot._run_local_git_bytes",
+                side_effect=with_malicious_listing,
+            ):
+                with self.assertRaisesRegex(ValueError, "^pinned snapshot export failed$"):
+                    export_local_commit_tree(repository, commit_oid, destination_parent)
+
+            self.assertFalse((root / "outside.txt").exists())
+            self.assertEqual(list(destination_parent.iterdir()), [])
 
 
 if __name__ == "__main__":

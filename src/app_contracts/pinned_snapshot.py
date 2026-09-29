@@ -240,11 +240,16 @@ def export_local_commit_tree(
 
 def _safe_snapshot_relative_path(value: str) -> PurePosixPath:
     path = PurePosixPath(value)
+    raw_parts = value.split("/")
     if (
         not value
         or path.is_absolute()
         or "\\" in value
-        or any(part in ("", ".", "..", ".git") for part in path.parts)
+        or "\x00" in value
+        or ":" in raw_parts[0]
+        or any(part in ("", ".", "..") for part in raw_parts)
+        or any(part.casefold() == ".git" for part in raw_parts)
+        or path.as_posix() != value
     ):
         raise ValueError("pinned snapshot tree path is invalid")
     return path

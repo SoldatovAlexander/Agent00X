@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+import sqlite3
 import sys
+import tempfile
 import unittest
 
 
@@ -11,7 +13,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.observation_store import (
     EventConflictError,
+    ObservationStoreError,
     ObservationStore,
+    SQLiteObservationStore,
     PreDispatchError,
     run_gated_dispatch,
 )
@@ -55,6 +59,57 @@ def valid_checkpoint(trigger_event_id: str = "event-store-demo-001", cursor: int
 
 
 class ObservationStoreTests(unittest.TestCase):
+    def test_sqlite_store_creates_and_reopens_versioned_empty_journal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "observations.sqlite3"
+            with SQLiteObservationStore(database) as store:
+                self.assertEqual(len(store), 0)
+                self.assertEqual(store.events(), ())
+                self.assertEqual(store.checkpoints(), ())
+            with SQLiteObservationStore(database) as reopened:
+                self.assertEqual(len(reopened), 0)
+                self.assertEqual(reopened.events(), ())
+                self.assertEqual(reopened.checkpoints(), ())
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_sqlite_store_rejects_unsupported_or_malformed_schema_without_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            unsupported = Path(directory) / "unsupported.sqlite3"
+            with sqlite3.connect(unsupported) as connection:
+                connection.execute("CREATE TABLE keep_me (value TEXT)")
+                connection.execute("PRAGMA user_version = 99")
+            with self.assertRaisesRegex(
+                ObservationStoreError, "^observation journal: unsupported schema version$"
+            ):
+                SQLiteObservationStore(unsupported)
+            with sqlite3.connect(unsupported) as connection:
+                self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 99)
+                self.assertEqual(
+                    connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall(),
+                    [("keep_me",)],
+                )
+
+            malformed = Path(directory) / "malformed.sqlite3"
+            with sqlite3.connect(malformed) as connection:
+                connection.execute("CREATE TABLE observation_events (event_id TEXT)")
+                connection.execute("PRAGMA user_version = 1")
+            with self.assertRaisesRegex(
+                ObservationStoreError, "^observation journal: schema is malformed$"
+            ):
+                SQLiteObservationStore(malformed)
+            with sqlite3.connect(malformed) as connection:
+                self.assertEqual(
+                    connection.execute("PRAGMA table_info(observation_events)").fetchall()[0][1],
+                    "event_id",
+                )
+
+    def test_sqlite_store_rejects_invalid_path_type(self):
+        with self.assertRaisesRegex(
+            ObservationStoreError, "^observation journal: database path is invalid$"
+        ):
+            SQLiteObservationStore(object())
+
     def test_accepts_only_schema_valid_events(self):
         store = ObservationStore()
         cursor = store.append(valid_event())

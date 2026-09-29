@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 from .digests import sha256_digest
@@ -36,6 +37,10 @@ class EventConflictError(ValueError):
 
 class PreDispatchError(RuntimeError):
     """The pre-dispatch gate refused; no side effect was started."""
+
+
+class ObservationStoreError(RuntimeError):
+    """The local observation journal could not be opened safely."""
 
 
 def run_gated_dispatch(
@@ -214,3 +219,92 @@ class ObservationStore:
             if stored["checkpoint_id"] == checkpoint_id:
                 return position
         raise KeyError(checkpoint_id)  # pragma: no cover - index always consistent
+
+
+class SQLiteObservationStore:
+    """Versioned local SQLite journal shell; durability claims stay local-only."""
+
+    SCHEMA_VERSION = 1
+
+    def __init__(self, path: str | Path) -> None:
+        if isinstance(path, Path):
+            path_text: str | None = str(path)
+        elif isinstance(path, str):
+            path_text = path
+        else:
+            path_text = None
+        if not path_text:
+            raise ObservationStoreError("observation journal: database path is invalid")
+        try:
+            self._connection = sqlite3.connect(path_text)
+            self._connection.row_factory = sqlite3.Row
+            self._initialize_schema()
+        except (sqlite3.Error, ObservationStoreError) as exc:
+            connection = getattr(self, "_connection", None)
+            if connection is not None:
+                connection.close()
+            if isinstance(exc, ObservationStoreError):
+                raise
+            raise ObservationStoreError("observation journal: database could not be opened") from exc
+
+    def _initialize_schema(self) -> None:
+        version = self._connection.execute("PRAGMA user_version").fetchone()[0]
+        tables = {
+            row[0]
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if version == 0 and not tables:
+            with self._connection:
+                self._connection.execute(
+                    """CREATE TABLE observation_events (
+                        event_id TEXT PRIMARY KEY,
+                        cursor INTEGER NOT NULL UNIQUE,
+                        event_json TEXT NOT NULL,
+                        digest TEXT NOT NULL
+                    )"""
+                )
+                self._connection.execute(
+                    """CREATE TABLE observation_checkpoints (
+                        checkpoint_id TEXT PRIMARY KEY,
+                        cursor INTEGER NOT NULL UNIQUE,
+                        checkpoint_json TEXT NOT NULL,
+                        digest TEXT NOT NULL
+                    )"""
+                )
+                self._connection.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+            return
+        if version != self.SCHEMA_VERSION:
+            raise ObservationStoreError("observation journal: unsupported schema version")
+        expected = {
+            "observation_events": {"event_id", "cursor", "event_json", "digest"},
+            "observation_checkpoints": {"checkpoint_id", "cursor", "checkpoint_json", "digest"},
+        }
+        if not expected.keys() <= tables:
+            raise ObservationStoreError("observation journal: schema is malformed")
+        for table, columns in expected.items():
+            actual = {
+                row[1]
+                for row in self._connection.execute(f"PRAGMA table_info({table})")
+            }
+            if actual != columns:
+                raise ObservationStoreError("observation journal: schema is malformed")
+
+    def events(self) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    def checkpoints(self) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    def __len__(self) -> int:
+        return 0
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> SQLiteObservationStore:
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()

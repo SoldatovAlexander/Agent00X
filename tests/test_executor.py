@@ -526,7 +526,7 @@ class ExecutionRecordTests(unittest.TestCase):
                     verdict=self.verdict,
                 )
 
-        for verdict in (VerifierVerdict.FAIL, VerifierVerdict.BLOCKED, "unknown"):
+        for verdict in (VerifierVerdict.FAIL, VerifierVerdict.BLOCKED):
             with self.subTest(verdict=verdict):
                 result = run_local_execution(
                     valid_request(test_command=("python3", "-c", "print('ok')")),
@@ -538,6 +538,66 @@ class ExecutionRecordTests(unittest.TestCase):
                 self.assertEqual(result.failure_code, "verifier-not-pass")
                 self.assertTrue(result.evidence_digest.startswith("sha256:"))
                 self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
+
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution verifier: result shape is invalid$"
+        ):
+            run_local_execution(
+                valid_request(test_command=("python3", "-c", "print('ok')")),
+                FakeWorker(),
+                verifier=ReturningVerifier("unknown"),
+            )
+
+    def test_malformed_verifier_results_are_denied_without_echoing_values(self):
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", original + "\n# local change\n"),))
+
+        class MalformedVerifier:
+            def __init__(self, transform):
+                self.transform = transform
+
+            def verify(self, prepared: VerifierInput):
+                genuine = AcceptingVerifier().verify(prepared)
+                return self.transform(genuine)
+
+        malformed = (
+            None,
+            {"verifier_id": "SECRET-RAW-VALUE"},
+            lambda result: SimpleNamespace(**result.__dict__),
+            lambda result: VerifierResult(**{**result.__dict__, "verifier_id": "SECRET RAW VALUE"}),
+            lambda result: VerifierResult(**{**result.__dict__, "verdict": "pass"}),
+            lambda result: VerifierResult(**{**result.__dict__, "blocker_codes": ["bad"]}),
+        )
+        for value in malformed:
+            transform = value if callable(value) else lambda _result, fixed=value: fixed
+            with self.subTest(result_type=type(value).__name__), self.assertRaisesRegex(
+                ExecutionError, "^execution verifier: result shape is invalid$"
+            ) as raised:
+                run_local_execution(
+                    valid_request(test_command=("python3", "-c", "print('ok')")),
+                    FakeWorker(),
+                    verifier=MalformedVerifier(transform),
+                )
+            self.assertNotIn("SECRET RAW VALUE", str(raised.exception))
+
+        for field in (
+            "process_id", "patch_digest", "evidence_digest",
+            "verification_digest", "verified_contents_digest",
+        ):
+            with self.subTest(binding=field), self.assertRaisesRegex(
+                ExecutionError, "^execution verifier: result binding mismatch$"
+            ):
+                run_local_execution(
+                    valid_request(test_command=("python3", "-c", "print('ok')")),
+                    FakeWorker(),
+                    verifier=MalformedVerifier(
+                        lambda result: VerifierResult(
+                            **{**result.__dict__, field: "foreign-value"}
+                        )
+                    ),
+                )
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

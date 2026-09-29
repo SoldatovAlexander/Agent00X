@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import posixpath
+import re
 from typing import Literal, Protocol, runtime_checkable
 
 from .repository_process import prepare_change
@@ -248,17 +249,7 @@ def run_local_execution(
             verification_digest=staged["verification_digest"],
             verified_contents_digest=verified_contents_digest,
         )
-        verifier_result = verify(verifier_input)
-        if (
-            not isinstance(verifier_result, VerifierResult)
-            or verifier_result.process_id != request.process_id
-            or verifier_result.patch_digest != staged["patch_digest"]
-            or verifier_result.evidence_digest != staged["evidence_digest"]
-            or verifier_result.verification_digest != staged["verification_digest"]
-            or verifier_result.verified_contents_digest != verified_contents_digest
-            or verifier_result.evidence_origin != "local_test"
-        ):
-            raise ExecutionError("execution verifier: result binding mismatch")
+        verifier_result = validate_verifier_result(verify(verifier_input), verifier_input)
         if verifier_result.verdict != VerifierVerdict.PASS:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -290,6 +281,61 @@ def _same_callable(first: object, second: object) -> bool:
     return (
         getattr(first, "__self__", None) is getattr(second, "__self__", object())
         and getattr(first, "__func__", None) is getattr(second, "__func__", object())
+    )
+
+
+def validate_verifier_result(value: object, expected: VerifierInput) -> VerifierResult:
+    """Validate and detach the exact bounded verifier response for one input."""
+
+    if type(value) is not VerifierResult:
+        raise ExecutionError("execution verifier: result shape is invalid")
+    if (
+        not _is_safe_label(value.process_id)
+        or not _is_safe_label(value.verifier_id)
+        or type(value.verdict) is not VerifierVerdict
+        or not isinstance(value.blocker_codes, tuple)
+        or any(
+            not isinstance(code, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", code) is None
+            for code in value.blocker_codes
+        )
+        or value.evidence_origin != "local_test"
+        or any(
+            not isinstance(digest, str)
+            for digest in (
+                value.patch_digest,
+                value.evidence_digest,
+                value.verification_digest,
+                value.verified_contents_digest,
+            )
+        )
+    ):
+        raise ExecutionError("execution verifier: result shape is invalid")
+    if (
+        value.process_id != expected.process_id
+        or value.patch_digest != expected.patch_digest
+        or value.evidence_digest != expected.evidence_digest
+        or value.verification_digest != expected.verification_digest
+        or value.verified_contents_digest != expected.verified_contents_digest
+    ):
+        raise ExecutionError("execution verifier: result binding mismatch")
+    return VerifierResult(
+        process_id=value.process_id,
+        verifier_id=value.verifier_id,
+        patch_digest=value.patch_digest,
+        evidence_digest=value.evidence_digest,
+        verification_digest=value.verification_digest,
+        verified_contents_digest=value.verified_contents_digest,
+        verdict=value.verdict,
+        blocker_codes=tuple(value.blocker_codes),
+        evidence_origin="local_test",
+    )
+
+
+def _is_safe_label(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is not None
     )
 
 

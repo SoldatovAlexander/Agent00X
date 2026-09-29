@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError, fields
+import ast
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import app_contracts.pinned_snapshot as pinned_snapshot_module
+import app_contracts.executor as executor_module
 from app_contracts.pinned_snapshot import (
     MAX_SNAPSHOT_FILE_BYTES,
     MAX_SNAPSHOT_FILES,
@@ -25,6 +27,39 @@ from app_contracts.pinned_snapshot import (
     open_local_repository,
     resolve_local_commit,
 )
+
+
+_FORBIDDEN_LOCAL_IMPORT_MARKERS = (
+    "github",
+    "httpx",
+    "requests",
+    "urllib.request",
+    "credential",
+    "broker",
+    "publication",
+    "actuator",
+    "urlopen",
+    "publish",
+    "get_token",
+)
+
+
+def _forbidden_local_imports(source: str) -> tuple[str, ...]:
+    tree = ast.parse(source)
+    imported_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_names.update(alias.name.lower() for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported_names.add((node.module or "").lower())
+            imported_names.update(alias.name.lower() for alias in node.names)
+    return tuple(
+        sorted(
+            name
+            for name in imported_names
+            if any(marker in name for marker in _FORBIDDEN_LOCAL_IMPORT_MARKERS)
+        )
+    )
 
 
 class PinnedSnapshotRecordTests(unittest.TestCase):
@@ -107,6 +142,92 @@ class PinnedSnapshotRecordTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as raised:
                     PinnedSnapshot(**arguments)
                 self.assertNotIn(str(invalid_value), str(raised.exception))
+
+
+class LocalSnapshotBoundaryTests(unittest.TestCase):
+    def test_local_modules_reject_forbidden_dependencies_without_importing_fixture(self):
+        production_sources = (
+            Path(pinned_snapshot_module.__file__).read_text(encoding="utf-8"),
+            Path(executor_module.__file__).read_text(encoding="utf-8"),
+        )
+        for source in production_sources:
+            self.assertEqual(_forbidden_local_imports(source), ())
+
+        forbidden_fixture = (
+            "import requests\n"
+            "from urllib.request import urlopen\n"
+            "from app_contracts.github_client import publish\n"
+            "from app_contracts.credentials import get_token\n"
+        )
+        self.assertEqual(
+            set(_forbidden_local_imports(forbidden_fixture)),
+            {
+                "requests", "urllib.request", "urlopen",
+                "app_contracts.github_client", "publish",
+                "app_contracts.credentials", "get_token",
+            },
+        )
+
+    def test_git_allowlist_accepts_local_read_only_object_queries_only(self):
+        oid = "a" * 40
+        allowed = (
+            ("rev-parse", "--is-bare-repository"),
+            ("rev-parse", "--is-inside-work-tree"),
+            ("rev-parse", "--show-toplevel"),
+            ("rev-parse", "--show-object-format"),
+            ("rev-parse", "--verify", "--end-of-options", oid + "^{commit}"),
+            ("ls-tree", "-r", "-z", "--full-tree", oid + "^{tree}"),
+            ("cat-file", "-s", oid),
+            ("cat-file", "blob", oid),
+        )
+        denied = (
+            ("fetch", "origin"),
+            ("push", "origin"),
+            ("remote", "-v"),
+            ("ls-remote", "https://private.invalid/repository"),
+            ("cat-file", "blob", "https://private.invalid/repository"),
+        )
+        for arguments in allowed:
+            with self.subTest(arguments=arguments):
+                self.assertTrue(pinned_snapshot_module._is_allowlisted_local_git_arguments(arguments))
+        for arguments in denied:
+            with self.subTest(arguments=arguments):
+                self.assertFalse(pinned_snapshot_module._is_allowlisted_local_git_arguments(arguments))
+
+    def test_real_snapshot_flow_invokes_only_allowlisted_local_git_commands(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository_path, commit_oid = _LocalGitRepositoryTestSupport()._create_two_file_commit(root)
+            (root / "exports").mkdir()
+            run_commands = []
+            popen_commands = []
+            lease = None
+            with (
+                patch.object(subprocess, "run", wraps=subprocess.run) as run,
+                patch.object(subprocess, "Popen", wraps=subprocess.Popen) as popen,
+            ):
+                repository = open_local_repository(repository_path)
+                self.assertEqual(resolve_local_commit(repository, commit_oid), commit_oid)
+                lease = export_local_commit_tree(repository, commit_oid, root / "exports")
+                run_commands = [call.args[0] for call in run.call_args_list]
+                popen_commands = [call.args[0] for call in popen.call_args_list]
+            try:
+                self.assertTrue(run_commands)
+                self.assertTrue(popen_commands)
+                for command in (*run_commands, *popen_commands):
+                    self.assertEqual(command[:3], ["git", "-C", str(repository.root_path)])
+                    arguments = tuple(command[3:])
+                    self.assertTrue(
+                        pinned_snapshot_module._is_allowlisted_local_git_arguments(arguments)
+                    )
+                    joined = " ".join(command).lower()
+                    self.assertNotIn("http://", joined)
+                    self.assertNotIn("https://", joined)
+                    self.assertNotIn("fetch", arguments)
+                    self.assertNotIn("push", arguments)
+            finally:
+                if lease is not None:
+                    lease.close()
 
     def test_identity_validation_rejects_boolean_and_non_path_values(self):
         with self.assertRaisesRegex(ValueError, "^pinned snapshot repository identity is invalid$"):

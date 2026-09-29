@@ -243,6 +243,7 @@ class SQLiteObservationStore:
             self._connection = sqlite3.connect(path_text)
             self._connection.row_factory = sqlite3.Row
             self._initialize_schema()
+            self._validate_persisted_rows()
         except (sqlite3.Error, ObservationStoreError) as exc:
             connection = getattr(self, "_connection", None)
             if connection is not None:
@@ -294,6 +295,42 @@ class SQLiteObservationStore:
             }
             if actual != columns:
                 raise ObservationStoreError("observation journal: schema is malformed")
+
+    def _validate_persisted_rows(self) -> None:
+        """Refuse malformed persisted content without attempting a repair."""
+
+        try:
+            for expected_cursor, row in enumerate(
+                self._connection.execute(
+                    "SELECT event_id, cursor, event_json, digest "
+                    "FROM observation_events ORDER BY cursor"
+                )
+            ):
+                event = json.loads(row["event_json"])
+                validate(event, EVENT_SCHEMA)
+                if (
+                    row["cursor"] != expected_cursor
+                    or event["event_id"] != row["event_id"]
+                    or sha256_digest(event) != row["digest"]
+                ):
+                    raise ValueError("event row mismatch")
+            for expected_cursor, row in enumerate(
+                self._connection.execute(
+                    "SELECT checkpoint_id, cursor, checkpoint_json, digest "
+                    "FROM observation_checkpoints ORDER BY cursor"
+                )
+            ):
+                checkpoint = json.loads(row["checkpoint_json"])
+                validate(checkpoint, CHECKPOINT_SCHEMA)
+                if (
+                    row["cursor"] != expected_cursor
+                    or checkpoint["checkpoint_id"] != row["checkpoint_id"]
+                    or sha256_digest(checkpoint) != row["digest"]
+                ):
+                    raise ValueError("checkpoint row mismatch")
+                self.check_checkpoint(checkpoint)
+        except (ContractValidationError, TypeError, ValueError, KeyError, IndexError) as exc:
+            raise ObservationStoreError("observation journal: persisted records are malformed") from exc
 
     def events(self) -> tuple[dict[str, Any], ...]:
         rows = self._connection.execute(

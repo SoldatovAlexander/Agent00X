@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -102,6 +103,50 @@ class ObservationStoreTests(unittest.TestCase):
                 self.assertEqual(
                     connection.execute("PRAGMA table_info(observation_events)").fetchall()[0][1],
                     "event_id",
+                )
+
+    def test_sqlite_store_fails_closed_on_corrupt_rows_without_rewriting_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event_database = Path(directory) / "corrupt-event.sqlite3"
+            with SQLiteObservationStore(event_database) as store:
+                store.append(valid_event())
+            with sqlite3.connect(event_database) as connection:
+                connection.execute(
+                    "UPDATE observation_events SET event_json = ?",
+                    (json.dumps({"rationale": "SECRET-CONTENT-not-leak"}),),
+                )
+            with self.assertRaisesRegex(
+                ObservationStoreError,
+                "^observation journal: persisted records are malformed$",
+            ) as raised:
+                SQLiteObservationStore(event_database)
+            self.assertNotIn("SECRET-CONTENT", str(raised.exception))
+            with sqlite3.connect(event_database) as connection:
+                self.assertIn(
+                    "SECRET-CONTENT-not-leak",
+                    connection.execute("SELECT event_json FROM observation_events").fetchone()[0],
+                )
+
+            checkpoint_database = Path(directory) / "corrupt-checkpoint.sqlite3"
+            with SQLiteObservationStore(checkpoint_database) as store:
+                store.append(valid_event())
+                store.record_checkpoint(valid_checkpoint())
+            with sqlite3.connect(checkpoint_database) as connection:
+                connection.execute(
+                    "UPDATE observation_checkpoints SET checkpoint_json = ?",
+                    ('{"malformed": true}',),
+                )
+            with self.assertRaisesRegex(
+                ObservationStoreError,
+                "^observation journal: persisted records are malformed$",
+            ):
+                SQLiteObservationStore(checkpoint_database)
+            with sqlite3.connect(checkpoint_database) as connection:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT checkpoint_json FROM observation_checkpoints"
+                    ).fetchone()[0],
+                    '{"malformed": true}',
                 )
 
     def test_sqlite_store_rejects_invalid_path_type(self):

@@ -15,7 +15,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from .repository_process import prepare_change
 from .sandbox import LocalProcessSandboxBackend
-from .digests import sha256_digest
+from .digests import sha256_bytes, sha256_digest
 from .pinned_snapshot import PinnedSnapshot, compute_snapshot_tree_digest
 
 
@@ -66,6 +66,7 @@ class ExecutionResult:
     evidence_digest: str | None = None
     verification_digest: str | None = None
     verified_contents_digest: str | None = None
+    snapshot_tree_digest: str | None = None
     verifier_result: VerifierResult | None = None
     failure_code: str | None = None
     evidence_origin: Literal["local_test"] = "local_test"
@@ -289,6 +290,14 @@ def run_local_execution(
         verified_contents = getattr(prepared, "verified_contents", None)
         if not isinstance(verified_contents, tuple) or not verified_contents:
             raise ExecutionError("execution preparation: verified contents are missing")
+        if request.pinned_snapshot is not None:
+            _validate_prepared_snapshot_binding(
+                prepared,
+                request,
+                staged,
+                proposal,
+                verified_contents,
+            )
         verified_contents_digest = sha256_digest(verified_contents)
         verifier_input = VerifierInput(
             process_id=request.process_id,
@@ -326,6 +335,11 @@ def run_local_execution(
             evidence_digest=staged["evidence_digest"],
             verification_digest=staged["verification_digest"],
             verified_contents_digest=verified_contents_digest,
+            snapshot_tree_digest=(
+                request.pinned_snapshot.tree_digest
+                if request.pinned_snapshot is not None
+                else None
+            ),
             verifier_result=verifier_result,
         )
     finally:
@@ -341,6 +355,63 @@ def _same_callable(first: object, second: object) -> bool:
         getattr(first, "__self__", None) is getattr(second, "__self__", object())
         and getattr(first, "__func__", None) is getattr(second, "__func__", object())
     )
+
+
+def _validate_prepared_snapshot_binding(
+    prepared: object,
+    request: ExecutionRequest,
+    staged: dict,
+    proposal: WorkerProposal,
+    verified_contents: tuple[tuple[str, str], ...],
+) -> None:
+    pin = request.pinned_snapshot
+    if pin is None:
+        raise ExecutionError("execution preparation: pinned snapshot is missing")
+    try:
+        if compute_snapshot_tree_digest(request.snapshot_path) != pin.tree_digest:
+            raise ExecutionError("execution preparation: pinned source changed")
+        evidence = getattr(prepared, "evidence_bundle", None)
+        source_digests = evidence.get("source_digests") if isinstance(evidence, dict) else None
+        verification = getattr(prepared, "verification_report", None)
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("patch_digest") != staged.get("patch_digest")
+            or sha256_digest(evidence) != staged.get("evidence_digest")
+            or not isinstance(verification, dict)
+            or verification.get("evidence_digest") != staged.get("evidence_digest")
+            or sha256_digest(verification) != staged.get("verification_digest")
+        ):
+            raise ExecutionError("execution preparation: pinned artifact binding mismatch")
+        if (
+            tuple(verified_contents) != tuple(sorted(proposal.changes))
+            or not isinstance(source_digests, list)
+            or len(source_digests) != len(verified_contents)
+        ):
+            raise ExecutionError("execution preparation: pinned source binding mismatch")
+        expected_digests: list[str] = []
+        root = request.snapshot_path.resolve(strict=True)
+        for relative_path, _content in verified_contents:
+            if not _is_safe_relative_path(relative_path):
+                raise ExecutionError("execution preparation: pinned source binding mismatch")
+            source_file = request.snapshot_path.joinpath(*Path(relative_path).parts)
+            resolved_source = source_file.resolve(strict=True)
+            if (
+                not resolved_source.is_relative_to(root)
+                or source_file.is_symlink()
+                or not resolved_source.is_file()
+            ):
+                raise ExecutionError("execution preparation: pinned source binding mismatch")
+            expected_digests.append(
+                sha256_bytes(resolved_source.read_text(encoding="utf-8").encode("utf-8"))
+            )
+        if source_digests != expected_digests:
+            raise ExecutionError("execution preparation: pinned source binding mismatch")
+        if staged.get("base_commit") != pin.commit_oid:
+            raise ExecutionError("execution preparation: pinned base mismatch")
+    except ExecutionError:
+        raise
+    except Exception:
+        raise ExecutionError("execution preparation: pinned source binding mismatch") from None
 
 
 def validate_verifier_result(value: object, expected: VerifierInput) -> VerifierResult:

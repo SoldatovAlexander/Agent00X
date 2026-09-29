@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import FrozenInstanceError, asdict, replace
 import ast
 from contextlib import contextmanager
 import json
@@ -342,6 +342,7 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertNotIn("snapshot_path", WorkerInput.__dataclass_fields__)
         self.assertNotIn(str(request.snapshot_path), repr(worker.task))
         self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(result.snapshot_tree_digest, request.pinned_snapshot.tree_digest)
         self.assertEqual(verifier.calls, 1)
         self.assertEqual(result.prepared_change_id, "staged-local-001")
         self.assertTrue(result.patch_digest.startswith("sha256:"))
@@ -1031,6 +1032,61 @@ class ExecutionRecordTests(unittest.TestCase):
             )
         self.assertEqual(backend.calls, 0)
         self.assertEqual(worker.calls, 0)
+
+    def test_prepared_base_and_source_drift_fail_before_verifier(self):
+        class FakeWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", original + "\n# staged\n"),))
+
+        for drift in ("base_commit", "source_digest"):
+            with self.subTest(drift=drift), pinned_test_request(
+                test_command=("python3", "-c", "print('ok')")
+            ) as request:
+                verifier = AcceptingVerifier()
+
+                def drifted_prepare(sandbox, **kwargs):
+                    prepared = prepare_change(sandbox, **kwargs)
+                    if drift == "base_commit":
+                        staged = {**prepared.staged_change, "base_commit": "b" * 40}
+                        return replace(prepared, staged_change=staged)
+                    evidence = {
+                        **prepared.evidence_bundle,
+                        "source_digests": ["sha256:" + "0" * 64],
+                    }
+                    evidence_digest = sha256_digest(evidence)
+                    verification = {
+                        **prepared.verification_report,
+                        "evidence_digest": evidence_digest,
+                    }
+                    staged = {
+                        **prepared.staged_change,
+                        "evidence_digest": evidence_digest,
+                        "verification_digest": sha256_digest(verification),
+                    }
+                    return replace(
+                        prepared,
+                        evidence_bundle=evidence,
+                        verification_report=verification,
+                        staged_change=staged,
+                    )
+
+                expected_error = (
+                    "execution preparation: binding mismatch"
+                    if drift == "base_commit"
+                    else "execution preparation: pinned source binding mismatch"
+                )
+                with patch(
+                    "app_contracts.executor.prepare_change", side_effect=drifted_prepare
+                ):
+                    with self.assertRaisesRegex(ExecutionError, f"^{expected_error}$"):
+                        run_local_execution(
+                            request,
+                            FakeWorker(),
+                            verifier=verifier,
+                            require_pinned_snapshot=True,
+                        )
+                self.assertEqual(verifier.calls, 0)
 
 
 if __name__ == "__main__":

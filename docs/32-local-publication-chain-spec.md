@@ -86,3 +86,13 @@ conflicting `head.ref` отклоняется. Unknown file PUT переводи
 channel в `reconciliation-required` и не разрешает повторный PUT на нём.
 Это не durable recovery, не утверждение о GitHub API atomicity и не замена
 внешней provider reconciliation.
+
+## 7. Workspace preparation interleaving (Batch AD, local only)
+
+`tests/test_repository_process.py` использует twin ephemeral sandboxes для
+раздельных prepared changes, проверяет workspace-bound manifest export,
+отклоняет cross-workspace substitution и stale manifest после следующей записи
+в тот же workspace. Также проверяются process-bound evidence и duplicate-path
+conflict. Interleaving выполняется последовательно и детерминированно: он не
+доказывает поведение реальных параллельных writers, наличие filesystem locking,
+crash safety или backend isolation.

@@ -76,3 +76,13 @@ orchestrator или journal-tracked actuator path.
 Чего он не доказывает: атомарность GitHub API, настоящий minting токенов,
 изоляцию backend, durability при crash, выдачу approval, clock sync. Это
 остаётся external proof и предметом отдельных карточек, не настоящей.
+
+## 6. Provider reconciliation matrix (Batch AC, local only)
+
+`tests/test_github_app.py` проверяет injected mock transcripts: confirmed
+branch absence разрешает единственный ref create; unknown branch или PR outcome
+останавливает запись; matching PR receipt переиспользуется без POST; receipt с
+conflicting `head.ref` отклоняется. Unknown file PUT переводит только текущий
+channel в `reconciliation-required` и не разрешает повторный PUT на нём.
+Это не durable recovery, не утверждение о GitHub API atomicity и не замена
+внешней provider reconciliation.

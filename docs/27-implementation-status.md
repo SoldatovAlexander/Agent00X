@@ -4,7 +4,7 @@
 
 Версия: 1.1
 
-Дата сверки: 2026-09-13
+Дата сверки: 2026-09-29
 
 Этот документ отвечает на вопрос «что существует и что подтверждено сейчас».
 План работ находится в [документе 24](24-mvp-final-plan.md); замысел широкого
@@ -42,7 +42,7 @@
 | Policy/Gateway/Broker контракты | Реализовано и unit-tested | Детерминированные классы и негативные сценарии; это не связанный production Authority Plane |
 | Docker profile | Частично проверено | Профиль и opt-in integration test существуют; обычный прогон не запускает Docker integration |
 | GitHub App | Spike | App создал тестовые branch/PR; это не доказывает полную авторизацию, atomic publication или recovery |
-| Наблюдатель и обучение | Реализовано и unit-tested на уровне контрактов | ADR-029/030 и документ 28; схемы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary есть (см. раздел 9); collector, отчёты и учебные ветки отсутствуют |
+| Наблюдатель и обучение | Контракты, in-memory store и локальный SQLite journal реализованы и unit-tested | ObservationEvent/Checkpoint и локальная persistence/reopen/pre-dispatch failure semantics; collector, отчёты, access control, учебные ветки и production storage guarantees отсутствуют |
 | LLM Worker и субагенты | Не реализовано | Reference flow детерминированный, не является исполнением функции моделью |
 
 ## 4. Последняя локальная проверка
@@ -53,7 +53,7 @@
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Результат сверки 2026-09-13: **420 тестов, все прошли, 1 пропущен**. Пропущен
+Результат сверки 2026-09-29: **478 тестов, все прошли, 1 пропущен**. Пропущен
 opt-in Docker integration test; его запуск требует `RUN_DOCKER_SANDBOX_TESTS=1`,
 доступный Docker daemon и образ. Этот результат подтверждает только указанные
 тестами свойства кода на текущей машине.
@@ -143,7 +143,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 | Область | Артефакты | Evidence (commit) | Уровень |
 |---|---|---|---|
 | Базовые контракты | 16 исходных JSON Schema в `schemas/`, fixtures, `digests.py`, `validator.py`, `state_machine.py` | История `git log`, chain/contract-тесты | Реализовано и unit-tested |
-| Observer R0-контракты | `observation-event`, `checkpoint`, `learning-correction`, `memory-summary` schemas + `test_observer_contracts.py` (итого 20 схем, 19 test-файлов) | `ea4fd5a` (EXP-004) и follow-up commits, включая `f734226` (EXP-008) | Реализовано и unit-tested на уровне контрактов; collector, отчёты и учебные ветки отсутствуют |
+| Observer R0 contracts and local journal | Observer schemas, `observation_store.py`, `test_observation_store.py` (итого 20 schemas; test-file count changes with the suite) | `ea4fd5a` / `f734226` (contracts), `c661abb`—`e0b8de2` (Batch AE) | In-memory and local SQLite behavior unit-tested: reopen, event/checkpoint persistence, causality, atomic pre-dispatch pair and malformed-journal refusal; collector, reports, access control and infrastructure durability remain unimplemented/unproven |
 | Reference preparation и manifest binding | `repository_process.py`, `PreparedChange.verified_contents`, regression-тесты подмены и workspace interleaving | `e98cce3` (EXP-002), `ff79ab6`—`9a31d51` (Batch AD) | Unit-tested; deterministic twin-workspace и stale-manifest cases приняты; real concurrent writers и filesystem locks не доказаны |
 | Policy/authority gate | `authority.py` (`DeterministicPolicy`, привязка digest), regression-тесты подмены | `274fbdc` (EXP-003), принят Control Plane | Unit-tested; нарушение п.2 раздела 6 имеет remediation evidence, сверка статуса — EXP-242 |
 | Durable state и mock publication | `runtime_store.py` (SQLite transitions/audit), `publication.py` (journal/reconciliation), mock boundary, recovery-тесты | Batch-коммиты EXP-010—EXP-015 и далее (см. `git log`) | Реализовано и unit-tested, включая негативные и recovery-сценарии |
@@ -156,5 +156,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 
 Batch AD обновил deterministic local workspace evidence (EXP-272—279).
 Непроверенными остаются реальные parallel writers, filesystem locking,
-crash safety и backend isolation. Настоящий inventory не является security
-certification и не доказывает external publication.
+crash safety и backend isolation. Batch AE (EXP-280—286) добавил локальную
+versioned SQLite ObservationStore и unit evidence для reopen, checkpoint,
+causality, transaction rollback и fail-closed отказа на corrupt records.
+Это не power-loss/media-failure simulation, защита от privileged tampering,
+multi-process concurrency, production collector или access control. Настоящий
+inventory не является security certification и не доказывает external
+publication.

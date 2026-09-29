@@ -6,9 +6,9 @@
 
 Наблюдатель, контрольные точки каждого решения и вызова инструмента, а также
 обучение через ветвление исполнения входят в замысел прототипа. Контракты
-наблюдателя (ObservationEvent/Checkpoint/LearningCorrection/MemorySummary)
-реализованы и покрыты unit-тестами; collector, отчёты и учебные ветки
-отсутствуют. Материал для коллег: [объяснение проекта](docs/29-agent-explained.md).
+наблюдателя и локальный file-backed SQLite journal покрыты unit-тестами;
+collector, отчёты и учебные ветки отсутствуют. Материал для коллег:
+[объяснение проекта](docs/29-agent-explained.md).
 Память будет слоистой и ограниченной: после шести месяцев — месячные, после года
 — годовые сводки; [полная политика](docs/30-memory-model.md).
 
@@ -25,7 +25,10 @@ mock/in-memory/ephemeral doubles, а Batch AB закрепил gateway-before-br
 порядок в компоненте. Batch AD добавил deterministic twin-workspace и
 same-workspace interleaving проверки подготовки. Это не production
 orchestrator, доказательство реальной параллельной записи, filesystem locking,
-сквозной безопасности или external publication.
+сквозной безопасности или external publication. Batch AE добавил локальную
+SQLite persistence/reopen и fail-closed проверки ObservationEvent/Checkpoint;
+они не доказывают power-loss durability, защиту от привилегированного изменения,
+collector completeness, access control или многопроцессную конкурентность.
 
 Единственный актуальный статус реализации и границ доказательств:
 [документ 27](docs/27-implementation-status.md). Порядок работ R0—R5:
@@ -37,7 +40,7 @@ orchestrator, доказательство реальной параллельн
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Обычный прогон на 2026-09-29: 465 тестов, все прошли, один opt-in Docker test
+Обычный прогон на 2026-09-29: 478 тестов, все прошли, один opt-in Docker test
 пропущен. Результат подтверждает только покрытые тестами свойства на текущей
 машине. Подробнее — в документе 27.
 

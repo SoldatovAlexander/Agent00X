@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 1/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 2/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -3801,7 +3801,7 @@ Commit: ALLOWED
   Targeted tests: 3 passed; full suite: 507 passed, 1 skipped.
 
 ## EXP-309 — validate pinned snapshot identities
-Статус: READY
+Статус: ACCEPTED
 Цель: fail closed on malformed repo id, commit OID, digest and evidence origin.
 Гипотеза: strict syntax validation prevents symbolic refs and untyped provenance from being presented as pinned evidence.
 Зависит от: EXP-308
@@ -3820,9 +3820,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `4661f11` принимает только repo id ограниченного
+  формата, полный lowercase SHA-1/SHA-256 OID и версионно выбранный SHA-256
+  tree digest; ошибки sanitized. Targeted tests: 6 passed; full suite: 510
+  passed, 1 skipped.
 
 ## EXP-310 — preflight a local repository without consulting remotes
-Статус: DRAFT
+Статус: READY
 Цель: validate a repository directory as a local Git worktree or bare repository.
 Гипотеза: local object access can be constrained without reading remote configuration or contacting a server.
 Зависит от: EXP-309

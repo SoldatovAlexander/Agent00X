@@ -1083,6 +1083,32 @@ class GitHubReconciliationTests(unittest.TestCase):
         self.assertEqual(receipt.pull_request_id, 13)
         self.assertEqual(receipt.idempotency_key, key)
 
+    def test_unknown_pr_fixtures_deny_create_without_post_or_leakage(self):
+        request = {
+            "operation": "publish_pull_request",
+            "repository_id": "github-installation/456/repository/1001",
+            "branch": _FIXTURE_BRANCH,
+            "staged_change_digest": _FIXTURE_DIGEST,
+            "idempotency_key": _FIXTURE_IDEMPOTENCY_KEY,
+            "policy_effect": "allow",
+            "approval_valid": True,
+        }
+        for payload in ProviderTranscriptFixtures.unknown_pr_payloads():
+            with self.subTest(payload=repr(payload)):
+                posts = []
+                channel = self._channel((
+                    lambda _url, _headers, body, _posts=posts: _posts.append(body),
+                    lambda _url, _headers, _payload=payload: _payload,
+                    None,
+                ))
+                with self.assertRaisesRegex(GitHubAppBrokerError, "pull-request") as raised:
+                    channel.publish_pull_request(request)
+                self.assertEqual(posts, [])
+                message = str(raised.exception)
+                self.assertNotIn(_FIXTURE_MARKER, message)
+                self.assertNotIn(_FIXTURE_IDEMPOTENCY_KEY, message)
+                self.assertNotIn("opaque", message)
+
     def test_reconcile_returns_unknown_when_lookup_fails(self):
         channel = self._channel((
             None,

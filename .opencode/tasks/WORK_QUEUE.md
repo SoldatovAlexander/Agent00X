@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 11/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 12/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -4070,7 +4070,7 @@ Commit: ALLOWED
   Targeted: 45 tests, 1 skipped; full: 539 passed, 1 skipped.
 
 ## EXP-319 — bind prepared artifacts to the pinned tree
-Статус: READY
+Статус: ACCEPTED
 Цель: verify prepared change base commit and source digests against pinned snapshot identity.
 Гипотеза: staged metadata cannot claim a different base than the exact exported tree.
 Зависит от: EXP-318
@@ -4089,9 +4089,15 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `99c958a` связывает staged base, evidence и
+  verification digests, pinned source-file digests и prepared contents; любой
+  drift блокирует verifier. VERIFIED result несёт tree digest pin. Targeted
+  tests: 30 passed; full suite: 540 passed, 1 skipped (suite emitted pre-existing
+  SQLite ResourceWarnings unrelated to this card).
 
 ## EXP-320 — define replayable independent verification input
-Статус: DRAFT
+Статус: READY
 Цель: define typed verifier input bound to base pin, prepared files and allowlisted test command.
 Гипотеза: verifier can independently replay checks without trusting Worker output claims.
 Зависит от: EXP-319

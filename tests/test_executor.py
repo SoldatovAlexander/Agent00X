@@ -47,6 +47,24 @@ def valid_request(**overrides) -> ExecutionRequest:
     return ExecutionRequest(**fields)
 
 
+class AcceptingVerifier:
+    def __init__(self):
+        self.calls = 0
+
+    def verify(self, prepared: VerifierInput) -> VerifierResult:
+        self.calls += 1
+        self.received = prepared
+        return VerifierResult(
+            process_id=prepared.process_id,
+            verifier_id="test-verifier",
+            patch_digest=prepared.patch_digest,
+            evidence_digest=prepared.evidence_digest,
+            verification_digest=prepared.verification_digest,
+            verified_contents_digest=prepared.verified_contents_digest,
+            verdict=VerifierVerdict.PASS,
+        )
+
+
 class ExecutionRecordTests(unittest.TestCase):
     def test_request_is_an_immutable_local_preparation_record(self):
         request = valid_request()
@@ -115,7 +133,10 @@ class ExecutionRecordTests(unittest.TestCase):
                 return VerifierResult(
                     process_id=prepared.process_id,
                     verifier_id="test-verifier",
+                    patch_digest=prepared.patch_digest,
                     evidence_digest=prepared.evidence_digest,
+                    verification_digest=prepared.verification_digest,
+                    verified_contents_digest=prepared.verified_contents_digest,
                     verdict=VerifierVerdict.PASS,
                 )
 
@@ -223,14 +244,18 @@ class ExecutionRecordTests(unittest.TestCase):
         with patch(
             "app_contracts.executor.prepare_change", wraps=prepare_change
         ) as prepare_call:
+            verifier = AcceptingVerifier()
             result = run_local_execution(
-                valid_request(test_command=("python3", "-c", "print('ok')")), worker
+                valid_request(test_command=("python3", "-c", "print('ok')")),
+                worker,
+                verifier=verifier,
             )
 
         self.assertEqual(worker.calls, 1)
         prepare_call.assert_called_once()
         self.assertEqual(worker.task.declared_change_paths, ("calculator.py",))
         self.assertEqual(result.status, ExecutionStatus.PREPARED)
+        self.assertEqual(verifier.calls, 1)
         self.assertEqual(result.prepared_change_id, "staged-local-001")
         self.assertTrue(result.patch_digest.startswith("sha256:"))
         self.assertTrue(result.evidence_digest.startswith("sha256:"))
@@ -246,6 +271,14 @@ class ExecutionRecordTests(unittest.TestCase):
             result.verified_contents_digest,
             sha256_digest((("calculator.py", worker.content),)),
         )
+        self.assertEqual(verifier.received.patch_digest, result.patch_digest)
+        self.assertEqual(verifier.received.evidence_digest, result.evidence_digest)
+        self.assertEqual(verifier.received.verification_digest, result.verification_digest)
+        self.assertEqual(
+            verifier.received.verified_contents_digest, result.verified_contents_digest
+        )
+        self.assertEqual(verifier.received.evidence_origin, "local_test")
+        self.assertEqual(result.verifier_result.verifier_id, "test-verifier")
         self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("publishable", ExecutionResult.__dataclass_fields__)
 
@@ -259,7 +292,7 @@ class ExecutionRecordTests(unittest.TestCase):
             ContractValidationError,
             "^verification failed; staged change was not created$",
         ):
-            run_local_execution(request, FakeWorker())
+            run_local_execution(request, FakeWorker(), verifier=AcceptingVerifier())
 
     def test_local_coordinator_closes_injected_sandbox_on_worker_failure(self):
         class TrackingBackend:
@@ -291,7 +324,10 @@ class ExecutionRecordTests(unittest.TestCase):
 
         backend = TrackingBackend()
         with self.assertRaisesRegex(RuntimeError, "^injected worker failure$"):
-            run_local_execution(valid_request(), FailingWorker(), sandbox_backend=backend)
+            run_local_execution(
+                valid_request(), FailingWorker(), verifier=AcceptingVerifier(),
+                sandbox_backend=backend,
+            )
         self.assertEqual(backend.closed, 1)
         self.assertIsInstance(backend, ExecutorSandboxBackend)
 
@@ -327,7 +363,9 @@ class ExecutionRecordTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ExecutionError, "^execution sandbox: session is invalid$"
         ):
-            run_local_execution(valid_request(), worker, sandbox_backend=backend)
+            run_local_execution(
+                valid_request(), worker, verifier=AcceptingVerifier(), sandbox_backend=backend
+            )
         self.assertEqual(worker.calls, 0)
         self.assertTrue(backend.session_closed)
 
@@ -375,7 +413,10 @@ class ExecutionRecordTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ExecutionError, "^execution preparation: binding mismatch$"
                 ):
-                    run_local_execution(request, FakeWorker(), sandbox_backend=FakeBackend())
+                    run_local_execution(
+                        request, FakeWorker(), verifier=AcceptingVerifier(),
+                        sandbox_backend=FakeBackend(),
+                    )
 
     def test_worker_cannot_replace_declared_test_command(self):
         class TrackingBackend:
@@ -411,10 +452,58 @@ class ExecutionRecordTests(unittest.TestCase):
         backend = TrackingBackend()
         worker = FakeWorker()
         run_local_execution(
-            valid_request(test_command=command), worker, sandbox_backend=backend
+            valid_request(test_command=command), worker, verifier=AcceptingVerifier(),
+            sandbox_backend=backend,
         )
         self.assertEqual(backend.commands, [command])
         self.assertNotEqual(backend.commands[0], worker.proposed_command)
+
+    def test_missing_or_aliased_verifier_is_denied_before_sandbox_creation(self):
+        class Backend:
+            def __init__(self):
+                self.calls = 0
+
+            def create(self, snapshot: Path, allowed_commands: set[str]):
+                self.calls += 1
+                raise AssertionError("sandbox must not be created")
+
+        class DualRole:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                return WorkerProposal((("calculator.py", "unused"),))
+
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                return VerifierResult(
+                    process_id=prepared.process_id,
+                    verifier_id="aliased",
+                    patch_digest=prepared.patch_digest,
+                    evidence_digest=prepared.evidence_digest,
+                    verification_digest=prepared.verification_digest,
+                    verified_contents_digest=prepared.verified_contents_digest,
+                    verdict=VerifierVerdict.PASS,
+                )
+
+        for verifier, expected in (
+            (None, "execution verifier: collaborator is invalid"),
+            (object(), "execution verifier: collaborator is invalid"),
+        ):
+            backend = Backend()
+            with self.subTest(expected=expected), self.assertRaisesRegex(
+                ExecutionError, f"^{expected}$"
+            ):
+                run_local_execution(
+                    valid_request(), DualRole(), verifier=verifier, sandbox_backend=backend
+                )
+            self.assertEqual(backend.calls, 0)
+
+        backend = Backend()
+        dual_role = DualRole()
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution verifier: collaborator is aliased$"
+        ):
+            run_local_execution(
+                valid_request(), dual_role, verifier=dual_role, sandbox_backend=backend
+            )
+        self.assertEqual(backend.calls, 0)
 
     def test_request_rejects_invalid_snapshot_and_change_paths(self):
         invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))

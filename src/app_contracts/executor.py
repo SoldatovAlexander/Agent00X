@@ -62,6 +62,7 @@ class ExecutionResult:
     evidence_digest: str | None = None
     verification_digest: str | None = None
     verified_contents_digest: str | None = None
+    verifier_result: VerifierResult | None = None
     failure_code: str | None = None
 
 
@@ -103,7 +104,10 @@ class VerifierVerdict(str, Enum):
 class VerifierResult:
     process_id: str
     verifier_id: str
+    patch_digest: str
     evidence_digest: str
+    verification_digest: str
+    verified_contents_digest: str
     verdict: VerifierVerdict
     blocker_codes: tuple[str, ...] = ()
     evidence_origin: Literal["local_test"] = "local_test"
@@ -175,6 +179,7 @@ def run_local_execution(
     request: ExecutionRequest,
     worker: ProposalWorker,
     *,
+    verifier: IndependentVerifier | None = None,
     sandbox_backend: ExecutorSandboxBackend | None = None,
 ) -> ExecutionResult:
     """Run one injected proposal through local sandbox preparation only.
@@ -187,6 +192,12 @@ def run_local_execution(
         raise ExecutionError("execution request: type is invalid")
     if not callable(getattr(worker, "propose", None)):
         raise ExecutionError("execution worker: collaborator is invalid")
+    verify = getattr(verifier, "verify", None)
+    propose = getattr(worker, "propose", None)
+    if verifier is None or not callable(verify):
+        raise ExecutionError("execution verifier: collaborator is invalid")
+    if verifier is worker or _same_callable(verify, propose):
+        raise ExecutionError("execution verifier: collaborator is aliased")
     backend = sandbox_backend or LocalProcessSandboxBackend()
     if not callable(getattr(backend, "create", None)):
         raise ExecutionError("execution sandbox: backend is invalid")
@@ -228,18 +239,47 @@ def run_local_execution(
         verified_contents = getattr(prepared, "verified_contents", None)
         if not isinstance(verified_contents, tuple) or not verified_contents:
             raise ExecutionError("execution preparation: verified contents are missing")
+        verified_contents_digest = sha256_digest(verified_contents)
+        verifier_input = VerifierInput(
+            process_id=request.process_id,
+            patch_digest=staged["patch_digest"],
+            evidence_digest=staged["evidence_digest"],
+            verification_digest=staged["verification_digest"],
+            verified_contents_digest=verified_contents_digest,
+        )
+        verifier_result = verify(verifier_input)
+        if (
+            not isinstance(verifier_result, VerifierResult)
+            or verifier_result.process_id != request.process_id
+            or verifier_result.patch_digest != staged["patch_digest"]
+            or verifier_result.evidence_digest != staged["evidence_digest"]
+            or verifier_result.verification_digest != staged["verification_digest"]
+            or verifier_result.verified_contents_digest != verified_contents_digest
+            or verifier_result.evidence_origin != "local_test"
+        ):
+            raise ExecutionError("execution verifier: result binding mismatch")
         return ExecutionResult(
             status=ExecutionStatus.PREPARED,
             prepared_change_id=staged["staged_change_id"],
             patch_digest=staged["patch_digest"],
             evidence_digest=staged["evidence_digest"],
             verification_digest=staged["verification_digest"],
-            verified_contents_digest=sha256_digest(verified_contents),
+            verified_contents_digest=verified_contents_digest,
+            verifier_result=verifier_result,
         )
     finally:
         close = getattr(sandbox, "close", None)
         if callable(close):
             close()
+
+
+def _same_callable(first: object, second: object) -> bool:
+    if first is second:
+        return True
+    return (
+        getattr(first, "__self__", None) is getattr(second, "__self__", object())
+        and getattr(first, "__func__", None) is getattr(second, "__func__", object())
+    )
 
 
 def _validate_identity(value: object) -> None:

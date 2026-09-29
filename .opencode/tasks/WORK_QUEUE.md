@@ -3203,7 +3203,7 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 9/20 принято.
+Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 10/20 принято.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -4011,7 +4011,7 @@ Commit: ALLOWED
   1 skipped.
 
 ## EXP-317 — verify snapshot identity after sandbox copying
-Статус: READY
+Статус: ACCEPTED
 Цель: bind the sandbox's read-only snapshot copy to the pinned tree digest.
 Гипотеза: executor can detect copy substitution before invoking Worker while separating content identity from intentional permission normalization.
 Зависит от: EXP-316
@@ -4033,9 +4033,14 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `99c2da5` rehashes caller source against the mode-bound
+  pin and compares copied content via a separate canonical digest that tolerates
+  read-only mode normalization. Mismatch occurs before Worker/preparation and
+  closes the session. Targeted tests: 57 passed; full suite: 535 passed, 1 skipped.
 
 ## EXP-318 — bind executor request and worker input to a pinned snapshot
-Статус: DRAFT
+Статус: READY
 Цель: add exact snapshot OID and content digest to executor and worker-facing records.
 Гипотеза: Worker proposals can be traced to one content-addressed local base.
 Зависит от: EXP-317

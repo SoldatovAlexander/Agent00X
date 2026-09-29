@@ -129,6 +129,9 @@ class AcceptingVerifier:
         self.received = prepared
         return VerifierResult(
             process_id=prepared.process_id,
+            base_commit=prepared.base_commit,
+            snapshot_tree_digest=prepared.snapshot_tree_digest,
+            replay_result_digest=prepared.replay_result_digest,
             verifier_id="test-verifier",
             patch_digest=prepared.patch_digest,
             evidence_digest=prepared.evidence_digest,
@@ -221,6 +224,20 @@ class ExecutionRecordTests(unittest.TestCase):
                 if replay_returncode == 0:
                     self.assertEqual(result.status, ExecutionStatus.VERIFIED)
                     self.assertEqual(verifier.calls, 1)
+                    self.assertEqual(
+                        verifier.received.base_commit, request.pinned_snapshot.commit_oid
+                    )
+                    self.assertEqual(
+                        verifier.received.snapshot_tree_digest,
+                        request.pinned_snapshot.tree_digest,
+                    )
+                    self.assertRegex(
+                        verifier.received.replay_result_digest, r"^sha256:[0-9a-f]{64}$"
+                    )
+                    self.assertEqual(
+                        result.verifier_result.replay_result_digest,
+                        verifier.received.replay_result_digest,
+                    )
                 else:
                     self.assertEqual(result.status, ExecutionStatus.FAILED)
                     self.assertEqual(result.failure_code, "verification-replay-failed")
@@ -297,6 +314,9 @@ class ExecutionRecordTests(unittest.TestCase):
                 self.received = prepared
                 return VerifierResult(
                     process_id=prepared.process_id,
+                    base_commit=prepared.base_commit,
+                    snapshot_tree_digest=prepared.snapshot_tree_digest,
+                    replay_result_digest=prepared.replay_result_digest,
                     verifier_id="test-verifier",
                     patch_digest=prepared.patch_digest,
                     evidence_digest=prepared.evidence_digest,
@@ -339,6 +359,7 @@ class ExecutionRecordTests(unittest.TestCase):
                 "declared_change_paths", "verified_contents", "test_command",
                 "test_timeout_seconds", "patch_digest", "evidence_digest",
                 "verification_digest", "verified_contents_digest", "evidence_origin",
+                "replay_result_digest",
             },
         )
 
@@ -739,6 +760,9 @@ class ExecutionRecordTests(unittest.TestCase):
                     calls.append("verifier.verify")
                     return VerifierResult(
                         process_id=prepared.process_id,
+                        base_commit=prepared.base_commit,
+                        snapshot_tree_digest=prepared.snapshot_tree_digest,
+                        replay_result_digest=prepared.replay_result_digest,
                         verifier_id="local-fake-verifier",
                         patch_digest=prepared.patch_digest,
                         evidence_digest=prepared.evidence_digest,
@@ -958,6 +982,9 @@ class ExecutionRecordTests(unittest.TestCase):
             def verify(self, prepared: VerifierInput) -> VerifierResult:
                 return VerifierResult(
                     process_id=prepared.process_id,
+                    base_commit=prepared.base_commit,
+                    snapshot_tree_digest=prepared.snapshot_tree_digest,
+                    replay_result_digest=prepared.replay_result_digest,
                     verifier_id="aliased",
                     patch_digest=prepared.patch_digest,
                     evidence_digest=prepared.evidence_digest,
@@ -1002,6 +1029,9 @@ class ExecutionRecordTests(unittest.TestCase):
             def verify(self, prepared: VerifierInput) -> VerifierResult:
                 return VerifierResult(
                     process_id=prepared.process_id,
+                    base_commit=prepared.base_commit,
+                    snapshot_tree_digest=prepared.snapshot_tree_digest,
+                    replay_result_digest=prepared.replay_result_digest,
                     verifier_id="test-verifier",
                     patch_digest=prepared.patch_digest,
                     evidence_digest=prepared.evidence_digest,
@@ -1067,8 +1097,9 @@ class ExecutionRecordTests(unittest.TestCase):
             self.assertNotIn("SECRET RAW VALUE", str(raised.exception))
 
         for field in (
-            "process_id", "patch_digest", "evidence_digest",
-            "verification_digest", "verified_contents_digest",
+            "process_id", "base_commit", "snapshot_tree_digest", "replay_result_digest",
+            "patch_digest", "evidence_digest", "verification_digest",
+            "verified_contents_digest",
         ):
             with self.subTest(binding=field), self.assertRaisesRegex(
                 ExecutionError, "^execution verifier: result binding mismatch$"

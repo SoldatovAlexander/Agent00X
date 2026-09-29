@@ -113,6 +113,7 @@ class VerifierInput:
     verification_digest: str
     verified_contents_digest: str
     evidence_origin: Literal["local_test"] = "local_test"
+    replay_result_digest: str | None = None
 
 
 class VerifierVerdict(str, Enum):
@@ -124,6 +125,9 @@ class VerifierVerdict(str, Enum):
 @dataclass(frozen=True)
 class VerifierResult:
     process_id: str
+    base_commit: str
+    snapshot_tree_digest: str | None
+    replay_result_digest: str | None
     verifier_id: str
     patch_digest: str
     evidence_digest: str
@@ -306,20 +310,15 @@ def run_local_execution(
                 verified_contents,
             )
         verified_contents_digest = sha256_digest(verified_contents)
-        verifier_input = _build_verifier_input(
-            request=request,
-            proposal=proposal,
-            staged=staged,
-            verified_contents=verified_contents,
-            verified_contents_digest=verified_contents_digest,
-        )
+        replay_result_digest = None
         if request.pinned_snapshot is not None:
             try:
-                _run_pinned_verifier_replay(
+                replay_result_digest = _run_pinned_verifier_replay(
                     request=request,
                     backend=backend,
                     source_sandbox=sandbox,
                     verified_contents=verified_contents,
+                    verified_contents_digest=verified_contents_digest,
                 )
             except Exception:
                 return ExecutionResult(
@@ -330,6 +329,14 @@ def run_local_execution(
                     verified_contents_digest=verified_contents_digest,
                     failure_code="verification-replay-failed",
                 )
+        verifier_input = _build_verifier_input(
+            request=request,
+            proposal=proposal,
+            staged=staged,
+            verified_contents=verified_contents,
+            verified_contents_digest=verified_contents_digest,
+            replay_result_digest=replay_result_digest,
+        )
         try:
             raw_verifier_result = verify(verifier_input)
         except Exception:
@@ -445,6 +452,7 @@ def _build_verifier_input(
     staged: dict,
     verified_contents: tuple[tuple[str, str], ...],
     verified_contents_digest: str,
+    replay_result_digest: str | None,
 ) -> VerifierInput:
     expected_contents = tuple(sorted(proposal.changes))
     declared_paths = {posixpath.normpath(path) for path in request.declared_change_paths}
@@ -493,6 +501,7 @@ def _build_verifier_input(
         evidence_digest=staged["evidence_digest"],
         verification_digest=staged["verification_digest"],
         verified_contents_digest=verified_contents_digest,
+        replay_result_digest=replay_result_digest,
     )
 
 
@@ -502,7 +511,8 @@ def _run_pinned_verifier_replay(
     backend: ExecutorSandboxBackend,
     source_sandbox: object,
     verified_contents: tuple[tuple[str, str], ...],
-) -> None:
+    verified_contents_digest: str,
+) -> str:
     """Replay the request command in a fresh copy of the pinned base plus prepared files."""
 
     pin = request.pinned_snapshot
@@ -559,6 +569,18 @@ def _run_pinned_verifier_replay(
             or replay.returncode != 0
         ):
             raise ExecutionError("execution verifier replay: command failed")
+        return sha256_digest(
+            (
+                "pinned-replay-v1",
+                pin.repository_id,
+                pin.commit_oid,
+                pin.tree_digest,
+                request.test_command,
+                request.test_timeout_seconds,
+                verified_contents_digest,
+                replay.returncode,
+            )
+        )
     finally:
         session.close()
 
@@ -570,6 +592,15 @@ def validate_verifier_result(value: object, expected: VerifierInput) -> Verifier
         raise ExecutionError("execution verifier: result shape is invalid")
     if (
         not _is_safe_label(value.process_id)
+        or not isinstance(value.base_commit, str)
+        or (
+            value.snapshot_tree_digest is not None
+            and not isinstance(value.snapshot_tree_digest, str)
+        )
+        or (
+            value.replay_result_digest is not None
+            and not isinstance(value.replay_result_digest, str)
+        )
         or not _is_safe_label(value.verifier_id)
         or type(value.verdict) is not VerifierVerdict
         or not isinstance(value.blocker_codes, tuple)
@@ -592,6 +623,9 @@ def validate_verifier_result(value: object, expected: VerifierInput) -> Verifier
         raise ExecutionError("execution verifier: result shape is invalid")
     if (
         value.process_id != expected.process_id
+        or value.base_commit != expected.base_commit
+        or value.snapshot_tree_digest != expected.snapshot_tree_digest
+        or value.replay_result_digest != expected.replay_result_digest
         or value.patch_digest != expected.patch_digest
         or value.evidence_digest != expected.evidence_digest
         or value.verification_digest != expected.verification_digest
@@ -600,6 +634,9 @@ def validate_verifier_result(value: object, expected: VerifierInput) -> Verifier
         raise ExecutionError("execution verifier: result binding mismatch")
     return VerifierResult(
         process_id=value.process_id,
+        base_commit=value.base_commit,
+        snapshot_tree_digest=value.snapshot_tree_digest,
+        replay_result_digest=value.replay_result_digest,
         verifier_id=value.verifier_id,
         patch_digest=value.patch_digest,
         evidence_digest=value.evidence_digest,

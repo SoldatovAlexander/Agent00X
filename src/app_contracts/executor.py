@@ -32,6 +32,7 @@ class ExecutionRequest:
     def __post_init__(self) -> None:
         for value in (self.process_id, self.task_id, self.repository_id, self.base_commit):
             _validate_identity(value)
+        _validate_request_shape(self)
 
 
 class ExecutionStatus(str, Enum):
@@ -59,3 +60,61 @@ def _validate_identity(value: object) -> None:
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise ExecutionError("execution request: identity field is invalid")
+
+
+def _validate_request_shape(request: ExecutionRequest) -> None:
+    snapshot = request.snapshot_path
+    if (
+        not isinstance(snapshot, Path)
+        or not snapshot.is_absolute()
+        or snapshot == Path(snapshot.anchor)
+        or ".." in snapshot.parts
+    ):
+        raise ExecutionError("execution request: snapshot path is invalid")
+    if (
+        not isinstance(request.allowed_commands, frozenset)
+        or not request.allowed_commands
+        or any(
+            not isinstance(command, str)
+            or not command
+            or command != command.strip()
+            or any(character.isspace() for character in command)
+            or Path(command).name != command
+            or any(ord(character) < 32 or ord(character) == 127 for character in command)
+            for command in request.allowed_commands
+        )
+    ):
+        raise ExecutionError("execution request: command allowlist is invalid")
+    if (
+        not isinstance(request.declared_change_paths, tuple)
+        or not request.declared_change_paths
+        or any(not _is_safe_relative_path(path) for path in request.declared_change_paths)
+    ):
+        raise ExecutionError("execution request: declared paths are invalid")
+    command = request.test_command
+    if (
+        not isinstance(command, tuple)
+        or not command
+        or any(not isinstance(part, str) or not part or part != part.strip() for part in command)
+        or Path(command[0]).name not in request.allowed_commands
+    ):
+        raise ExecutionError("execution request: test command is invalid")
+    timeout = request.test_timeout_seconds
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 300:
+        raise ExecutionError("execution request: test timeout is invalid")
+
+
+def _is_safe_relative_path(value: object) -> bool:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or value.startswith("/")
+        or "\\" in value
+        or "//" in value
+        or "/./" in value
+        or value.endswith("/.")
+    ):
+        return False
+    path = Path(value)
+    return not path.is_absolute() and ".." not in path.parts and value not in {"", "."}

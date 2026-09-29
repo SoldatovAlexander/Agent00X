@@ -23,7 +23,7 @@ def valid_request(**overrides) -> ExecutionRequest:
         "task_id": "task-local-001",
         "repository_id": "fixture-repository",
         "base_commit": "fixture-base-001",
-        "snapshot_path": Path("fixtures/repository/project"),
+        "snapshot_path": (ROOT / "fixtures/repository/project").resolve(),
         "allowed_commands": frozenset({"python3"}),
         "declared_change_paths": ("calculator.py",),
         "test_command": ("python3", "-m", "unittest"),
@@ -68,6 +68,45 @@ class ExecutionRecordTests(unittest.TestCase):
                     ) as raised:
                         valid_request(**{field: value})
                     self.assertNotIn("unsafe", str(raised.exception))
+
+    def test_request_rejects_invalid_snapshot_and_change_paths(self):
+        invalid_snapshots = ("/tmp/repository", Path("."), Path("/"), Path("/tmp/../escape"))
+        for value in invalid_snapshots:
+            with self.subTest(snapshot=value):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: snapshot path is invalid$"
+                ):
+                    valid_request(snapshot_path=value)
+
+        for value in ("", ".", "../escape.py", "/tmp/file.py", "a//b.py", "a/./b.py", "a\\b.py"):
+            with self.subTest(change_path=value):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: declared paths are invalid$"
+                ):
+                    valid_request(declared_change_paths=(value,))
+
+    def test_request_rejects_malformed_test_command_and_limits(self):
+        for command in ("python3 -m unittest", (), ("python3", ""), ("sh", "-c", "true")):
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: test command is invalid$"
+                ):
+                    valid_request(test_command=command)
+
+        for timeout in (0, -1, 301, True, 1.5):
+            with self.subTest(timeout=timeout):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: test timeout is invalid$"
+                ):
+                    valid_request(test_timeout_seconds=timeout)
+
+    def test_request_rejects_invalid_command_allowlist(self):
+        for allowed_commands in (set(), frozenset(), frozenset({"python3 -m"}), frozenset({""})):
+            with self.subTest(allowed_commands=allowed_commands):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: command allowlist is invalid$"
+                ):
+                    valid_request(allowed_commands=allowed_commands)
 
 
 if __name__ == "__main__":

@@ -21,10 +21,12 @@ from app_contracts.authority import DeterministicPolicy, PolicyConfig
 from app_contracts.controlled_publication import (
     ControlledPublicationError,
     run_approval_gate,
+    run_gateway_gate,
     run_policy_gate,
 )
 import app_contracts.controlled_publication as gate_module
 from app_contracts.digests import sha256_digest
+from app_contracts.gateway import GatewayDecision, GatewayPath
 from app_contracts.executor import (
     ExecutionRequest,
     ExecutionStatus,
@@ -326,6 +328,7 @@ class ApprovalGateTests(unittest.TestCase):
         tree = ast.parse(source)
         imported_modules = set()
         from_modules = set()
+        gateway_type_names = set()
         called_names = set()
         defined_names = set()
         for node in ast.walk(tree):
@@ -335,6 +338,8 @@ class ApprovalGateTests(unittest.TestCase):
                 from_modules.add((node.module or "").lower())
                 imported_modules.add((node.module or "").lower())
                 imported_modules.update(alias.name.lower() for alias in node.names)
+                if (node.module or "").lower() == "gateway":
+                    gateway_type_names.update(alias.name.lower() for alias in node.names)
             elif isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
                     called_names.add(node.func.id.lower())
@@ -342,13 +347,15 @@ class ApprovalGateTests(unittest.TestCase):
                     called_names.add(node.func.attr.lower())
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 defined_names.add(node.name.lower())
-        forbidden_modules = {"gateway", "broker", "actuator", "mock_github", "github_app"}
+        forbidden_modules = {"broker", "actuator", "mock_github", "github_app"}
         self.assertTrue(
             all(
                 not any(forbidden in module for module in imported_modules)
                 for forbidden in forbidden_modules
             )
         )
+        if "gateway" in from_modules:
+            self.assertEqual(gateway_type_names, {"gatewaydecision", "gatewaypath"})
         for module in from_modules:
             if "publication" in module:
                 self.assertIn(module, {"publication_seed", "controlled_publication"})
@@ -719,6 +726,266 @@ class PolicyGateTests(unittest.TestCase):
                     )
             self.assertNotIn(canary, str(raised.exception))
             downstream.assert_untouched(self)
+
+
+def gateway_envelope(intent: PublicationIntent) -> dict:
+    return {
+        "intent": {"operation": "publish_pull_request"},
+        "destination": {"port": "approval"},
+        "source": {"protocol": "internal", "principal_id": intent.process_id},
+        "security": {"tainted": False, "sensitivity": "internal"},
+        "payload": {"content_digest": intent.staged_change_digest},
+        "correlation_id": intent.idempotency_key,
+    }
+
+
+class FakeGateway:
+    _DEFAULT = object()
+
+    def __init__(self, events, verdict=_DEFAULT, error=None):
+        self.events = events
+        self.calls = []
+        if verdict is FakeGateway._DEFAULT:
+            verdict = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+        self.verdict = verdict
+        self.error = error
+
+    def __call__(self, envelope, *, now):
+        self.events.append("gateway.call")
+        self.calls.append((envelope, now))
+        if self.error is not None:
+            raise self.error
+        return self.verdict
+
+
+class GatewayDownstream:
+    STAGES = ("broker",)
+
+    def __init__(self, events):
+        self.events = events
+        self.calls = 0
+        self.received = None
+
+    def proceed(self, intent, approval, decision, gateway_decision):
+        self.events.append("broker.call")
+        self.calls += 1
+        self.received = (intent, approval, decision, gateway_decision)
+        return ("broker-reached", intent)
+
+
+class PolicyProceedAdapter:
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+
+    def proceed(self, intent, approval, decision):
+        return self.wrapped(intent, approval, decision)
+
+
+def invoke_gateway_gate(intent, approval, decision, gateway, envelope, broker, *, now=FIXED_NOW):
+    return run_gateway_gate(
+        intent, approval, decision, gateway, envelope,
+        now=now, proceed=broker.proceed,
+    )
+
+
+class GatewayGateTests(unittest.TestCase):
+    def test_matching_slow_allow_reaches_broker_once_with_ordered_trace(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, _evaluated):
+            events = []
+            gateway = FakeGateway(events)
+            broker = GatewayDownstream(events)
+            envelope = gateway_envelope(intent)
+
+            def proceed_to_gateway(gate_intent, gate_approval, gate_decision):
+                self.assertIs(gate_intent, intent)
+                return invoke_gateway_gate(
+                    gate_intent, gate_approval, gate_decision, gateway, envelope, broker
+                )
+
+            marker, passed = invoke_policy_gate(
+                intent, approval, policy, engine_intent, staged_change,
+                PolicyProceedAdapter(proceed_to_gateway),
+            )
+            self.assertEqual(marker, "broker-reached")
+            self.assertIs(passed, intent)
+            self.assertEqual(events, ["gateway.call", "broker.call"])
+            self.assertEqual(broker.calls, 1)
+            self.assertIs(gateway.calls[0][0], envelope)
+            self.assertIsNotNone(gateway.calls[0][1].tzinfo)
+            received_intent, _approval, received_decision, gateway_decision = broker.received
+            self.assertIs(received_intent, intent)
+            self.assertEqual(received_decision["effect"], "allow")
+            self.assertEqual(received_decision["staged_change_digest"], intent.staged_change_digest)
+            self.assertIsInstance(gateway_decision, GatewayDecision)
+            self.assertIs(gateway_decision.path, GatewayPath.SLOW)
+            self.assertIs(gateway_decision.allowed, True)
+
+    def test_deny_degraded_and_fast_outputs_stop_before_broker(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            cases = {
+                "slow-deny": GatewayDecision(GatewayPath.SLOW, False, ("tainted-content",)),
+                "degraded-deny": GatewayDecision(GatewayPath.DEGRADED, False, ("write-or-unknown-denied",)),
+                "degraded-allow": GatewayDecision(GatewayPath.DEGRADED, True, ("read-only-allowlist",)),
+                "fast-allow": GatewayDecision(GatewayPath.FAST, True, ("internal-read-only",)),
+            }
+            for label, verdict in cases.items():
+                with self.subTest(gateway=label):
+                    events = []
+                    gateway = FakeGateway(events, verdict=verdict)
+                    broker = GatewayDownstream(events)
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway has not authorized slow path$",
+                    ):
+                        invoke_gateway_gate(
+                            intent, approval, evaluated, gateway,
+                            gateway_envelope(intent), broker,
+                        )
+                    self.assertEqual(events, ["gateway.call"])
+                    self.assertEqual(broker.calls, 0)
+
+    def test_malformed_gateway_output_stops_before_broker(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            malformed = (
+                None, "allow", {"path": "slow", "allowed": True},
+                GatewayDecision(GatewayPath.SLOW, "yes", ("write-or-unknown-operation",)),
+                GatewayDecision("slow", True, ("write-or-unknown-operation",)),
+                GatewayDecision(GatewayPath.SLOW, True, ["write-or-unknown-operation"]),
+            )
+            for verdict in malformed:
+                with self.subTest(verdict=repr(verdict)):
+                    events = []
+                    gateway = FakeGateway(events, verdict=verdict)
+                    broker = GatewayDownstream(events)
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway has not authorized slow path$",
+                    ):
+                        invoke_gateway_gate(
+                            intent, approval, evaluated, gateway,
+                            gateway_envelope(intent), broker,
+                        )
+                    self.assertEqual(events, ["gateway.call"])
+                    self.assertEqual(broker.calls, 0)
+
+    def test_raising_gateway_fails_closed_without_leak(self):
+        canary = "GATEWAY-CANARY-SECRET"
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            events = []
+            gateway = FakeGateway(events, error=RuntimeError(f"gateway blew up: {canary}"))
+            broker = GatewayDownstream(events)
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: gateway invocation failed$",
+            ) as raised:
+                invoke_gateway_gate(
+                    intent, approval, evaluated, gateway,
+                    gateway_envelope(intent), broker,
+                )
+            self.assertNotIn(canary, str(raised.exception))
+            self.assertEqual(events, ["gateway.call"])
+            self.assertEqual(broker.calls, 0)
+
+    def test_mismatched_envelope_stops_before_gateway_call(self):
+        canary = "ENVELOPE-CANARY-SECRET"
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            almost = gateway_envelope(intent)
+            mismatched = (
+                None, "not-a-mapping", {},
+                dict(almost, intent={"operation": "merge_pull_request"}),
+                dict(almost, intent={"operation": canary}),
+                dict(almost, payload={"content_digest": "sha256:" + "f" * 64}),
+                dict(almost, payload={"content_digest": canary}),
+                {key: value for key, value in almost.items() if key != "payload"},
+            )
+            for envelope in mismatched:
+                with self.subTest(envelope=repr(envelope)[:60]):
+                    events = []
+                    gateway = FakeGateway(events)
+                    broker = GatewayDownstream(events)
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway envelope mismatch$",
+                    ) as raised:
+                        invoke_gateway_gate(intent, approval, evaluated, gateway, envelope, broker)
+                    self.assertNotIn(canary, str(raised.exception))
+                    self.assertEqual(events, [])
+                    self.assertEqual(broker.calls, 0)
+
+    def test_stale_decision_and_bad_wiring_stop_before_gateway_call(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            stale = dict(evaluated, expires_at=format_time(FIXED_NOW - timedelta(seconds=1)))
+            events = []
+            with self.assertRaisesRegex(ContractValidationError, "^decision: expired$"):
+                invoke_gateway_gate(
+                    intent, approval, stale, FakeGateway(events),
+                    gateway_envelope(intent), GatewayDownstream(events),
+                )
+            self.assertEqual(events, [])
+            for decision in (None, "not-a-decision"):
+                with self.subTest(decision=repr(decision)):
+                    events = []
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: decision is missing$",
+                    ):
+                        invoke_gateway_gate(
+                            intent, approval, decision, FakeGateway(events),
+                            gateway_envelope(intent), GatewayDownstream(events),
+                        )
+                    self.assertEqual(events, [])
+            for gateway in (None, "gateway"):
+                with self.subTest(gateway=repr(gateway)):
+                    events = []
+                    broker = GatewayDownstream(events)
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway is invalid$",
+                    ):
+                        invoke_gateway_gate(
+                            intent, approval, evaluated, gateway,
+                            gateway_envelope(intent), broker,
+                        )
+                    self.assertEqual(events, [])
+                    self.assertEqual(broker.calls, 0)
+            for now in (None, datetime(2026, 9, 29, 12, 0, 0)):
+                with self.subTest(now=repr(now)):
+                    events = []
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: clock is invalid$",
+                    ):
+                        invoke_gateway_gate(
+                            intent, approval, evaluated, FakeGateway(events),
+                            gateway_envelope(intent), GatewayDownstream(events), now=now,
+                        )
+                    self.assertEqual(events, [])
+            events = []
+            broker = GatewayDownstream(events)
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: downstream step is invalid$",
+            ):
+                run_gateway_gate(
+                    intent, approval, evaluated, FakeGateway(events),
+                    gateway_envelope(intent), now=FIXED_NOW, proceed=None,
+                )
+            self.assertEqual(events, [])
+            self.assertEqual(broker.calls, 0)
+            with self.assertRaisesRegex(
+                ControlledPublicationError, "^controlled publication: intent is invalid$"
+            ):
+                invoke_gateway_gate(
+                    None, approval, evaluated, FakeGateway(events),
+                    gateway_envelope(intent), GatewayDownstream(events),
+                )
+            with self.assertRaisesRegex(
+                ControlledPublicationError, "^controlled publication: approval is missing$"
+            ):
+                invoke_gateway_gate(
+                    intent, None, evaluated, FakeGateway(events),
+                    gateway_envelope(intent), GatewayDownstream(events),
+                )
 
 
 if __name__ == "__main__":

@@ -1,10 +1,13 @@
-"""Controlled-publication gates: fresh approval, then local policy evaluation.
+"""Controlled-publication gates: fresh approval, local policy, gateway order.
 
-The second gate invokes the existing deterministic Policy Engine itself with
-the exact caller-provided approval, staged change and seed-bound intent. It
-does not accept cached/caller-supplied decisions or call gateway, broker or
-provider code; downstream work is exposed only through an injected
-``proceed`` callable after the fresh engine result passes validation.
+The approval gate admits only a caller-provided fresh approval bound to the
+exact seed-bound intent. The policy gate evaluates that exact approval
+through the existing deterministic Policy Engine itself and never accepts a
+caller-supplied decision. The gateway gate invokes the injected gateway with
+an envelope bound to the same intent and admits only a matching slow-allow
+before the broker step. No gate calls policy, gateway, broker or provider
+code beyond its own narrow collaborator: each downstream step runs only via
+an injected ``proceed`` callable after every check passes.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Any, Callable, TypeVar
 
 from .authority import DeterministicPolicy, check_decision_usable, check_intent_approved
 from .digests import sha256_digest
+from .gateway import GatewayDecision, GatewayPath
 from .publication_seed import PublicationIntent
 
 
@@ -145,6 +149,68 @@ def run_policy_gate(
         raise ControlledPublicationError("controlled publication: decision policy version mismatch")
     check_decision_usable(decision, now=moment)
     return proceed(intent, approval, decision)
+
+
+def run_gateway_gate(
+    intent: PublicationIntent,
+    approval: Any,
+    decision: Any,
+    gateway: Any,
+    envelope: Any,
+    *,
+    now: datetime,
+    proceed: Callable[[PublicationIntent, Any, dict, GatewayDecision], T],
+) -> T:
+    """Pass the approved intent to broker only on a matching gateway slow-allow.
+
+    The envelope must be bound to the same seed-bound intent before the
+    gateway is invoked, and the gateway itself is invoked here — a
+    caller-supplied verdict is never accepted. Only a genuine slow-allow
+    reaches the downstream step, so no broker action is reachable without an
+    exact gateway allow for this publication request. A deny, degraded,
+    malformed or mismatched envelope or output stops the path with zero
+    broker calls. Failures carry stable messages without envelope, decision,
+    approval, intent or digest values.
+    """
+
+    if not callable(proceed):
+        raise ControlledPublicationError("controlled publication: downstream step is invalid")
+    if not isinstance(intent, PublicationIntent):
+        raise ControlledPublicationError("controlled publication: intent is invalid")
+    if not isinstance(approval, dict):
+        raise ControlledPublicationError("controlled publication: approval is missing")
+    if not isinstance(decision, dict):
+        raise ControlledPublicationError("controlled publication: decision is missing")
+    if not callable(gateway):
+        raise ControlledPublicationError("controlled publication: gateway is invalid")
+    moment = _require_clock(now)
+    check_decision_usable(decision, now=moment)
+    if not isinstance(envelope, dict):
+        raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
+    if not isinstance(envelope.get("intent"), dict) or envelope["intent"].get(
+        "operation"
+    ) != "publish_pull_request":
+        raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
+    if not isinstance(envelope.get("payload"), dict) or envelope["payload"].get(
+        "content_digest"
+    ) != intent.staged_change_digest:
+        raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
+    try:
+        gateway_decision = gateway(envelope, now=moment)
+    except Exception:
+        raise ControlledPublicationError(
+            "controlled publication: gateway invocation failed"
+        ) from None
+    if (
+        not isinstance(gateway_decision, GatewayDecision)
+        or gateway_decision.allowed is not True
+        or gateway_decision.path is not GatewayPath.SLOW
+        or not isinstance(gateway_decision.reason_codes, tuple)
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: gateway has not authorized slow path"
+        )
+    return proceed(intent, approval, decision, gateway_decision)
 
 
 def _require_clock(now: Any) -> datetime:

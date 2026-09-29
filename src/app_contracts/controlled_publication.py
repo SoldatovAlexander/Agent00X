@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar
 
 from .authority import check_decision_usable, check_intent_approved
+from .digests import sha256_digest
 from .publication_seed import PublicationIntent
 
 
@@ -58,20 +59,24 @@ def run_policy_gate(
     intent: PublicationIntent,
     approval: Any,
     decision: Any,
+    engine_intent: Any,
     *,
     now: datetime,
     proceed: Callable[[PublicationIntent, Any, dict], T],
 ) -> T:
     """Pass the approved intent downstream only with a fresh matching decision.
 
-    The approval itself is re-verified here — it must be fresh and its
-    process, repository and staged-digest bindings must equal the same
-    seed-bound intent — so entering this gate directly can never smuggle a
-    stale or foreign approval past the approval boundary. The decision
-    effect, operation, repository and staged digest are then verified against
-    the same intent, and its allow lifetime is verified through the existing
-    decision-use contract, all before the downstream step runs. A stale,
-    mismatched or deny approval or decision stops the path with zero
+    The approval itself is re-verified here — it must be fresh, its process,
+    repository and staged-digest bindings must equal the same seed-bound
+    intent, and its identity and intent digest must equal the exact engine
+    intent the decision was evaluated against — so entering this gate
+    directly can never smuggle a stale or foreign approval past the approval
+    boundary. The engine intent itself is bound back to the seed intent, and
+    the approval operation and policy version are bound to the decision. The
+    decision effect, operation, repository and staged digest are then verified
+    against the same intent, and its allow lifetime is verified through the
+    existing decision-use contract, all before the downstream step runs. A
+    stale, mismatched or deny approval or decision stops the path with zero
     downstream calls. Failures carry stable messages without decision,
     approval, intent or digest values.
     """
@@ -84,12 +89,39 @@ def run_policy_gate(
         raise ControlledPublicationError("controlled publication: approval is missing")
     if not isinstance(decision, dict):
         raise ControlledPublicationError("controlled publication: decision is missing")
+    if not isinstance(engine_intent, dict):
+        raise ControlledPublicationError("controlled publication: engine intent is missing")
     moment = _require_clock(now)
     if _require_approval_expiry(approval) <= moment:
         raise ControlledPublicationError("controlled publication: approval expired")
     for field in ("process_id", "repository_id", "staged_change_digest"):
         if approval.get(field) != getattr(intent, field):
             raise ControlledPublicationError("controlled publication: approval binding mismatch")
+    try:
+        bound_intent_digest = sha256_digest(engine_intent)
+    except Exception:
+        raise ControlledPublicationError(
+            "controlled publication: engine intent is invalid"
+        ) from None
+    if (
+        not isinstance(approval.get("approved_intent_digest"), str)
+        or approval["approved_intent_digest"] != bound_intent_digest
+    ):
+        raise ControlledPublicationError("controlled publication: approval intent binding mismatch")
+    engine_approval_id = engine_intent.get("approval_id")
+    if (
+        not isinstance(approval.get("approval_id"), str)
+        or not approval["approval_id"]
+        or approval["approval_id"] != engine_approval_id
+    ):
+        raise ControlledPublicationError("controlled publication: approval identity mismatch")
+    for field in ("process_id", "repository_id", "staged_change_digest", "idempotency_key"):
+        if engine_intent.get(field) != getattr(intent, field):
+            raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if approval.get("operation") != decision.get("operation"):
+        raise ControlledPublicationError("controlled publication: approval decision binding mismatch")
+    if approval.get("policy_version") != decision.get("policy_version"):
+        raise ControlledPublicationError("controlled publication: approval decision binding mismatch")
     if decision.get("operation") != "publish_pull_request":
         raise ControlledPublicationError("controlled publication: decision operation mismatch")
     if decision.get("repository_id") != intent.repository_id:

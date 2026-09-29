@@ -22,8 +22,10 @@ publication boundary, sandbox-профили и отдельные GitHub App sp
 закрыты локальными fail-closed regression. Batch AA добавил composed local
 harness для approval → policy → manifest → Broker → journal → recovery на
 mock/in-memory/ephemeral doubles, а Batch AB закрепил gateway-before-broker
-порядок в компоненте. Это не production orchestrator и не доказанная сквозная
-безопасность или external publication.
+порядок в компоненте. Batch AD добавил deterministic twin-workspace и
+same-workspace interleaving проверки подготовки. Это не production
+orchestrator, доказательство реальной параллельной записи, filesystem locking,
+сквозной безопасности или external publication.
 
 Единственный актуальный статус реализации и границ доказательств:
 [документ 27](docs/27-implementation-status.md). Порядок работ R0—R5:
@@ -35,7 +37,7 @@ mock/in-memory/ephemeral doubles, а Batch AB закрепил gateway-before-br
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Обычный прогон на 2026-09-14: 451 тест, все прошли, один opt-in Docker test
+Обычный прогон на 2026-09-29: 465 тестов, все прошли, один opt-in Docker test
 пропущен. Результат подтверждает только покрытые тестами свойства на текущей
 машине. Подробнее — в документе 27.
 

@@ -95,8 +95,10 @@ manifest, Broker, journal и recovery образуют единую безопа
 Пункты 1–2 устранены на уровне локальных unit-regression (см. раздел 9).
 Batch AA также проверяет composed local path и recovery на mock/in-memory/
 ephemeral doubles, но production orchestrator, реальная publication chain и
-её external proof отсутствуют (см. п.3 и открытые границы раздела 9). До
-проверок пунктов 4–5 нельзя обещать непробиваемую изоляцию или полный
+её external proof отсутствуют. Batch AD проверяет deterministic twin-workspace
+preparation и последовательный stale-manifest отказ, но не реальные
+параллельные writers и filesystem locking (см. п.3 и открытые границы раздела
+9). До проверок пунктов 4–5 нельзя обещать непробиваемую изоляцию или полный
 исторический отчёт.
 
 ## 7. Текущие этапы
@@ -104,7 +106,7 @@ ephemeral doubles, но production orchestrator, реальная publication ch
 | Этап из плана 1.1 | Статус | Ближайший проверяемый результат |
 |---|---|---|
 | R0: наблюдение и память | Концепция готова | JSON Schema, валидаторы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary |
-| R1: целостность и фиксация действий | Частично проверено | Нарушения 1–2 закрыты локальными regression; composed local harness и gateway-before-broker enforcement приняты, но production orchestration и external proof отсутствуют |
+| R1: целостность и фиксация действий | Частично проверено | Нарушения 1–2 закрыты локальными regression; composed local harness, gateway-before-broker enforcement и deterministic workspace interleaving приняты, но production orchestration, real concurrent-writer evidence и external proof отсутствуют |
 | R2: сквозной исполнитель | Не начат | Один LLM Worker с remote snapshot и controlled publication |
 | R3: исторический Observer | Не начат | Отчёты по сохранённой истории, причинности и пробелам |
 | R4: учебная ветка | Не начат | Simulation branch без переноса старых прав и external writes |
@@ -142,7 +144,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 |---|---|---|---|
 | Базовые контракты | 16 исходных JSON Schema в `schemas/`, fixtures, `digests.py`, `validator.py`, `state_machine.py` | История `git log`, chain/contract-тесты | Реализовано и unit-tested |
 | Observer R0-контракты | `observation-event`, `checkpoint`, `learning-correction`, `memory-summary` schemas + `test_observer_contracts.py` (итого 20 схем, 19 test-файлов) | `ea4fd5a` (EXP-004) и follow-up commits, включая `f734226` (EXP-008) | Реализовано и unit-tested на уровне контрактов; collector, отчёты и учебные ветки отсутствуют |
-| Reference preparation и manifest binding | `repository_process.py`, `PreparedChange.verified_contents`, regression-тесты подмены | `e98cce3` (EXP-002), принят Control Plane | Unit-tested; нарушение п.1 раздела 6 имеет remediation evidence, сверка статуса — EXP-242 |
+| Reference preparation и manifest binding | `repository_process.py`, `PreparedChange.verified_contents`, regression-тесты подмены и workspace interleaving | `e98cce3` (EXP-002), `ff79ab6`—`9a31d51` (Batch AD) | Unit-tested; deterministic twin-workspace и stale-manifest cases приняты; real concurrent writers и filesystem locks не доказаны |
 | Policy/authority gate | `authority.py` (`DeterministicPolicy`, привязка digest), regression-тесты подмены | `274fbdc` (EXP-003), принят Control Plane | Unit-tested; нарушение п.2 раздела 6 имеет remediation evidence, сверка статуса — EXP-242 |
 | Durable state и mock publication | `runtime_store.py` (SQLite transitions/audit), `publication.py` (journal/reconciliation), mock boundary, recovery-тесты | Batch-коммиты EXP-010—EXP-015 и далее (см. `git log`) | Реализовано и unit-tested, включая негативные и recovery-сценарии |
 | Gateway/Broker/Actuator boundary hardening | Fail-closed проверки типов, digest, expiry, idempotency и привязок в `gateway.py`, `broker.py`, `actuator.py`, `github_actuator.py`, `mock_github.py`, `github_app.py` + regression-тесты, включая gateway-before-broker preflight | Batch-коммиты EXP-021—EXP-230 и EXP-246—EXP-261 (см. `git log`) | Реализовано и unit-tested локально; production Authority Plane не связан |
@@ -152,6 +154,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 Открытые границы сквозной цепи (без изменений по существу, см. раздел 6):
 п.1–2 имеют remediation evidence (сверка — EXP-242); п.3 (неатомарная GitHub-публикация), п.4 (изоляция local backend/Docker) и п.5 (неполнота истории) остаются открытыми; локальный composed harness не создаёт production automatic chain approval → policy → manifest → Broker → journal → recovery; Docker-интеграция — только opt-in.
 
-Ближайшее проверяемое свойство: соответствие разделов 1–8 настоящего inventory
-(предмет EXP-242). Настоящий inventory не является security certification
-и не доказывает external publication.
+Batch AD обновил deterministic local workspace evidence (EXP-272—279).
+Непроверенными остаются реальные parallel writers, filesystem locking,
+crash safety и backend isolation. Настоящий inventory не является security
+certification и не доказывает external publication.

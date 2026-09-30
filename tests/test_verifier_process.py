@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.executor import (
     ExecutionError,
+    IndependentVerifier,
     VerifierInput,
     VerifierResult,
     VerifierVerdict,
@@ -18,6 +19,7 @@ from app_contracts.verifier_process import (
     MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS,
     MAX_VERIFIER_RESPONSE_BYTES,
     VERIFIER_PROCESS_SCHEMA_VERSION,
+    SubprocessVerifier,
     VerifierProcessConfig,
     VerifierProcessError,
     VerifierProcessOutcome,
@@ -1259,6 +1261,94 @@ class VerifierOutcomeClassificationTests(unittest.TestCase):
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
         classified = run_verifier_command(config, request)
         self.assertNotIn(canary, repr(classified))
+
+
+ECHOING_VERIFIER_SCRIPT = (
+    "import hashlib, json, sys; "
+    "raw = sys.stdin.buffer.read(); "
+    "req = json.loads(raw.decode('utf-8'))['verifier_input']; "
+    "result = {'process_id': req['process_id'], 'base_commit': req['base_commit'], "
+    "'snapshot_tree_digest': req['snapshot_tree_digest'], "
+    "'replay_result_digest': req['replay_result_digest'], "
+    "'verifier_id': 'local-test-verifier', 'patch_digest': req['patch_digest'], "
+    "'evidence_digest': req['evidence_digest'], "
+    "'verification_digest': req['verification_digest'], "
+    "'verified_contents_digest': req['verified_contents_digest'], "
+    "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
+    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
+    "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
+)
+
+
+def expected_adapter_result() -> VerifierResult:
+    prepared = valid_verifier_input()
+    return VerifierResult(
+        process_id=prepared.process_id,
+        base_commit=prepared.base_commit,
+        snapshot_tree_digest=prepared.snapshot_tree_digest,
+        replay_result_digest=prepared.replay_result_digest,
+        verifier_id="local-test-verifier",
+        patch_digest=prepared.patch_digest,
+        evidence_digest=prepared.evidence_digest,
+        verification_digest=prepared.verification_digest,
+        verified_contents_digest=prepared.verified_contents_digest,
+        verdict=VerifierVerdict.PASS,
+    )
+
+
+class SubprocessVerifierAdapterTests(unittest.TestCase):
+    def test_adapter_satisfies_verifier_protocol_with_typed_result(self):
+        adapter = SubprocessVerifier(
+            valid_process_config(
+                executable=sys.executable,
+                argv=(sys.executable, "-c", ECHOING_VERIFIER_SCRIPT),
+            )
+        )
+        self.assertIsInstance(adapter, IndependentVerifier)
+        result = adapter.verify(valid_verifier_input())
+        self.assertIsInstance(result, VerifierResult)
+        self.assertEqual(result, expected_adapter_result())
+        self.assertIs(result.verdict, VerifierVerdict.PASS)
+
+    def test_malformed_config_and_input_fail_before_spawn(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            counter = str(Path(directory) / "starts.txt")
+            script = f"open({counter!r}, 'a').write('started\\n');"
+            with self.assertRaisesRegex(
+                VerifierProcessError, "^verifier process: command config is invalid$"
+            ):
+                SubprocessVerifier("not-a-config")
+            adapter = SubprocessVerifier(
+                valid_process_config(
+                    executable=sys.executable, argv=(sys.executable, "-c", script)
+                )
+            )
+            with self.assertRaisesRegex(
+                VerifierProcessError, "^verifier process: request shape is invalid$"
+            ):
+                adapter.verify({"verifier_input": "forged"})
+            self.assertFalse(Path(counter).exists())
+
+    def test_failing_child_propagates_fail_closed_without_result(self):
+        canary = "ADAPTER-FAILURE-CANARY"
+        script = (
+            "import sys; "
+            f"sys.stderr.write({canary!r}); "
+            "sys.exit(3);"
+        )
+        adapter = SubprocessVerifier(
+            valid_process_config(
+                executable=sys.executable, argv=(sys.executable, "-c", script)
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: child exit failed$"
+        ) as raised:
+            adapter.verify(valid_verifier_input())
+        self.assertNotIn(canary, str(raised.exception))
 
 
 if __name__ == "__main__":

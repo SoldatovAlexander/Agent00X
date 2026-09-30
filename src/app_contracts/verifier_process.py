@@ -117,6 +117,30 @@ class VerifierProcessError(ValueError):
     """A verifier process record is malformed or unsupported."""
 
 
+class SubprocessVerifier:
+    """An ``IndependentVerifier`` carried out by one bounded local child.
+
+    The prepared input crosses the process boundary only as canonical bytes;
+    the returned result is freshly parsed from child output and bound to the
+    exact request. Process failures propagate as stable errors for the
+    orchestration to map fail-closed; they are never converted into allow
+    results here, and in-process verifier semantics are untouched.
+    """
+
+    def __init__(self, config: object, *, environ: object = None) -> None:
+        if type(config) is not VerifierProcessConfig:
+            raise VerifierProcessError("verifier process: command config is invalid")
+        self._config = config
+        self._child_environ = verifier_child_environ(environ)
+
+    def verify(self, prepared: VerifierInput) -> VerifierResult:
+        request = VerifierProcessRequest.from_verifier_input(prepared)
+        response = run_verifier_command(
+            self._config, request, environ=self._child_environ
+        )
+        return bind_verifier_response(request, response)
+
+
 def verifier_child_environ(extra: object = None) -> dict[str, str]:
     """Build the minimal explicit environment for one verifier child.
 

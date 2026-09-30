@@ -15,7 +15,10 @@ from app_contracts.executor import (
     VerifierVerdict,
 )
 from app_contracts.verifier_process import (
+    MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS,
+    MAX_VERIFIER_RESPONSE_BYTES,
     VERIFIER_PROCESS_SCHEMA_VERSION,
+    VerifierProcessConfig,
     VerifierProcessError,
     VerifierProcessRequest,
     VerifierProcessResponse,
@@ -807,6 +810,104 @@ class VerifierResponseBindingTests(unittest.TestCase):
             VerifierProcessError, "^verifier process: response shape is invalid$"
         ):
             bind_verifier_response(request, {"verdict": canary})
+
+
+def valid_process_config(**overrides):
+    fields = {
+        "executable": "/usr/local/bin/fixture-verifier",
+        "argv": ("/usr/local/bin/fixture-verifier", "--verify"),
+        "timeout_seconds": 30,
+        "max_stdout_bytes": 1_000_000,
+        "max_stderr_bytes": 100_000,
+    }
+    fields.update(overrides)
+    return VerifierProcessConfig(**fields)
+
+
+class VerifierProcessConfigTests(unittest.TestCase):
+    def test_config_is_immutable_with_exact_bounded_shape(self):
+        config = valid_process_config()
+        self.assertEqual(
+            set(VerifierProcessConfig.__dataclass_fields__),
+            {
+                "executable", "argv", "timeout_seconds",
+                "max_stdout_bytes", "max_stderr_bytes",
+            },
+        )
+        with self.assertRaises(FrozenInstanceError):
+            config.timeout_seconds = 60  # type: ignore[misc]
+        self.assertEqual(config.argv, ("/usr/local/bin/fixture-verifier", "--verify"))
+
+    def test_config_accepts_boundary_values(self):
+        boundary = valid_process_config(
+            timeout_seconds=1, max_stdout_bytes=1, max_stderr_bytes=1
+        )
+        self.assertEqual(boundary.timeout_seconds, 1)
+        ceiling = valid_process_config(
+            timeout_seconds=MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS,
+            max_stdout_bytes=MAX_VERIFIER_RESPONSE_BYTES,
+            max_stderr_bytes=MAX_VERIFIER_RESPONSE_BYTES,
+        )
+        self.assertEqual(ceiling.timeout_seconds, MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS)
+
+    def test_malformed_executable_is_rejected_without_echo(self):
+        canary = "EXECUTABLE-CANARY-SECRET"
+        for executable in (
+            None, 42, "", "  ", "relative/verifier", "verifier",
+            "/usr/local/bin/has space", f"/tmp/{canary}\n",
+            "/trailing-slash/ ",
+        ):
+            with self.subTest(executable=repr(executable)[:40]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: command executable is invalid$",
+                ) as raised:
+                    valid_process_config(executable=executable)
+                self.assertNotIn(canary, str(raised.exception))
+
+    def test_malformed_argv_is_rejected_without_echo(self):
+        canary = "ARGV-CANARY-SECRET"
+        for argv in (
+            None, "single-string", [], (), (None,), ("ok", 42), ("ok", ""),
+            (canary, None),
+        ):
+            with self.subTest(argv=repr(argv)[:40]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: command arguments are invalid$",
+                ) as raised:
+                    valid_process_config(argv=argv)
+                self.assertNotIn(canary, str(raised.exception))
+
+    def test_malformed_timeout_and_limits_are_rejected(self):
+        for timeout in (None, 0, -1, True, "30", 30.5, MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS + 1):
+            with self.subTest(timeout=repr(timeout)):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: command timeout is invalid$",
+                ):
+                    valid_process_config(timeout_seconds=timeout)
+        for field in ("max_stdout_bytes", "max_stderr_bytes"):
+            for limit in (None, 0, -5, True, "1024", MAX_VERIFIER_RESPONSE_BYTES + 1):
+                with self.subTest(field=field, limit=repr(limit)):
+                    with self.assertRaisesRegex(
+                        VerifierProcessError,
+                        "^verifier process: response limits are invalid$",
+                    ):
+                        valid_process_config(**{field: limit})
+
+    def test_process_layer_spawns_no_subprocess_yet(self):
+        import ast
+
+        source = Path(__file__).resolve().parents[1] / "src" / "app_contracts" / "verifier_process.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").lower())
+        self.assertTrue({"subprocess", "os", "pty", "multiprocessing"}.isdisjoint(imported))
 
 
 if __name__ == "__main__":

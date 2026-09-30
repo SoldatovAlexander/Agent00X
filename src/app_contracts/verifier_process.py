@@ -28,6 +28,8 @@ MAX_VERIFIER_REQUEST_CONTENT_BYTES = 100_000
 MAX_VERIFIER_REQUEST_CONTENTS_BYTES = 1_000_000
 MAX_VERIFIER_REQUEST_BYTES = 2_000_000
 MAX_VERIFIER_REQUEST_COMMAND_ARGS = 64
+MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS = 86_400
+MAX_VERIFIER_RESPONSE_BYTES = 2_000_000
 
 _REQUEST_FIELDS = frozenset({"schema_version", "verifier_input"})
 
@@ -109,6 +111,52 @@ _STR_LIST_FIELDS = frozenset({"declared_change_paths", "test_command"})
 
 class VerifierProcessError(ValueError):
     """A verifier process record is malformed or unsupported."""
+
+
+@dataclass(frozen=True)
+class VerifierProcessConfig:
+    """Fixed adapter config for one local verifier child command.
+
+    The executable and argument vector are explicitly configured and never
+    derived from the task payload. Only shape is validated here; existence
+    of the executable is a launch-time concern handled separately.
+    """
+
+    executable: str
+    argv: tuple[str, ...]
+    timeout_seconds: int
+    max_stdout_bytes: int
+    max_stderr_bytes: int
+
+    def __post_init__(self) -> None:
+        executable = self.executable
+        if (
+            type(executable) is not str
+            or not executable
+            or executable != executable.strip()
+            or not executable.startswith("/")
+            or any(character.isspace() for character in executable)
+            or any(ord(character) < 32 or ord(character) == 127 for character in executable)
+        ):
+            raise VerifierProcessError("verifier process: command executable is invalid")
+        argv = self.argv
+        if (
+            type(argv) is not tuple
+            or not argv
+            or any(type(argument) is not str or not argument for argument in argv)
+        ):
+            raise VerifierProcessError("verifier process: command arguments are invalid")
+        if (
+            type(self.timeout_seconds) is not int
+            or not 1 <= self.timeout_seconds <= MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS
+        ):
+            raise VerifierProcessError("verifier process: command timeout is invalid")
+        for limit in (self.max_stdout_bytes, self.max_stderr_bytes):
+            if (
+                type(limit) is not int
+                or not 1 <= limit <= MAX_VERIFIER_RESPONSE_BYTES
+            ):
+                raise VerifierProcessError("verifier process: response limits are invalid")
 
 
 @dataclass(frozen=True)

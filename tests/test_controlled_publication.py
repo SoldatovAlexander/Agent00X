@@ -1928,5 +1928,87 @@ class InvalidExecutionEvidenceTests(unittest.TestCase):
                                 with self.assertRaises(KeyError):
                                     journal.get(intent.process_id)
 
+
+class AuthorityBindingMatrixTests(unittest.TestCase):
+    def test_stale_and_mismatched_approval_never_reaches_gateway_broker_journal_or_mock(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, evaluated):
+            cases = (
+                ("expired", {"expires_at": format_time(FIXED_NOW - timedelta(seconds=1))},
+                 ControlledPublicationError,
+                 "^controlled publication: approval expired$"),
+                ("repository", {"repository_id": "repository-foreign"},
+                 ContractValidationError, "^decision: not allow$"),
+                ("operation", {"operation": "merge_pull_request"},
+                 ContractValidationError, "^decision: not allow$"),
+                ("staged-digest", {"staged_change_digest": "sha256:" + "f" * 64},
+                 ContractValidationError, "^decision: not allow$"),
+            )
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    gateway = FakeGateway(gateway_events)
+                    loader_calls = []
+                    for label, override, error_type, message in cases:
+                        with self.subTest(approval=label):
+                            with self.assertRaisesRegex(error_type, message):
+                                run_controlled_local_publication(
+                                    journal_seed_for(intent), intent,
+                                    dict(approval, **override), policy, engine_intent,
+                                    lambda _seed: loader_calls.append(label) or staged_change,
+                                    "decision-local-001", gateway,
+                                    gateway_envelope(intent), broker, matching_grant(intent),
+                                    journal, endpoint, actuator_id="test-actuator",
+                                    now=FIXED_NOW,
+                                )
+                            self.assertEqual(gateway_events, [])
+                            self.assertEqual(broker.opened_grants, [])
+                            self.assertEqual(len(endpoint._by_idempotency_key), 0)
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+                    self.assertEqual(loader_calls, ["repository", "operation", "staged-digest"])
+
+    def test_stale_or_mismatched_policy_result_stops_before_gateway_and_later_effects(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, evaluated):
+            cases = (
+                ("expired", {"expires_at": format_time(FIXED_NOW - timedelta(seconds=1))},
+                 ContractValidationError, "^decision: expired$"),
+                ("operation", {"operation": "merge_pull_request"},
+                 ControlledPublicationError,
+                 "^controlled publication: decision operation mismatch$"),
+                ("repository", {"repository_id": "repository-foreign"},
+                 ControlledPublicationError,
+                 "^controlled publication: decision repository mismatch$"),
+                ("staged-digest", {"staged_change_digest": "sha256:" + "f" * 64},
+                 ControlledPublicationError,
+                 "^controlled publication: decision digest mismatch$"),
+            )
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    gateway = FakeGateway(gateway_events)
+                    for label, override, error_type, message in cases:
+                        with self.subTest(decision=label):
+                            with patch.object(policy, "decide", return_value=dict(evaluated, **override)):
+                                with self.assertRaisesRegex(error_type, message):
+                                    run_controlled_local_publication(
+                                        journal_seed_for(intent), intent, approval,
+                                        policy, engine_intent, lambda _seed: staged_change,
+                                        "decision-local-001", gateway,
+                                        gateway_envelope(intent), broker,
+                                        matching_grant(intent), journal, endpoint,
+                                        actuator_id="test-actuator", now=FIXED_NOW,
+                                    )
+                            self.assertEqual(gateway_events, [])
+                            self.assertEqual(broker.opened_grants, [])
+                            self.assertEqual(len(endpoint._by_idempotency_key), 0)
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+
 if __name__ == "__main__":
     unittest.main()

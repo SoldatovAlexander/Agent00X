@@ -175,7 +175,7 @@ class VerifierProcessRecordTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             VerifierProcessError,
-            "^verifier process: request serialization failed$",
+            "^verifier process: request fields are invalid$",
         ) as raised:
             serialize_verifier_request(
                 VerifierProcessRequest.from_verifier_input(malformed_input)
@@ -469,6 +469,60 @@ class VerifierRequestBoundsTests(unittest.TestCase):
             serialize_verifier_request(oversized)
         valid = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
         self.assertLess(len(serialize_verifier_request(valid)), 100_000)
+
+    def test_wire_size_exact_boundary_is_accepted_and_next_byte_is_rejected(self):
+        from app_contracts.verifier_process import MAX_VERIFIER_REQUEST_BYTES
+
+        base_input = valid_verifier_input()
+        base_request = VerifierProcessRequest.from_verifier_input(base_input)
+        base_size = len(serialize_verifier_request(base_request))
+        process_id = base_input.process_id
+
+        def request_for_size(size: int) -> VerifierProcessRequest:
+            target_length = len(process_id) + size - base_size
+            return VerifierProcessRequest.from_verifier_input(
+                VerifierInput(**{**base_input.__dict__, "process_id": "x" * target_length})
+            )
+
+        exact = serialize_verifier_request(request_for_size(MAX_VERIFIER_REQUEST_BYTES))
+        self.assertEqual(len(exact), MAX_VERIFIER_REQUEST_BYTES)
+        self.assertTrue(parse_verifier_request(exact))
+
+        over = request_for_size(MAX_VERIFIER_REQUEST_BYTES + 1)
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request size exceeds limit$"
+        ):
+            serialize_verifier_request(over)
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request size exceeds limit$"
+        ):
+            parse_verifier_request(exact + b" ")
+
+    def test_all_request_strings_and_collections_are_bounded_before_serialization(self):
+        from app_contracts.verifier_process import MAX_VERIFIER_REQUEST_COMMAND_ARGS
+
+        base = valid_verifier_input().__dict__
+        oversized_inputs = (
+            {"declared_change_paths": tuple(f"{index}.py" for index in range(21))},
+            {"test_command": tuple("x" for _ in range(MAX_VERIFIER_REQUEST_COMMAND_ARGS + 1))},
+            {"test_command": ("x" * 3_000_000,)},
+            {"repository_id": "x" * 3_000_000},
+        )
+        for override in oversized_inputs:
+            with self.subTest(field=next(iter(override))):
+                request = VerifierProcessRequest.from_verifier_input(
+                    VerifierInput(**{**base, **override})
+                )
+                with self.assertRaises(VerifierProcessError):
+                    serialize_verifier_request(request)
+
+    def test_parser_rejects_oversized_input_before_decoding(self):
+        from app_contracts.verifier_process import MAX_VERIFIER_REQUEST_BYTES
+
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request size exceeds limit$"
+        ):
+            parse_verifier_request(b"\xff" * (MAX_VERIFIER_REQUEST_BYTES + 1))
 
     def test_limit_errors_never_reveal_oversized_contents(self):
         canary = "BOUNDS-CANARY-SECRET-CONTENTS"

@@ -27,6 +27,7 @@ MAX_VERIFIER_REQUEST_PATH_BYTES = 240
 MAX_VERIFIER_REQUEST_CONTENT_BYTES = 100_000
 MAX_VERIFIER_REQUEST_CONTENTS_BYTES = 1_000_000
 MAX_VERIFIER_REQUEST_BYTES = 2_000_000
+MAX_VERIFIER_REQUEST_COMMAND_ARGS = 64
 
 _REQUEST_FIELDS = frozenset({"schema_version", "verifier_input"})
 
@@ -183,18 +184,72 @@ def serialize_verifier_request(value: object) -> bytes:
 
 
 def _check_verifier_request_bounds(verifier_input: VerifierInput) -> None:
+    total_text_bytes = 0
+
+    def bounded_text(value: object) -> int:
+        nonlocal total_text_bytes
+        if type(value) is not str:
+            raise VerifierProcessError("verifier process: request fields are invalid")
+        # Check character count first: UTF-8 encoding can use at most four bytes
+        # per code point, and must never be attempted on an unbounded string.
+        if len(value) > MAX_VERIFIER_REQUEST_BYTES:
+            raise VerifierProcessError("verifier process: request size exceeds limit")
+        byte_count = len(value.encode("utf-8"))
+        total_text_bytes += byte_count
+        if total_text_bytes > MAX_VERIFIER_REQUEST_BYTES:
+            raise VerifierProcessError("verifier process: request size exceeds limit")
+        return byte_count
+
+    for field in _STR_FIELDS:
+        bounded_text(getattr(verifier_input, field))
+    for field in _OPTIONAL_STR_FIELDS:
+        value = getattr(verifier_input, field)
+        if value is not None:
+            bounded_text(value)
+    if verifier_input.evidence_origin != "local_test":
+        raise VerifierProcessError("verifier process: request fields are invalid")
+    if (
+        type(verifier_input.test_timeout_seconds) is not int
+        or not 1 <= verifier_input.test_timeout_seconds <= 86_400
+    ):
+        raise VerifierProcessError("verifier process: request fields are invalid")
+
+    paths = verifier_input.declared_change_paths
+    if type(paths) is not tuple or len(paths) > MAX_VERIFIER_REQUEST_FILES:
+        raise VerifierProcessError("verifier process: request size exceeds limit")
+    for path in paths:
+        if type(path) is not str or len(path) > MAX_VERIFIER_REQUEST_PATH_BYTES:
+            raise VerifierProcessError("verifier process: request path exceeds limit")
+        if bounded_text(path) > MAX_VERIFIER_REQUEST_PATH_BYTES:
+            raise VerifierProcessError("verifier process: request path exceeds limit")
+
+    command = verifier_input.test_command
+    if type(command) is not tuple or len(command) > MAX_VERIFIER_REQUEST_COMMAND_ARGS:
+        raise VerifierProcessError("verifier process: request size exceeds limit")
+    for argument in command:
+        bounded_text(argument)
+
     contents = verifier_input.verified_contents
+    if type(contents) is not tuple:
+        raise VerifierProcessError("verifier process: request fields are invalid")
     if len(contents) > MAX_VERIFIER_REQUEST_FILES:
         raise VerifierProcessError("verifier process: request file count exceeds limit")
     total_content_bytes = 0
     for entry in contents:
-        path_bytes = entry[0].encode("utf-8")
-        content_bytes = entry[1].encode("utf-8")
-        if len(path_bytes) > MAX_VERIFIER_REQUEST_PATH_BYTES:
+        if type(entry) is not tuple or len(entry) != 2:
+            raise VerifierProcessError("verifier process: request fields are invalid")
+        path, content = entry
+        if type(path) is not str or len(path) > MAX_VERIFIER_REQUEST_PATH_BYTES:
             raise VerifierProcessError("verifier process: request path exceeds limit")
-        if len(content_bytes) > MAX_VERIFIER_REQUEST_CONTENT_BYTES:
+        if type(content) is not str or len(content) > MAX_VERIFIER_REQUEST_CONTENT_BYTES:
             raise VerifierProcessError("verifier process: request content exceeds limit")
-        total_content_bytes += len(content_bytes)
+        path_bytes = bounded_text(path)
+        content_bytes = bounded_text(content)
+        if path_bytes > MAX_VERIFIER_REQUEST_PATH_BYTES:
+            raise VerifierProcessError("verifier process: request path exceeds limit")
+        if content_bytes > MAX_VERIFIER_REQUEST_CONTENT_BYTES:
+            raise VerifierProcessError("verifier process: request content exceeds limit")
+        total_content_bytes += content_bytes
         if total_content_bytes > MAX_VERIFIER_REQUEST_CONTENTS_BYTES:
             raise VerifierProcessError("verifier process: request contents exceed limit")
 
@@ -209,6 +264,8 @@ def parse_verifier_request(data: object) -> VerifierProcessRequest:
 
     if type(data) is not bytes:
         raise VerifierProcessError("verifier process: request encoding is invalid")
+    if len(data) > MAX_VERIFIER_REQUEST_BYTES:
+        raise VerifierProcessError("verifier process: request size exceeds limit")
     try:
         text = data.decode("utf-8")
     except (UnicodeDecodeError, ValueError):
@@ -250,6 +307,7 @@ def parse_verifier_request(data: object) -> VerifierProcessRequest:
         evidence_origin=raw_input["evidence_origin"],
         replay_result_digest=raw_input["replay_result_digest"],
     )
+    _check_verifier_request_bounds(verifier_input)
     return VerifierProcessRequest(version, verifier_input)
 
 

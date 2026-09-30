@@ -21,6 +21,7 @@ from app_contracts.authority import DeterministicPolicy, PolicyConfig
 from app_contracts.controlled_publication import (
     ControlledPublicationError,
     run_approval_gate,
+    run_broker_gate,
     run_gateway_gate,
     run_policy_gate,
 )
@@ -994,6 +995,294 @@ class GatewayGateTests(unittest.TestCase):
                     intent, None, evaluated, FakeGateway(events),
                     gateway_envelope(intent), GatewayDownstream(events),
                 )
+
+
+class FakeBrokerError(Exception):
+    pass
+
+
+class FakeChannel:
+    def __init__(self, endpoint_calls):
+        self.endpoint_calls = endpoint_calls
+
+    def publish_pull_request(self, request):
+        self.endpoint_calls.append(request)
+        return {"pull_request_id": 1}
+
+
+class FakeBroker:
+    def __init__(self):
+        self.opens = []
+        self.used_grants = set()
+
+    def open_github_publication_channel(self, credential_grant, actuator_request, *, now):
+        grant_id = credential_grant.get("credential_grant_id")
+        self.opens.append((credential_grant, actuator_request, now))
+        if grant_id in self.used_grants:
+            raise FakeBrokerError("credential grant already used")
+        self.used_grants.add(grant_id)
+        return FakeChannel([])
+
+
+def broker_actuator_request(intent: PublicationIntent, actuator_id="test-actuator") -> dict:
+    return {
+        "operation": "publish_pull_request",
+        "repository_id": intent.repository_id,
+        "actuator_id": actuator_id,
+        "staged_change_digest": intent.staged_change_digest,
+        "branch_namespace": intent.branch.split("/", 1)[0],
+        "idempotency_key": intent.idempotency_key,
+    }
+
+
+def matching_grant(intent: PublicationIntent, *, actuator_id="test-actuator") -> dict:
+    return {
+        "credential_grant_id": "grant-local-001",
+        "actuator_id": actuator_id,
+        "repository_id": intent.repository_id,
+        "operation": "publish_pull_request",
+        "request_digest": sha256_digest(broker_actuator_request(intent, actuator_id)),
+        "single_use": True,
+        "credential_class": "github-app-installation",
+        "expires_at": format_time(FIXED_NOW + timedelta(hours=1)),
+    }
+
+
+def slow_allow_decision():
+    return GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
+
+
+class BrokerDownstream:
+    def __init__(self, events):
+        self.events = events
+        self.calls = 0
+        self.received = None
+
+    def proceed(self, intent, approval, decision, gateway_decision, channel):
+        self.events.append("endpoint.ready")
+        self.calls += 1
+        self.received = (intent, approval, decision, gateway_decision, channel)
+        return ("channel-ready", intent)
+
+
+def invoke_broker_gate(intent, approval, decision, broker, grant, downstream,
+                       *, actuator_id="test-actuator", now=FIXED_NOW,
+                       gateway_decision=None):
+    return run_broker_gate(
+        intent, approval, decision, gateway_decision or slow_allow_decision(),
+        broker, grant, actuator_id=actuator_id, now=now, proceed=downstream.proceed,
+    )
+
+
+class BrokerGateTests(unittest.TestCase):
+    def test_matching_grant_opens_single_channel_with_zero_endpoint_calls(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            broker = FakeBroker()
+            downstream = BrokerDownstream(events := [])
+            marker, passed = invoke_broker_gate(
+                intent, approval, evaluated, broker, matching_grant(intent), downstream
+            )
+            self.assertEqual(marker, "channel-ready")
+            self.assertIs(passed, intent)
+            self.assertEqual(downstream.calls, 1)
+            self.assertEqual(len(broker.opens), 1)
+            grant, actuator_request, moment = broker.opens[0]
+            self.assertEqual(grant["credential_grant_id"], "grant-local-001")
+            self.assertEqual(actuator_request, broker_actuator_request(intent))
+            self.assertIsNotNone(moment.tzinfo)
+            _i, _a, _d, gateway_decision, channel = downstream.received
+            self.assertIs(gateway_decision.path, GatewayPath.SLOW)
+            self.assertIsInstance(channel, FakeChannel)
+            self.assertEqual(channel.endpoint_calls, [])
+
+    def test_broker_runs_after_gateway_with_ordered_trace(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            events = []
+            gateway = FakeGateway(events)
+            broker = FakeBroker()
+            downstream = BrokerDownstream(events)
+            envelope = gateway_envelope(intent)
+
+            def proceed_to_broker(gate_intent, gate_approval, gate_decision, gateway_decision):
+                return invoke_broker_gate(
+                    gate_intent, gate_approval, gate_decision, broker,
+                    matching_grant(gate_intent), downstream,
+                    gateway_decision=gateway_decision,
+                )
+
+            marker, passed = run_gateway_gate(
+                intent, approval, evaluated, gateway, envelope,
+                now=FIXED_NOW, proceed=proceed_to_broker,
+            )
+            self.assertEqual(marker, "channel-ready")
+            self.assertIs(passed, intent)
+            self.assertEqual(events, ["gateway.call", "endpoint.ready"])
+            self.assertEqual(len(broker.opens), 1)
+
+    def test_binding_mismatch_stops_before_broker_open(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            cases = [
+                ("repository", {"repository_id": "repository-foreign"}),
+                ("operation", {"operation": "merge_pull_request"}),
+                ("actuator", {"actuator_id": "actuator-foreign"}),
+                ("digest", {"request_digest": "sha256:" + "f" * 64}),
+                ("single-use", {"single_use": False}),
+                ("class", {"credential_class": "github-app-admin"}),
+            ]
+            for label, override in cases:
+                with self.subTest(grant=label):
+                    broker = FakeBroker()
+                    downstream = BrokerDownstream(events := [])
+                    grant = dict(matching_grant(intent), **override)
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^(controlled publication: credential grant binding mismatch"
+                        "|controlled publication: credential grant must be single-use)$",
+                    ):
+                        invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                    self.assertEqual(broker.opens, [])
+                    self.assertEqual(events, [])
+                    self.assertEqual(downstream.calls, 0)
+            for label, grant in (
+                ("non-mapping", "not-a-grant"),
+                ("missing-id", {key: value for key, value in matching_grant(intent).items()
+                                if key != "credential_grant_id"}),
+            ):
+                with self.subTest(grant=label):
+                    broker = FakeBroker()
+                    downstream = BrokerDownstream(events := [])
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: credential grant is invalid$",
+                    ):
+                        invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                    self.assertEqual(broker.opens, [])
+                    self.assertEqual(downstream.calls, 0)
+
+    def test_expired_or_malformed_grant_expiry_stops_before_broker_open(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            for expires_at, message in (
+                (format_time(FIXED_NOW - timedelta(seconds=1)),
+                 "^controlled publication: credential grant expired$"),
+                (format_time(FIXED_NOW),
+                 "^controlled publication: credential grant expired$"),
+                (None, "^controlled publication: credential grant expiry is invalid$"),
+                ("not-a-time", "^controlled publication: credential grant expiry is invalid$"),
+            ):
+                with self.subTest(expires_at=repr(expires_at)):
+                    broker = FakeBroker()
+                    downstream = BrokerDownstream(events := [])
+                    grant = dict(matching_grant(intent), expires_at=expires_at)
+                    with self.assertRaisesRegex(ControlledPublicationError, message):
+                        invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                    self.assertEqual(broker.opens, [])
+                    self.assertEqual(downstream.calls, 0)
+
+    def test_reused_grant_stops_with_zero_endpoint_calls(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            broker = FakeBroker()
+            first = BrokerDownstream(events := [])
+            invoke_broker_gate(intent, approval, evaluated, broker, matching_grant(intent), first)
+            self.assertEqual(first.calls, 1)
+            second = BrokerDownstream(events)
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: broker invocation failed$",
+            ):
+                invoke_broker_gate(intent, approval, evaluated, broker, matching_grant(intent), second)
+            self.assertEqual(second.calls, 0)
+            self.assertEqual(len(broker.opens), 2)
+            self.assertEqual(first.received[4].endpoint_calls, [])
+
+    def test_non_slow_gateway_decision_stops_before_broker_open(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            for label, verdict in {
+                "deny": GatewayDecision(GatewayPath.SLOW, False, ("denied",)),
+                "degraded": GatewayDecision(GatewayPath.DEGRADED, False, ("denied",)),
+                "fast": GatewayDecision(GatewayPath.FAST, True, ("read-only",)),
+                "malformed": "not-a-decision",
+            }.items():
+                with self.subTest(gateway=label):
+                    broker = FakeBroker()
+                    downstream = BrokerDownstream(events := [])
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway has not authorized slow path$",
+                    ):
+                        invoke_broker_gate(
+                            intent, approval, evaluated, broker, matching_grant(intent),
+                            downstream, gateway_decision=verdict,
+                        )
+                    self.assertEqual(broker.opens, [])
+                    self.assertEqual(downstream.calls, 0)
+
+    def test_stale_decision_and_bad_wiring_stop_before_broker_open(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            stale = dict(evaluated, expires_at=format_time(FIXED_NOW - timedelta(seconds=1)))
+            broker = FakeBroker()
+            with self.assertRaisesRegex(ContractValidationError, "^decision: expired$"):
+                invoke_broker_gate(intent, approval, stale, broker, matching_grant(intent),
+                                   BrokerDownstream([]))
+            self.assertEqual(broker.opens, [])
+            for label, kwargs in (
+                ("bad-intent", {"intent": None}),
+                ("bad-approval", {"approval": None}),
+                ("bad-decision", {"decision": None}),
+                ("bad-broker", {"broker": None}),
+                ("bad-actuator", {"actuator_id": ""}),
+                ("bad-now", {"now": None}),
+            ):
+                with self.subTest(wiring=label):
+                    broker = FakeBroker()
+                    downstream = BrokerDownstream(events := [])
+                    base = {
+                        "intent": intent, "approval": approval, "decision": evaluated,
+                        "broker": broker, "grant": matching_grant(intent),
+                        "downstream": downstream,
+                    }
+                    base.update(kwargs)
+                    if label == "bad-broker":
+                        broker_used = None
+                    else:
+                        broker_used = broker
+                    with self.assertRaises(ControlledPublicationError):
+                        run_broker_gate(
+                            base["intent"], base["approval"], base["decision"],
+                            slow_allow_decision(), broker_used, base["grant"],
+                            actuator_id=base.get("actuator_id", "test-actuator")
+                            if label != "bad-actuator" else "",
+                            now=base["now"] if "now" in base else FIXED_NOW,
+                            proceed=downstream.proceed,
+                        )
+                    self.assertEqual(broker.opens, [])
+                    self.assertEqual(downstream.calls, 0)
+
+    def test_grant_values_never_reach_errors_or_evidence(self):
+        canary = "GRANT-CANARY-SECRET"
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            grant = dict(matching_grant(intent), credential_grant_id=canary,
+                         repository_id="repository-foreign")
+            broker = FakeBroker()
+            downstream = BrokerDownstream(events := [])
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: credential grant binding mismatch$",
+            ) as raised:
+                invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+            self.assertNotIn(canary, str(raised.exception))
+            self.assertEqual(broker.opens, [])
+            self.assertEqual(downstream.calls, 0)
+            exploding = FakeBroker()
+            exploding.used_grants.add("grant-local-001")
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: broker invocation failed$",
+            ) as raised:
+                invoke_broker_gate(intent, approval, evaluated, exploding,
+                                   matching_grant(intent), downstream)
+            self.assertNotIn("grant-local-001", str(raised.exception))
+            received = downstream.received
+            self.assertIsNone(received)
 
 
 if __name__ == "__main__":

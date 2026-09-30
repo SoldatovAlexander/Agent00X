@@ -1537,5 +1537,125 @@ class SubprocessBindingRegressionTests(unittest.TestCase):
                     self.assertNotIn(forged, repr(result))
 
 
+VERDICT_CHILD_SCRIPT = (
+    "import hashlib, json, sys; "
+    "raw = sys.stdin.buffer.read(); "
+    "req = json.loads(raw.decode('utf-8'))['verifier_input']; "
+    "result = {'process_id': req['process_id'], 'base_commit': req['base_commit'], "
+    "'snapshot_tree_digest': req['snapshot_tree_digest'], "
+    "'replay_result_digest': req['replay_result_digest'], "
+    "'verifier_id': 'verdict-child-verifier', "
+    "'patch_digest': req['patch_digest'], 'evidence_digest': req['evidence_digest'], "
+    "'verification_digest': req['verification_digest'], "
+    "'verified_contents_digest': req['verified_contents_digest'], "
+    "'verdict': sys.argv[1], 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
+    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
+    "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
+)
+
+
+class SubprocessVerdictMappingTests(unittest.TestCase):
+    def test_fail_and_blocked_verdicts_deny_verified(self):
+        from app_contracts.executor import ExecutionStatus, run_local_execution
+
+        for verdict in ("fail", "blocked"):
+            with self.subTest(verdict=verdict):
+                with pinned_subprocess_run("placeholder") as (
+                    request, worker, _adapter, _proposed, _pin, _root
+                ):
+                    denying = SubprocessVerifier(
+                        valid_process_config(
+                            executable=sys.executable,
+                            argv=(sys.executable, "-c", VERDICT_CHILD_SCRIPT, verdict),
+                        )
+                    )
+                    result = run_local_execution(
+                        request, worker, verifier=denying,
+                        require_pinned_snapshot=True,
+                    )
+                    self.assertEqual(result.status, ExecutionStatus.FAILED)
+                    self.assertEqual(result.failure_code, "verifier-not-pass")
+                    self.assertNotEqual(result.status, ExecutionStatus.VERIFIED)
+
+    def test_malformed_verdict_denies_verified_without_echo(self):
+        from app_contracts.executor import ExecutionStatus, run_local_execution
+        from app_contracts.verifier_process import VerifierProcessError
+
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: command arguments are invalid$"
+        ):
+            valid_process_config(
+                executable=sys.executable,
+                argv=(sys.executable, "-c", VERDICT_CHILD_SCRIPT, ""),
+            )
+        for verdict in ("unknown", "CANARY-UNKNOWN-VERDICT"):
+            with self.subTest(verdict=repr(verdict)[:30]):
+                with pinned_subprocess_run("placeholder") as (
+                    request, worker, _adapter, _proposed, _pin, _root
+                ):
+                    malformed = SubprocessVerifier(
+                        valid_process_config(
+                            executable=sys.executable,
+                            argv=(sys.executable, "-c", VERDICT_CHILD_SCRIPT, verdict),
+                        )
+                    )
+                    result = run_local_execution(
+                        request, worker, verifier=malformed,
+                        require_pinned_snapshot=True,
+                    )
+                    self.assertEqual(result.status, ExecutionStatus.FAILED)
+                    self.assertEqual(result.failure_code, "verifier-failed")
+                    self.assertNotIn("CANARY-UNKNOWN", repr(result))
+                    self.assertNotIn(verdict, repr(result))
+
+    def test_subprocess_matches_in_process_verdict_mapping(self):
+        from app_contracts.executor import (
+            ExecutionStatus,
+            VerifierInput,
+            VerifierResult,
+            VerifierVerdict,
+            run_local_execution,
+        )
+
+        class ReturningVerifier:
+            def __init__(self, verdict):
+                self.verdict = verdict
+
+            def verify(self, prepared: VerifierInput) -> VerifierResult:
+                return VerifierResult(
+                    process_id=prepared.process_id,
+                    base_commit=prepared.base_commit,
+                    snapshot_tree_digest=prepared.snapshot_tree_digest,
+                    replay_result_digest=prepared.replay_result_digest,
+                    verifier_id="in-process-verifier",
+                    patch_digest=prepared.patch_digest,
+                    evidence_digest=prepared.evidence_digest,
+                    verification_digest=prepared.verification_digest,
+                    verified_contents_digest=prepared.verified_contents_digest,
+                    verdict=self.verdict,
+                )
+
+        with pinned_subprocess_run("placeholder") as (
+            request, worker, _adapter, _proposed, _pin, _root
+        ):
+            child_denied = SubprocessVerifier(
+                valid_process_config(
+                    executable=sys.executable,
+                    argv=(sys.executable, "-c", VERDICT_CHILD_SCRIPT, "fail"),
+                )
+            )
+            child_result = run_local_execution(
+                request, worker, verifier=child_denied, require_pinned_snapshot=True
+            )
+            local_result = run_local_execution(
+                request, worker, verifier=ReturningVerifier(VerifierVerdict.FAIL),
+                require_pinned_snapshot=True,
+            )
+            for result in (child_result, local_result):
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(result.failure_code, "verifier-not-pass")
+
+
 if __name__ == "__main__":
     unittest.main()

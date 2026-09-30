@@ -55,7 +55,12 @@ from app_contracts.publication_seed import (
     derive_publication_intent,
 )
 from app_contracts.mock_github import MockGitHubEndpoint
-from app_contracts.publication import PublicationJournal, PublicationRecord
+from app_contracts.publication import (
+    PublicationJournal,
+    PublicationRecord,
+    SimulatedCrash,
+    recover_publication,
+)
 from app_contracts.repository_process import prepare_change as real_prepare_change
 from app_contracts.validator import ContractValidationError
 
@@ -2242,6 +2247,54 @@ class JournalIdempotencyIntegrationTests(unittest.TestCase):
                                 endpoint.find_by_idempotency_key(intent.idempotency_key),
                                 original_receipt,
                             )
+
+
+class PublicationRecoveryIntegrationTests(unittest.TestCase):
+    def test_reopen_recovers_one_matching_mock_effect_and_repeated_recovery_never_republishes(self):
+        with decided_gate_fixture(include_seed=True) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated, seed
+        ):
+            endpoint = MockGitHubEndpoint()
+            broker = InMemoryCredentialBroker(lambda: endpoint)
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                database = Path(temporary_directory) / "journal.sqlite"
+                original_execute = gate_module.execute_publication
+                with PublicationJournal(database) as journal:
+                    with self.assertRaises(SimulatedCrash):
+                        with patch.object(
+                            gate_module,
+                            "execute_publication",
+                            side_effect=lambda current_journal, channel, request: original_execute(
+                                current_journal,
+                                channel,
+                                request,
+                                crash_after_external_effect=True,
+                            ),
+                        ):
+                            run_controlled_local_publication(
+                                seed, intent, approval, policy, engine_intent,
+                                lambda _seed: staged_change, "decision-local-001",
+                                FakeGateway([]), gateway_envelope(intent), broker,
+                                matching_grant(intent), journal, endpoint,
+                                actuator_id="test-actuator", now=FIXED_NOW,
+                            )
+                    attempting = journal.get(intent.process_id)
+                    self.assertEqual(attempting.status, "attempting")
+                    self.assertEqual(attempting.pull_request_id, None)
+                    self.assertEqual(len(endpoint._by_idempotency_key), 1)
+                    first_receipt = endpoint.find_by_idempotency_key(intent.idempotency_key)
+                    self.assertIsNotNone(first_receipt)
+
+                with PublicationJournal(database) as reopened:
+                    recovered = recover_publication(reopened, endpoint, intent.process_id)
+                    self.assertEqual(recovered.status, "completed")
+                    self.assertEqual(recovered.pull_request_id, first_receipt.pull_request_id)
+                    self.assertEqual(recovered.idempotency_key, intent.idempotency_key)
+                    self.assertEqual(len(endpoint._by_idempotency_key), 1)
+
+                    repeated = recover_publication(reopened, endpoint, intent.process_id)
+                    self.assertEqual(repeated, recovered)
+                    self.assertEqual(len(endpoint._by_idempotency_key), 1)
 
 if __name__ == "__main__":
     unittest.main()

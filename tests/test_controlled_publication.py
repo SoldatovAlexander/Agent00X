@@ -2010,5 +2010,45 @@ class AuthorityBindingMatrixTests(unittest.TestCase):
                             with self.assertRaises(KeyError):
                                 journal.get(intent.process_id)
 
+
+class ControlledGatewayOrderingTests(unittest.TestCase):
+    def test_deny_degraded_fast_and_malformed_outputs_stop_before_broker_and_mock(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            cases = {
+                "slow-deny": GatewayDecision(GatewayPath.SLOW, False, ("denied",)),
+                "degraded-deny": GatewayDecision(GatewayPath.DEGRADED, False, ("denied",)),
+                "degraded-allow": GatewayDecision(GatewayPath.DEGRADED, True, ("read-only",)),
+                "fast-allow": GatewayDecision(GatewayPath.FAST, True, ("read-only",)),
+                "malformed-output": {"path": "slow", "allowed": True},
+                "malformed-reasons": GatewayDecision(
+                    GatewayPath.SLOW, True, ["write-or-unknown-operation"]
+                ),
+            }
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    for label, verdict in cases.items():
+                        with self.subTest(gateway=label):
+                            events = []
+                            with self.assertRaisesRegex(
+                                ControlledPublicationError,
+                                "^controlled publication: gateway has not authorized slow path$",
+                            ):
+                                run_controlled_local_publication(
+                                    journal_seed_for(intent), intent, approval, policy,
+                                    engine_intent, lambda _seed: staged_change,
+                                    "decision-local-001", FakeGateway(events, verdict=verdict),
+                                    gateway_envelope(intent), broker, matching_grant(intent),
+                                    journal, endpoint, actuator_id="test-actuator",
+                                    now=FIXED_NOW,
+                                )
+                            self.assertEqual(events, ["gateway.call"])
+                            self.assertEqual(broker.opened_grants, [])
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+                            self.assertEqual(len(endpoint._by_idempotency_key), 0)
+
 if __name__ == "__main__":
     unittest.main()

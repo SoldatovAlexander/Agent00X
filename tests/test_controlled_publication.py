@@ -2050,5 +2050,83 @@ class ControlledGatewayOrderingTests(unittest.TestCase):
                                 journal.get(intent.process_id)
                             self.assertEqual(len(endpoint._by_idempotency_key), 0)
 
+
+class BrokerGrantMatrixTests(unittest.TestCase):
+    def test_invalid_expired_and_wrong_scope_grants_stop_before_endpoint_and_journal(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            canary = "GRANT-SENTINEL-SAFE"
+            base_grant = matching_grant(intent)
+            missing_id = dict(base_grant)
+            missing_id.pop("credential_grant_id")
+            cases = (
+                ("missing-id", missing_id, "^controlled publication: credential grant is invalid$"),
+                ("expired", dict(base_grant, expires_at=format_time(FIXED_NOW - timedelta(seconds=1))),
+                 "^controlled publication: credential grant expired$"),
+                ("repository", dict(base_grant, repository_id="repository-foreign",
+                                     access_token=canary),
+                 "^controlled publication: credential grant binding mismatch$"),
+                ("operation", dict(base_grant, operation="merge_pull_request"),
+                 "^controlled publication: credential grant binding mismatch$"),
+                ("actuator", dict(base_grant, actuator_id="actuator-foreign"),
+                 "^controlled publication: credential grant binding mismatch$"),
+                ("request-digest", dict(base_grant, request_digest="sha256:" + "f" * 64),
+                 "^controlled publication: credential grant binding mismatch$"),
+                ("credential-class", dict(base_grant, credential_class="admin-token"),
+                 "^controlled publication: credential grant binding mismatch$"),
+                ("not-single-use", dict(base_grant, single_use=False),
+                 "^controlled publication: credential grant must be single-use$"),
+            )
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    for label, grant, message in cases:
+                        with self.subTest(grant=label):
+                            broker = InMemoryCredentialBroker(lambda: endpoint)
+                            gateway_events = []
+                            with self.assertRaisesRegex(ControlledPublicationError, message) as raised:
+                                run_controlled_local_publication(
+                                    journal_seed_for(intent), intent, approval, policy,
+                                    engine_intent, lambda _seed: staged_change,
+                                    "decision-local-001", FakeGateway(gateway_events),
+                                    gateway_envelope(intent), broker, grant, journal,
+                                    endpoint, actuator_id="test-actuator", now=FIXED_NOW,
+                                )
+                            self.assertNotIn(canary, str(raised.exception))
+                            self.assertEqual(gateway_events, [])
+                            self.assertEqual(broker.opened_grants, [])
+                            self.assertEqual(len(endpoint._by_idempotency_key), 0)
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+
+    def test_replayed_grant_fails_closed_without_journal_transition_or_second_effect(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    grant = matching_grant(intent)
+                    broker.open_github_publication_channel(
+                        grant, broker_actuator_request(intent), now=FIXED_NOW
+                    )
+                    gateway_events = []
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: broker invocation failed$",
+                    ):
+                        run_controlled_local_publication(
+                            journal_seed_for(intent), intent, approval, policy,
+                            engine_intent, lambda _seed: staged_change,
+                            "decision-local-001", FakeGateway(gateway_events),
+                            gateway_envelope(intent), broker, grant, journal,
+                            endpoint, actuator_id="test-actuator", now=FIXED_NOW,
+                        )
+                    self.assertEqual(gateway_events, ["gateway.call"])
+                    self.assertEqual(broker.opened_grants, ["grant-local-001"])
+                    self.assertEqual(len(endpoint._by_idempotency_key), 0)
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
+
 if __name__ == "__main__":
     unittest.main()

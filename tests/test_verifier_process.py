@@ -366,5 +366,94 @@ class VerifierRequestDigestTests(unittest.TestCase):
         self.assertNotIn("proof", documented.lower())
 
 
+class VerifierRequestBoundsTests(unittest.TestCase):
+    def test_file_count_limit(self):
+        oversized = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "verified_contents": tuple(
+                        (f"file-{index}.py", "x") for index in range(21)
+                    ),
+                }
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: request file count exceeds limit$",
+        ):
+            serialize_verifier_request(oversized)
+        boundary = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "verified_contents": tuple(
+                        (f"file-{index}.py", "x") for index in range(20)
+                    ),
+                }
+            )
+        )
+        self.assertTrue(serialize_verifier_request(boundary))
+
+    def test_path_content_and_total_limits(self):
+        base = valid_verifier_input().__dict__
+        cases = [
+            (
+                {"verified_contents": (("p" * 238 + ".py", "x"),)},
+                "^verifier process: request path exceeds limit$",
+            ),
+            (
+                {"verified_contents": (("calculator.py", "x" * 100_001),)},
+                "^verifier process: request content exceeds limit$",
+            ),
+            (
+                {
+                    "verified_contents": tuple(
+                        (f"file-{index}.py", "x" * 100_000) for index in range(11)
+                    )
+                },
+                "^verifier process: request contents exceed limit$",
+            ),
+        ]
+        for override, message in cases:
+            with self.subTest(message=message):
+                oversized = VerifierProcessRequest.from_verifier_input(
+                    VerifierInput(**{**base, **override})
+                )
+                with self.assertRaisesRegex(VerifierProcessError, message):
+                    serialize_verifier_request(oversized)
+
+    def test_total_wire_size_limit(self):
+        oversized = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "process_id": "x" * 3_000_000,
+                }
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request size exceeds limit$"
+        ):
+            serialize_verifier_request(oversized)
+        valid = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        self.assertLess(len(serialize_verifier_request(valid)), 100_000)
+
+    def test_limit_errors_never_reveal_oversized_contents(self):
+        canary = "BOUNDS-CANARY-SECRET-CONTENTS"
+        oversized_values = (
+            {"verified_contents": (("calculator.py", canary * 20_000),)},
+            {"process_id": canary * 200_000},
+        )
+        for override in oversized_values:
+            with self.subTest(override=tuple(override)):
+                oversized = VerifierProcessRequest.from_verifier_input(
+                    VerifierInput(**{**valid_verifier_input().__dict__, **override})
+                )
+                with self.assertRaises(VerifierProcessError) as raised:
+                    serialize_verifier_request(oversized)
+                self.assertNotIn(canary, str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

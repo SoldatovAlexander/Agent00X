@@ -15,6 +15,12 @@ from .executor import VerifierInput, VerifierResult
 
 VERIFIER_PROCESS_SCHEMA_VERSION = 1
 
+MAX_VERIFIER_REQUEST_FILES = 20
+MAX_VERIFIER_REQUEST_PATH_BYTES = 240
+MAX_VERIFIER_REQUEST_CONTENT_BYTES = 100_000
+MAX_VERIFIER_REQUEST_CONTENTS_BYTES = 1_000_000
+MAX_VERIFIER_REQUEST_BYTES = 2_000_000
+
 _REQUEST_FIELDS = frozenset({"schema_version", "verifier_input"})
 
 _VERIFIER_INPUT_FIELDS = frozenset(
@@ -99,10 +105,21 @@ class VerifierProcessResponse:
 
 
 def serialize_verifier_request(value: object) -> bytes:
-    """Serialize one request to canonical UTF-8 JSON without mutating it."""
+    """Serialize one request to canonical UTF-8 JSON without mutating it.
+
+    Resource bounds are enforced before serialization so caller-controlled
+    payloads cannot cause unbounded encoding work; the encoded size is
+    enforced before the bytes are handed to any child launch.
+    """
 
     if type(value) is not VerifierProcessRequest:
         raise VerifierProcessError("verifier process: request shape is invalid")
+    try:
+        _check_verifier_request_bounds(value.verifier_input)
+    except VerifierProcessError:
+        raise
+    except Exception:
+        raise VerifierProcessError("verifier process: request serialization failed") from None
     try:
         encoded = json.dumps(
             asdict(value),
@@ -113,7 +130,26 @@ def serialize_verifier_request(value: object) -> bytes:
         ).encode("utf-8")
     except Exception:
         raise VerifierProcessError("verifier process: request serialization failed") from None
+    if len(encoded) > MAX_VERIFIER_REQUEST_BYTES:
+        raise VerifierProcessError("verifier process: request size exceeds limit")
     return encoded
+
+
+def _check_verifier_request_bounds(verifier_input: VerifierInput) -> None:
+    contents = verifier_input.verified_contents
+    if len(contents) > MAX_VERIFIER_REQUEST_FILES:
+        raise VerifierProcessError("verifier process: request file count exceeds limit")
+    total_content_bytes = 0
+    for entry in contents:
+        path_bytes = entry[0].encode("utf-8")
+        content_bytes = entry[1].encode("utf-8")
+        if len(path_bytes) > MAX_VERIFIER_REQUEST_PATH_BYTES:
+            raise VerifierProcessError("verifier process: request path exceeds limit")
+        if len(content_bytes) > MAX_VERIFIER_REQUEST_CONTENT_BYTES:
+            raise VerifierProcessError("verifier process: request content exceeds limit")
+        total_content_bytes += len(content_bytes)
+        if total_content_bytes > MAX_VERIFIER_REQUEST_CONTENTS_BYTES:
+            raise VerifierProcessError("verifier process: request contents exceed limit")
 
 
 def parse_verifier_request(data: object) -> VerifierProcessRequest:

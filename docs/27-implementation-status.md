@@ -4,7 +4,7 @@
 
 Версия: 1.1
 
-Дата сверки: 2026-09-29
+Дата сверки: 2026-09-30
 
 Этот документ отвечает на вопрос «что существует и что подтверждено сейчас».
 План работ находится в [документе 24](24-mvp-final-plan.md); замысел широкого
@@ -19,14 +19,15 @@
 
 Есть контрактная и sandbox-основа, детерминированный reference flow, локальный
 executor shell с injected Worker/Verifier/backend, mock boundary и отдельные
-GitHub App spikes. Batch AG добавил локальный pin точного Git commit/tree и
-повторный allowlisted test command в отдельной локальной sandbox-сессии для
-pinned request. Это связывает локальный объектный snapshot и подготовленное
-содержимое с результатом тестового replay, но не доказывает remote provenance,
-независимую доверенность verifier, production isolation или publication chain:
-Worker/backend/verifier остаются injected fakes, а process backend — development
-fallback. Реальный LLM Worker, production sandbox, наблюдатель, исторические
-отчёты, учебные ветки и сквозная защищённая публикация ещё не реализованы.
+GitHub App spikes. Локальная серия R2 Batch AF–AH завершена: Batch AH добавил
+composed controlled-publication путь до mock endpoint и SQLite reconciliation
+для matching, unknown и конфликтующих результатов. Это локальный контрактный
+evidence, а не подтверждённая сквозная внешняя система: Worker/backend/verifier
+остаются injected fakes, endpoint и broker — mock/in-memory, process backend —
+development fallback. Remote provenance, независимо доверенный verifier,
+production isolation/durability, real provider/credentials, LLM Worker,
+наблюдатель, исторические отчёты и учебные ветки не подтверждены или не
+реализованы.
 Нельзя заявлять production-ready, отсутствие всех утечек секретов или доказанную
 неуязвимость Gateway.
 
@@ -45,7 +46,7 @@ fallback. Реальный LLM Worker, production sandbox, наблюдател�
 |---|---|---|
 | Базовые контракты | Реализовано и unit-tested | 16 JSON Schema, fixtures, digest chain, subset validator и state machine |
 | Local reference preparation | Реализовано и unit-tested | Ephemeral workspace, ограниченные изменения, patch, allowlisted tests, evidence, verification и staged change на fixture snapshot |
-| Durable state и mock publication | Реализовано и unit-tested | SQLite transitions/audit и journal/reconciliation вокруг mock boundary |
+| Controlled mock publication и reconciliation | Реализовано и unit-tested локально | Связанный local harness проверяет свежие approval/policy/Gateway/Broker gates, digest-only SQLite journal, mock publication, matching recovery и fail-closed `reconciliation_required`; это не real-provider chain, production durability или multi-process isolation |
 | Policy/Gateway/Broker контракты | Реализовано и unit-tested | Детерминированные классы и негативные сценарии; это не связанный production Authority Plane |
 | Docker profile | Частично проверено | Профиль и opt-in integration test существуют; обычный прогон не запускает Docker integration |
 | GitHub App | Spike | App создал тестовые branch/PR; это не доказывает полную авторизацию, atomic publication или recovery |
@@ -61,7 +62,7 @@ fallback. Реальный LLM Worker, production sandbox, наблюдател�
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Результат сверки 2026-09-29: **546 тестов, все прошли, 1 пропущен**. Пропущен
+Результат сверки 2026-09-30: **632 теста, 631 прошёл, 1 пропущен**. Пропущен
 opt-in Docker integration test; его запуск требует `RUN_DOCKER_SANDBOX_TESTS=1`,
 доступный Docker daemon и образ. Этот результат подтверждает только указанные
 тестами свойства кода на текущей машине.
@@ -115,7 +116,7 @@ preparation и последовательный stale-manifest отказ, но 
 |---|---|---|
 | R0: наблюдение и память | Концепция готова | JSON Schema, валидаторы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary |
 | R1: целостность и фиксация действий | Частично проверено | Нарушения 1–2 закрыты локальными regression; composed local harness, gateway-before-broker enforcement и deterministic workspace interleaving приняты, но production orchestration, real concurrent-writer evidence и external proof отсутствуют |
-| R2: сквозной исполнитель | В работе: Batch AF 1/3 (20/20), Batch AG 2/3 (20/20) | Локальный deterministic executor shell, exact local Git commit/tree pin и отдельный локальный verifier replay unit-tested; остаются remote provenance, реальный LLM Worker, independently trusted production verification, production sandbox и separately gated controlled publication/reconciliation (Batch AH) |
+| R2: сквозной исполнитель | Локальная серия Batch AF–AH завершена: 3/3 батча по 20 карточек; цель этапа остаётся незавершённой | Unit-tested local executor, exact local Git commit/tree pin/replay и controlled mock publication/reconciliation; остаются remote provenance, реальный LLM Worker, independently trusted production verification, production sandbox/isolation, real provider/credentials и production durability |
 | R3: исторический Observer | Не начат | Отчёты по сохранённой истории, причинности и пробелам |
 | R4: учебная ветка | Не начат | Simulation branch без переноса старых прав и external writes |
 | R5: эксперимент | Не начат | Сравнение полной и упрощённой организации данных по заранее заданному набору задач |
@@ -179,6 +180,14 @@ digest-bound prepared content и повторное исполнение allowli
 отдельной local sandbox-сессии. Worker, backend и verifier остаются injected
 fakes; результат маркирован `local_test`. Это не remote provenance,
 independently trusted verification, production isolation, реальная модель,
-публикация или reconciliation. R2 не завершён; следующий Batch AH посвящён
-controlled publication и reconciliation. Внешние операции требуют отдельных
-точных task cards и допуска.
+публикация или reconciliation. Batch AH (EXP-328—347, 20 карточек; R2, batch
+3/3) добавил composed локальный approval → policy → gateway → broker →
+digest-only journal → mock endpoint path и SQLite recovery: matching receipt
+восстанавливается без повторного publish, unknown/error/mismatched outcome
+переходит в `reconciliation_required` без blind retry. Полный локальный suite
+по завершении AH: 632 теста, 631 прошёл, 1 opt-in Docker test пропущен.
+Это не remote/external publication, не real credentials/provider и не
+доказательство production durability/isolation или завершения цели R2.
+DOC-001 и другие архитектурные идеи остаются проектными, если для них отдельно
+не указаны существующие код и тестовое evidence. Внешние операции требуют
+отдельных точных task cards и допуска.

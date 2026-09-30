@@ -34,9 +34,12 @@ Verifier и sandbox backend. Это не реальный LLM Worker, прове
 snapshot, production sandbox или publication chain; детали и открытые границы —
 в документе 27. Batch AG добавил экспорт дерева точного commit из локальной
 Git object database и повторный запуск allowlisted-команды в отдельной локальной
-sandbox-сессии. Это не remote provenance и не independently trusted verifier:
-backend/verifier остаются injected doubles, а process backend — development
-fallback; production isolation, публикация и reconciliation не подтверждены.
+sandbox-сессии. Batch AH (R2, локальный батч 3/3, 20 карточек) проверил
+controlled publication и reconciliation только на локальном mock endpoint,
+in-memory broker и SQLite journal. Это не remote provenance и не independently
+trusted verifier: backend/verifier остаются injected doubles, а process backend
+— development fallback; real provider/credentials, production isolation и
+durability остаются вне подтверждённого scope.
 
 Единственный актуальный статус реализации и границ доказательств:
 [документ 27](docs/27-implementation-status.md). Порядок работ R0—R5:
@@ -48,9 +51,9 @@ fallback; production isolation, публикация и reconciliation не по
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Обычный прогон на 2026-09-29: 546 тестов, все прошли, один opt-in Docker test
-пропущен. Результат подтверждает только покрытые тестами свойства на текущей
-машине. Подробнее — в документе 27.
+Обычный прогон на 2026-09-30: 632 теста, 631 прошёл, один opt-in Docker test
+пропущен. Это подтверждает только покрытые тестами локальные свойства на
+текущей машине, не безопасность всей цепочки. Подробнее — в документе 27.
 
 ## GitHub App: локальная подготовка
 

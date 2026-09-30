@@ -980,26 +980,27 @@ class VerifierCommandInvocationTests(unittest.TestCase):
         import hashlib
 
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
-        expected_bytes = serialize_verifier_request(request)
+        expected_hex = hashlib.sha256(serialize_verifier_request(request)).hexdigest()
+        response_text = encode_response_payload(valid_response_payload()).decode("utf-8")
         script = (
             "import hashlib, json, sys; "
             "raw = sys.stdin.buffer.read(); "
             "payload = json.loads(raw.decode('utf-8')); "
             "forbidden = [key for key in ('snapshot_path', 'workspace', 'credential', "
             "'capability', 'environment') if key in repr(payload)]; "
-            "sys.stdout.write(hashlib.sha256(raw).hexdigest() + ('|tainted' if forbidden else '|clean'));"
+            "clean = hashlib.sha256(raw).hexdigest() == sys.argv[1] and not forbidden; "
+            "sys.stdout.write(sys.argv[2] if clean else 'tainted');"
         )
         config = valid_process_config(
-            executable=sys.executable, argv=(sys.executable, "-c", script)
+            executable=sys.executable,
+            argv=(sys.executable, "-c", script, expected_hex, response_text),
         )
-        outcome = run_verifier_command(config, request)
-        self.assertIsInstance(outcome, VerifierProcessOutcome)
-        self.assertEqual(outcome.exit_code, 0)
-        self.assertEqual(outcome.stderr, b"")
+        response = run_verifier_command(config, request)
+        self.assertIsInstance(response, VerifierProcessResponse)
         self.assertEqual(
-            outcome.stdout.decode("utf-8"),
-            hashlib.sha256(expected_bytes).hexdigest() + "|clean",
+            response, parse_verifier_response(response_text.encode("utf-8"))
         )
+        self.assertIs(response.verifier_result.verdict, VerifierVerdict.PASS)
 
     def test_timeout_kills_child_once_without_replay(self):
         import tempfile
@@ -1086,13 +1087,16 @@ class VerifierOutputBoundsTests(unittest.TestCase):
             "^verifier process: child output exceeds limit$",
         ):
             run_verifier_command(config, request)
+        follow_up_text = encode_response_payload(valid_response_payload()).decode("utf-8")
         follow_up = run_verifier_command(
             valid_process_config(
-                executable=sys.executable, argv=(sys.executable, "-c", "pass")
+                executable=sys.executable,
+                argv=(sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1]);",
+                      follow_up_text),
             ),
             request,
         )
-        self.assertEqual(follow_up.exit_code, 0)
+        self.assertIsInstance(follow_up, VerifierProcessResponse)
 
     def test_over_limit_stderr_never_reaches_errors(self):
         canary = "STDERR-CANARY-SECRET"
@@ -1113,31 +1117,49 @@ class VerifierOutputBoundsTests(unittest.TestCase):
             run_verifier_command(config, request)
         self.assertNotIn(canary, str(raised.exception))
 
-    def test_bounded_streams_are_delivered_byte_exact(self):
+    def test_no_raw_streams_reach_caller(self):
         canary = "STREAM-CANARY-MARKER"
+        record_text = encode_response_payload(valid_response_payload()).decode("utf-8")
         script = (
             "import sys; "
-            f"sys.stdout.buffer.write({canary!r}.encode()); "
-            f"sys.stderr.buffer.write(({canary!r} + '-err').encode());"
+            "sys.stdout.write(sys.argv[1]); "
+            f"sys.stderr.write({canary!r});"
         )
         config = valid_process_config(
-            executable=sys.executable, argv=(sys.executable, "-c", script)
+            executable=sys.executable,
+            argv=(sys.executable, "-c", script, record_text),
         )
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
-        outcome = run_verifier_command(config, request)
-        self.assertEqual(outcome.exit_code, 0)
-        self.assertEqual(outcome.stdout, canary.encode("utf-8"))
-        self.assertEqual(outcome.stderr, (canary + "-err").encode("utf-8"))
-        boundary_script = "import sys; sys.stdout.buffer.write(b'Z' * 100_000);"
+        response = run_verifier_command(config, request)
+        self.assertIsInstance(response, VerifierProcessResponse)
+        self.assertEqual(response, parse_verifier_response(record_text.encode("utf-8")))
+        self.assertFalse(hasattr(response, "stderr"))
+        self.assertFalse(hasattr(response, "stdout"))
+        self.assertNotIn(canary, repr(response))
+        exact_cap = len(record_text.encode("utf-8"))
         boundary = run_verifier_command(
             valid_process_config(
                 executable=sys.executable,
-                argv=(sys.executable, "-c", boundary_script),
-                max_stdout_bytes=100_000,
+                argv=(sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1]);",
+                      record_text),
+                max_stdout_bytes=exact_cap,
             ),
             request,
         )
-        self.assertEqual(len(boundary.stdout), 100_000)
+        self.assertIsInstance(boundary, VerifierProcessResponse)
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: child output exceeds limit$",
+        ):
+            run_verifier_command(
+                valid_process_config(
+                    executable=sys.executable,
+                    argv=(sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1]);",
+                          record_text),
+                    max_stdout_bytes=exact_cap - 1,
+                ),
+                request,
+            )
 
     def test_stdout_accepts_only_single_response_record(self):
         import json as json_module
@@ -1151,12 +1173,10 @@ class VerifierOutputBoundsTests(unittest.TestCase):
         config = valid_process_config(
             executable=sys.executable, argv=(sys.executable, "-c", script)
         )
-        outcome = run_verifier_command(config, request)
-        self.assertEqual(outcome.exit_code, 0)
         with self.assertRaisesRegex(
-            VerifierProcessError, "^verifier process: response payload is invalid$"
+            VerifierProcessError, "^verifier process: child response is malformed$"
         ):
-            parse_verifier_response(outcome.stdout)
+            run_verifier_command(config, request)
 
 
 class VerifierOutcomeClassificationTests(unittest.TestCase):
@@ -1172,12 +1192,10 @@ class VerifierOutcomeClassificationTests(unittest.TestCase):
                 executable=sys.executable, argv=(sys.executable, "-c", script)
             )
             request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
-            outcome = run_verifier_command(config, request)
-            self.assertEqual(outcome.exit_code, exit_code)
             with self.assertRaisesRegex(
                 VerifierProcessError, "^verifier process: child exit failed$"
             ) as raised:
-                classify_verifier_outcome(outcome)
+                run_verifier_command(config, request)
             self.assertNotIn(canary, str(raised.exception))
 
     def test_empty_response_becomes_stable_failure(self):
@@ -1239,8 +1257,7 @@ class VerifierOutcomeClassificationTests(unittest.TestCase):
             argv=(sys.executable, "-c", script, payload_text),
         )
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
-        outcome = run_verifier_command(config, request)
-        classified = classify_verifier_outcome(outcome)
+        classified = run_verifier_command(config, request)
         self.assertNotIn(canary, repr(classified))
 
 

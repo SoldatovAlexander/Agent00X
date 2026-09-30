@@ -159,16 +159,18 @@ def run_verifier_command(
     request: object,
     *,
     environ: object = None,
-) -> VerifierProcessOutcome:
+) -> VerifierProcessResponse:
     """Run the configured command once with the canonical request on stdin.
 
     The argument vector is passed without a shell, stdin carries only the
     canonical request bytes, and the child environment is minimal and
     explicit. Stdout and stderr are collected incrementally under the
     configured per-stream caps: an over-limit stream terminates the child
-    and fails closed. The child is started at most once: malformed inputs
-    fail before any spawn, and a timeout kills the child, reaps it and
-    raises a stable error without retry.
+    and fails closed. Stderr is drained to avoid pipe deadlock but never
+    returned to the caller. Stdout is accepted only as exactly one strictly
+    parsed response record. The child is started at most once: malformed
+    inputs fail before any spawn, and a timeout kills the child, reaps it
+    and raises a stable error without retry.
     """
 
     if type(config) is not VerifierProcessConfig:
@@ -202,7 +204,7 @@ def run_verifier_command(
     except Exception:
         _quietly_reap(process)
         raise VerifierProcessError("verifier process: child launch failed") from None
-    return VerifierProcessOutcome(exit_code, stdout, stderr)
+    return classify_verifier_outcome(VerifierProcessOutcome(exit_code, stdout, stderr))
 
 
 def classify_verifier_outcome(outcome: object) -> VerifierProcessResponse:

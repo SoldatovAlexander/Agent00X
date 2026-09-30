@@ -14,6 +14,7 @@ from app_contracts.verifier_process import (
     VerifierProcessError,
     VerifierProcessRequest,
     VerifierProcessResponse,
+    parse_verifier_request,
     serialize_verifier_request,
 )
 
@@ -162,6 +163,150 @@ class VerifierProcessRecordTests(unittest.TestCase):
                 VerifierProcessRequest.from_verifier_input(malformed_input)
             )
         self.assertNotIn("object at", str(raised.exception))
+
+
+class VerifierRequestParsingTests(unittest.TestCase):
+    def test_canonical_bytes_round_trip_to_equal_record(self):
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        parsed = parse_verifier_request(serialize_verifier_request(request))
+        self.assertEqual(parsed, request)
+        self.assertEqual(
+            serialize_verifier_request(parsed), serialize_verifier_request(request)
+        )
+
+    def test_non_bytes_or_bad_encoding_is_rejected(self):
+        request = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        for data in (None, "not-bytes", 42, bytearray(request), b"\xff\xfe{\x22}"):
+            with self.subTest(data=repr(data)[:40]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: request encoding is invalid$",
+                ):
+                    parse_verifier_request(data)
+
+    def test_malformed_json_shape_is_rejected(self):
+        for data in (
+            b"", b"[]", b'"request"', b"123", b"null", b"NaN", b"Infinity",
+            b'{"schema_version": 1, "verifier_input": {},} trailing',
+        ):
+            with self.subTest(data=data[:40]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: request payload is invalid$",
+                ):
+                    parse_verifier_request(data)
+        with self.subTest(data="missing-verifier-input"):
+            with self.assertRaisesRegex(
+                VerifierProcessError,
+                "^verifier process: request fields are invalid$",
+            ):
+                parse_verifier_request(b'{"schema_version": 1}')
+        nan_payload = (
+            b'{"schema_version": 1, "verifier_input": '
+            b'{"test_timeout_seconds": NaN}}'
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request payload is invalid$"
+        ):
+            parse_verifier_request(nan_payload)
+
+    def test_only_stated_version_and_exact_field_set_parse(self):
+        encoded = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        for version in (b"0", b"2", b'"1"', b"true"):
+            tampered = b'{"schema_version": ' + version + b', "verifier_input": {}}'
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: request version is invalid$",
+                ):
+                    parse_verifier_request(tampered)
+        import json as json_module
+
+        payload = json_module.loads(encoded.decode("utf-8"))
+        for mutate in (
+            lambda mapping: {key: value for key, value in mapping.items()
+                             if key != "verifier_input"},
+            lambda mapping: {**mapping, "extra": 1},
+            lambda mapping: {**mapping, "verifier_input": {
+                key: value for key, value in mapping["verifier_input"].items()
+                if key != "process_id"}},
+            lambda mapping: {**mapping, "verifier_input": {
+                **mapping["verifier_input"], "unknown": "x"}},
+        ):
+            tampered = json_module.dumps(mutate(payload)).encode("utf-8")
+            with self.assertRaisesRegex(
+                VerifierProcessError,
+                "^verifier process: request fields are invalid$",
+            ):
+                parse_verifier_request(tampered)
+
+    def test_duplicate_keys_are_rejected_at_every_level(self):
+        top_duplicate = (
+            b'{"schema_version": 1, "schema_version": 1, "verifier_input": {}}'
+        )
+        nested_duplicate = (
+            b'{"schema_version": 1, "verifier_input": '
+            b'{"process_id": "a", "process_id": "b"}}'
+        )
+        for data in (top_duplicate, nested_duplicate):
+            with self.subTest(data=data[:60]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: request payload is invalid$",
+                ):
+                    parse_verifier_request(data)
+
+    def test_bad_scalar_types_are_rejected(self):
+        import json as json_module
+
+        encoded = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        payload = json_module.loads(encoded.decode("utf-8"))
+        bad_values = {
+            "process_id": (42, None),
+            "patch_digest": (7,),
+            "evidence_origin": (None,),
+            "snapshot_tree_digest": (42,),
+            "replay_result_digest": (False,),
+            "test_timeout_seconds": ("30", True, 30.5),
+            "declared_change_paths": ("calculator.py", [42], None),
+            "test_command": (["python3", None],),
+            "verified_contents": (
+                "contents", [["only-path"]], [[1, 2]], [["a", "b", "c"]],
+                {"calculator.py": "x"},
+            ),
+        }
+        for field, values in bad_values.items():
+            for value in values:
+                with self.subTest(field=field, value=repr(value)[:30]):
+                    tampered_input = dict(payload["verifier_input"], **{field: value})
+                    tampered = json_module.dumps(
+                        {"schema_version": 1, "verifier_input": tampered_input}
+                    ).encode("utf-8")
+                    with self.assertRaisesRegex(
+                        VerifierProcessError,
+                        "^verifier process: request fields are invalid$",
+                    ):
+                        parse_verifier_request(tampered)
+
+    def test_parsing_errors_never_echo_raw_values(self):
+        canary = "PARSE-CANARY-SECRET-VALUE"
+        malformed = (
+            b'{"schema_version": 1, "unknown": "' + canary.encode() + b'"}',
+            b'{"schema_version": 1, "verifier_input": {"process_id": "' + canary.encode() + b'"}}',
+            b'{"schema_version": 2, "note": "' + canary.encode() + b'"}',
+            canary.encode(),
+        )
+        for data in malformed:
+            with self.subTest(data=data[:40]):
+                with self.assertRaises(VerifierProcessError) as raised:
+                    parse_verifier_request(data)
+                self.assertNotIn(canary, str(raised.exception))
 
 
 if __name__ == "__main__":

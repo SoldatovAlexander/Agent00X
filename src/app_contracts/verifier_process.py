@@ -205,6 +205,27 @@ def run_verifier_command(
     return VerifierProcessOutcome(exit_code, stdout, stderr)
 
 
+def classify_verifier_outcome(outcome: object) -> VerifierProcessResponse:
+    """Normalize one raw child outcome into a stable verifier failure or response.
+
+    A nonzero exit, an empty response and a malformed response each become a
+    stable bounded error. A well-formed response is returned as parsed: process
+    diagnostics never alter the child verdict and raw child bytes, streams or
+    arguments never enter messages or results.
+    """
+
+    if type(outcome) is not VerifierProcessOutcome:
+        raise VerifierProcessError("verifier process: child outcome is invalid")
+    if outcome.exit_code != 0:
+        raise VerifierProcessError("verifier process: child exit failed")
+    if outcome.stdout == b"":
+        raise VerifierProcessError("verifier process: child response is empty")
+    try:
+        return parse_verifier_response(outcome.stdout)
+    except VerifierProcessError:
+        raise VerifierProcessError("verifier process: child response is malformed")
+
+
 def _quietly_reap(process: subprocess.Popen) -> None:
     try:
         process.kill()

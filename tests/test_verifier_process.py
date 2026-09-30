@@ -24,6 +24,7 @@ from app_contracts.verifier_process import (
     VerifierProcessRequest,
     VerifierProcessResponse,
     bind_verifier_response,
+    classify_verifier_outcome,
     digest_verifier_request,
     parse_verifier_request,
     parse_verifier_response,
@@ -1156,6 +1157,91 @@ class VerifierOutputBoundsTests(unittest.TestCase):
             VerifierProcessError, "^verifier process: response payload is invalid$"
         ):
             parse_verifier_response(outcome.stdout)
+
+
+class VerifierOutcomeClassificationTests(unittest.TestCase):
+    def test_nonzero_exit_becomes_stable_failure(self):
+        canary = "EXIT-CANARY-SECRET"
+        for exit_code in (1, 3):
+            script = (
+                "import sys; "
+                f"sys.stderr.write({canary!r}); "
+                f"sys.exit({exit_code});"
+            )
+            config = valid_process_config(
+                executable=sys.executable, argv=(sys.executable, "-c", script)
+            )
+            request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+            outcome = run_verifier_command(config, request)
+            self.assertEqual(outcome.exit_code, exit_code)
+            with self.assertRaisesRegex(
+                VerifierProcessError, "^verifier process: child exit failed$"
+            ) as raised:
+                classify_verifier_outcome(outcome)
+            self.assertNotIn(canary, str(raised.exception))
+
+    def test_empty_response_becomes_stable_failure(self):
+        outcome = VerifierProcessOutcome(0, b"", b"")
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: child response is empty$"
+        ):
+            classify_verifier_outcome(outcome)
+
+    def test_malformed_response_becomes_stable_failure_without_echo(self):
+        canary = "MALFORMED-CANARY-SECRET"
+        for stdout in (
+            canary.encode("utf-8"),
+            b'{"schema_version": 1}',
+            b'{"schema_version": 1, "verifier_result": {}, "extra": true}',
+        ):
+            with self.subTest(stdout=stdout[:30]):
+                outcome = VerifierProcessOutcome(0, stdout, b"")
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: child response is malformed$",
+                ) as raised:
+                    classify_verifier_outcome(outcome)
+                self.assertNotIn(canary, str(raised.exception))
+
+    def test_well_formed_response_preserves_child_verdict(self):
+        for verdict, member in (("pass", "PASS"), ("fail", "FAIL")):
+            response = parse_verifier_response(
+                encode_response_payload(valid_response_payload(verdict=verdict))
+            )
+            outcome = VerifierProcessOutcome(
+                0, encode_response_payload(valid_response_payload(verdict=verdict)), b""
+            )
+            classified = classify_verifier_outcome(outcome)
+            self.assertEqual(classified, response)
+            self.assertIs(
+                classified.verifier_result.verdict, getattr(VerifierVerdict, member)
+            )
+
+    def test_non_outcome_input_is_rejected(self):
+        for value in (None, {}, (0, b"", b"")):
+            with self.subTest(value=repr(value)[:20]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: child outcome is invalid$",
+                ):
+                    classify_verifier_outcome(value)
+
+    def test_child_streams_never_reach_classified_results(self):
+        canary = "STREAM-CANARY-SECRET"
+        payload_text = encode_response_payload(valid_response_payload()).decode("utf-8")
+        script = (
+            "import sys; "
+            f"sys.stderr.write({canary!r}); "
+            "sys.stdout.write(sys.argv[1]);"
+        )
+        config = valid_process_config(
+            executable=sys.executable,
+            argv=(sys.executable, "-c", script, payload_text),
+        )
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        outcome = run_verifier_command(config, request)
+        classified = classify_verifier_outcome(outcome)
+        self.assertNotIn(canary, repr(classified))
 
 
 if __name__ == "__main__":

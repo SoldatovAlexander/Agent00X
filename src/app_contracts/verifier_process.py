@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import re
 
 from .digests import sha256_bytes
-from .executor import VerifierInput, VerifierResult
+from .executor import MAX_VERIFIER_BLOCKER_CODES, VerifierInput, VerifierResult, VerifierVerdict
 
 
 VERIFIER_PROCESS_SCHEMA_VERSION = 1
@@ -22,6 +23,44 @@ MAX_VERIFIER_REQUEST_CONTENTS_BYTES = 1_000_000
 MAX_VERIFIER_REQUEST_BYTES = 2_000_000
 
 _REQUEST_FIELDS = frozenset({"schema_version", "verifier_input"})
+
+_RESPONSE_FIELDS = frozenset({"schema_version", "verifier_result"})
+
+_VERIFIER_RESULT_FIELDS = frozenset(
+    {
+        "process_id",
+        "base_commit",
+        "snapshot_tree_digest",
+        "replay_result_digest",
+        "verifier_id",
+        "patch_digest",
+        "evidence_digest",
+        "verification_digest",
+        "verified_contents_digest",
+        "verdict",
+        "blocker_codes",
+        "evidence_origin",
+    }
+)
+
+_RESULT_STR_FIELDS = frozenset(
+    {
+        "process_id",
+        "base_commit",
+        "verifier_id",
+        "patch_digest",
+        "evidence_digest",
+        "verification_digest",
+        "verified_contents_digest",
+        "evidence_origin",
+    }
+)
+
+_RESULT_OPTIONAL_STR_FIELDS = frozenset({"snapshot_tree_digest", "replay_result_digest"})
+
+_VERDICTS = frozenset({"pass", "fail", "blocked"})
+
+_BLOCKER_CODE_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
 
 _VERIFIER_INPUT_FIELDS = frozenset(
     {
@@ -215,6 +254,84 @@ def digest_verifier_request(value: object) -> str:
     """
 
     return sha256_bytes(serialize_verifier_request(value))
+
+
+def parse_verifier_response(data: object) -> VerifierProcessResponse:
+    """Parse child output bytes back into a bounded response record.
+
+    Only the stated schema version, the exact result field set, the known
+    verdict labels and well-formed blocker codes are accepted. The restored
+    record carries a typed ``VerifierResult`` with a real verdict enum.
+    Malformed encoding, JSON shape, duplicate keys and values fail closed
+    without echoing the output or field values.
+    """
+
+    if type(data) is not bytes:
+        raise VerifierProcessError("verifier process: response encoding is invalid")
+    try:
+        text = data.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        raise VerifierProcessError("verifier process: response encoding is invalid") from None
+    try:
+        payload = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_json_constant,
+        )
+    except Exception:
+        raise VerifierProcessError("verifier process: response payload is invalid") from None
+    if type(payload) is not dict:
+        raise VerifierProcessError("verifier process: response payload is invalid")
+    version = payload.get("schema_version")
+    if type(version) is not int or version != VERIFIER_PROCESS_SCHEMA_VERSION:
+        raise VerifierProcessError("verifier process: response version is invalid")
+    if set(payload) != _RESPONSE_FIELDS:
+        raise VerifierProcessError("verifier process: response fields are invalid")
+    raw_result = payload["verifier_result"]
+    if type(raw_result) is not dict or set(raw_result) != _VERIFIER_RESULT_FIELDS:
+        raise VerifierProcessError("verifier process: response fields are invalid")
+    _validate_verifier_result_shape(raw_result)
+    try:
+        verdict = VerifierVerdict(raw_result["verdict"])
+    except ValueError:
+        raise VerifierProcessError("verifier process: response fields are invalid") from None
+    verifier_result = VerifierResult(
+        process_id=raw_result["process_id"],
+        base_commit=raw_result["base_commit"],
+        snapshot_tree_digest=raw_result["snapshot_tree_digest"],
+        replay_result_digest=raw_result["replay_result_digest"],
+        verifier_id=raw_result["verifier_id"],
+        patch_digest=raw_result["patch_digest"],
+        evidence_digest=raw_result["evidence_digest"],
+        verification_digest=raw_result["verification_digest"],
+        verified_contents_digest=raw_result["verified_contents_digest"],
+        verdict=verdict,
+        blocker_codes=tuple(raw_result["blocker_codes"]),
+        evidence_origin=raw_result["evidence_origin"],
+    )
+    return VerifierProcessResponse(version, verifier_result)
+
+
+def _validate_verifier_result_shape(raw_result: dict[str, object]) -> None:
+    for field in _RESULT_STR_FIELDS:
+        if type(raw_result[field]) is not str:
+            raise VerifierProcessError("verifier process: response fields are invalid")
+    for field in _RESULT_OPTIONAL_STR_FIELDS:
+        value = raw_result[field]
+        if value is not None and type(value) is not str:
+            raise VerifierProcessError("verifier process: response fields are invalid")
+    if type(raw_result["verdict"]) is not str or raw_result["verdict"] not in _VERDICTS:
+        raise VerifierProcessError("verifier process: response fields are invalid")
+    blocker_codes = raw_result["blocker_codes"]
+    if (
+        type(blocker_codes) is not list
+        or len(blocker_codes) > MAX_VERIFIER_BLOCKER_CODES
+        or any(
+            type(code) is not str or _BLOCKER_CODE_PATTERN.fullmatch(code) is None
+            for code in blocker_codes
+        )
+    ):
+        raise VerifierProcessError("verifier process: response fields are invalid")
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:

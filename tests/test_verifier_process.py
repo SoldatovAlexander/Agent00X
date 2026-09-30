@@ -16,6 +16,7 @@ from app_contracts.verifier_process import (
     VerifierProcessResponse,
     digest_verifier_request,
     parse_verifier_request,
+    parse_verifier_response,
     serialize_verifier_request,
 )
 
@@ -453,6 +454,142 @@ class VerifierRequestBoundsTests(unittest.TestCase):
                 with self.assertRaises(VerifierProcessError) as raised:
                     serialize_verifier_request(oversized)
                 self.assertNotIn(canary, str(raised.exception))
+
+
+def valid_response_payload(**overrides):
+    payload = {
+        "process_id": "process-local-001",
+        "base_commit": "a" * 40,
+        "snapshot_tree_digest": "sha256:" + "1" * 64,
+        "replay_result_digest": "sha256:" + "6" * 64,
+        "verifier_id": "local-fixture-verifier",
+        "patch_digest": "sha256:" + "2" * 64,
+        "evidence_digest": "sha256:" + "3" * 64,
+        "verification_digest": "sha256:" + "4" * 64,
+        "verified_contents_digest": "sha256:" + "5" * 64,
+        "verdict": "pass",
+        "blocker_codes": [],
+        "evidence_origin": "local_test",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def encode_response_payload(result_payload):
+    import json as json_module
+
+    return json_module.dumps(
+        {"schema_version": 1, "verifier_result": result_payload},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+class VerifierResponseParsingTests(unittest.TestCase):
+    def test_valid_child_output_restores_typed_bounded_result(self):
+        response = parse_verifier_response(
+            encode_response_payload(valid_response_payload())
+        )
+        expected = VerifierProcessResponse.from_verifier_result(valid_verifier_result())
+        self.assertEqual(response, expected)
+        self.assertIs(response.verifier_result.verdict, VerifierVerdict.PASS)
+        self.assertEqual(response.verifier_result.blocker_codes, ())
+        for verdict, member in (
+            ("pass", VerifierVerdict.PASS),
+            ("fail", VerifierVerdict.FAIL),
+            ("blocked", VerifierVerdict.BLOCKED),
+        ):
+            with self.subTest(verdict=verdict):
+                parsed = parse_verifier_response(
+                    encode_response_payload(valid_response_payload(verdict=verdict))
+                )
+                self.assertIs(parsed.verifier_result.verdict, member)
+
+    def test_version_and_field_set_are_strict(self):
+        for version in (b"0", b"2", b'"1"', b"true"):
+            data = b'{"schema_version": ' + version + b', "verifier_result": {}}'
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: response version is invalid$",
+                ):
+                    parse_verifier_response(data)
+        for mutate in (
+            lambda payload: {"schema_version": 1},
+            lambda payload: {"schema_version": 1, "verifier_result": payload,
+                             "extra": True},
+            lambda payload: {"schema_version": 1, "verifier_result": {
+                key: value for key, value in payload.items() if key != "verdict"}},
+            lambda payload: {"schema_version": 1, "verifier_result": {
+                **payload, "unknown": []}},
+        ):
+            with self.assertRaisesRegex(
+                VerifierProcessError,
+                "^verifier process: response fields are invalid$",
+            ):
+                parse_verifier_response(
+                    encode_response_payload(mutate(valid_response_payload()))
+                    if not isinstance(mutate(valid_response_payload()), bytes)
+                    else mutate(valid_response_payload())
+                )
+
+    def test_malformed_encoding_shape_and_duplicates_fail_closed(self):
+        for data in (None, 42, b"\xff\xfe{}", b"", b"[]", b"NaN"):
+            with self.subTest(data=repr(data)[:30]):
+                with self.assertRaises(VerifierProcessError):
+                    parse_verifier_response(data)
+        duplicates = (
+            b'{"schema_version": 1, "schema_version": 1, "verifier_result": {}}',
+            b'{"schema_version": 1, "verifier_result": '
+            b'{"verdict": "pass", "verdict": "fail"}}',
+        )
+        for data in duplicates:
+            with self.subTest(data=data[:50]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: response payload is invalid$",
+                ):
+                    parse_verifier_response(data)
+
+    def test_malformed_values_fail_closed_without_echo(self):
+        canary = "RESPONSE-CANARY-SECRET-VALUE"
+        malformed = {
+            "process_id": (42, None),
+            "verifier_id": (["nested"],),
+            "snapshot_tree_digest": (17,),
+            "replay_result_digest": (False,),
+            "evidence_origin": (None,),
+            "verdict": ("unknown", "PASS", "", None, 42, True),
+            "blocker_codes": (
+                "not-a-list",
+                ["ok", 42],
+                ["BAD-UPPER"],
+                [""],
+                ["a" * 65],
+                ["has space"],
+                ["-leading"],
+                [canary],
+                tuple(f"blocker-{index}" for index in range(17)),
+            ),
+        }
+        for field, values in malformed.items():
+            for value in values:
+                with self.subTest(field=field, value=repr(value)[:30]):
+                    with self.assertRaisesRegex(
+                        VerifierProcessError,
+                        "^verifier process: response fields are invalid$",
+                    ) as raised:
+                        parse_verifier_response(
+                            encode_response_payload(valid_response_payload(**{field: value}))
+                        )
+                    self.assertNotIn(canary, str(raised.exception))
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: response fields are invalid$"
+        ) as raised:
+            parse_verifier_response(
+                b'{"schema_version": 1, "verifier_result": {"verdict": "' + canary.encode() + b'"}}'
+            )
+        self.assertNotIn(canary, str(raised.exception))
 
 
 if __name__ == "__main__":

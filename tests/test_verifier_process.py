@@ -20,12 +20,14 @@ from app_contracts.verifier_process import (
     VERIFIER_PROCESS_SCHEMA_VERSION,
     VerifierProcessConfig,
     VerifierProcessError,
+    VerifierProcessOutcome,
     VerifierProcessRequest,
     VerifierProcessResponse,
     bind_verifier_response,
     digest_verifier_request,
     parse_verifier_request,
     parse_verifier_response,
+    run_verifier_command,
     serialize_verifier_request,
     verifier_child_environ,
 )
@@ -897,18 +899,29 @@ class VerifierProcessConfigTests(unittest.TestCase):
                     ):
                         valid_process_config(**{field: limit})
 
-    def test_process_layer_spawns_no_subprocess_yet(self):
+    def test_process_layer_spawns_only_bounded_children(self):
         import ast
 
         source = Path(__file__).resolve().parents[1] / "src" / "app_contracts" / "verifier_process.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))
         imported = set()
+        shell_true = False
+        host_env_access = False
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported.update(alias.name.lower() for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").lower())
-        self.assertTrue({"subprocess", "os", "pty", "multiprocessing"}.isdisjoint(imported))
+            elif isinstance(node, ast.keyword):
+                if node.arg == "shell" and getattr(node.value, "value", None) is True:
+                    shell_true = True
+            elif isinstance(node, ast.Attribute):
+                if node.attr == "environ":
+                    host_env_access = True
+        self.assertIn("subprocess", imported)
+        self.assertTrue({"pty", "multiprocessing"}.isdisjoint(imported))
+        self.assertFalse(shell_true)
+        self.assertFalse(host_env_access)
 
 
 class VerifierChildEnvironTests(unittest.TestCase):
@@ -959,6 +972,97 @@ class VerifierChildEnvironTests(unittest.TestCase):
         self.assertNotIn(canary, child.stdout)
         self.assertLessEqual(len(child_environ), 3)
         self.assertNotIn(canary_key, os.environ)
+
+
+class VerifierCommandInvocationTests(unittest.TestCase):
+    def test_child_receives_exact_canonical_request_bytes(self):
+        import hashlib
+
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        expected_bytes = serialize_verifier_request(request)
+        script = (
+            "import hashlib, json, sys; "
+            "raw = sys.stdin.buffer.read(); "
+            "payload = json.loads(raw.decode('utf-8')); "
+            "forbidden = [key for key in ('snapshot_path', 'workspace', 'credential', "
+            "'capability', 'environment') if key in repr(payload)]; "
+            "sys.stdout.write(hashlib.sha256(raw).hexdigest() + ('|tainted' if forbidden else '|clean'));"
+        )
+        config = valid_process_config(
+            executable=sys.executable, argv=(sys.executable, "-c", script)
+        )
+        outcome = run_verifier_command(config, request)
+        self.assertIsInstance(outcome, VerifierProcessOutcome)
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual(outcome.stderr, b"")
+        self.assertEqual(
+            outcome.stdout.decode("utf-8"),
+            hashlib.sha256(expected_bytes).hexdigest() + "|clean",
+        )
+
+    def test_timeout_kills_child_once_without_replay(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            counter = str(Path(directory) / "starts.txt")
+            script = (
+                "import sys, time; "
+                "sys.stdin.buffer.read(); "
+                f"open({counter!r}, 'a').write('started\\n'); "
+                "time.sleep(30);"
+            )
+            config = valid_process_config(
+                executable=sys.executable,
+                argv=(sys.executable, "-c", script),
+                timeout_seconds=1,
+            )
+            request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+            with self.assertRaisesRegex(
+                VerifierProcessError, "^verifier process: child timed out$"
+            ):
+                run_verifier_command(config, request)
+            self.assertEqual(Path(counter).read_text(encoding="utf-8"), "started\n")
+
+    def test_malformed_inputs_fail_before_spawn(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            counter = str(Path(directory) / "starts.txt")
+            script = f"open({counter!r}, 'a').write('started\\n');"
+            config = valid_process_config(
+                executable=sys.executable, argv=(sys.executable, "-c", script)
+            )
+            request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+            for bad_config, bad_request in (
+                (None, request),
+                ("not-a-config", request),
+                (config, None),
+                (config, "not-a-request"),
+            ):
+                with self.subTest(config=repr(bad_config)[:20]):
+                    with self.assertRaises(VerifierProcessError):
+                        run_verifier_command(bad_config, bad_request)
+            self.assertFalse(Path(counter).exists())
+
+    def test_launch_failure_is_stable_without_echo(self):
+        canary = "LAUNCH-CANARY-SECRET-PATH"
+        config = valid_process_config(executable=f"/nonexistent/{canary}")
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: child launch failed$"
+        ) as raised:
+            run_verifier_command(config, request)
+        self.assertNotIn(canary, str(raised.exception))
+
+    def test_outcome_record_rejects_malformed_values(self):
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: child outcome is invalid$"
+        ):
+            VerifierProcessOutcome(True, b"", b"")
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: child outcome is invalid$"
+        ):
+            VerifierProcessOutcome(0, "not-bytes", b"")
 
 
 if __name__ == "__main__":

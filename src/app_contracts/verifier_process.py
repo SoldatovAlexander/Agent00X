@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 import re
+import subprocess
 
 from .digests import sha256_bytes
 from .executor import (
@@ -129,6 +130,83 @@ def verifier_child_environ(extra: object = None) -> dict[str, str]:
         if type(key) is not str or not key or type(value) is not str:
             raise VerifierProcessError("verifier process: child environment is invalid")
     return dict(extra)
+
+
+@dataclass(frozen=True)
+class VerifierProcessOutcome:
+    """Raw completion record of one bounded child invocation.
+
+    The exit code, stdout and stderr are reported as observed, without any
+    output size caps or verdict interpretation; those belong to later stages.
+    """
+
+    exit_code: int
+    stdout: bytes
+    stderr: bytes
+
+    def __post_init__(self) -> None:
+        if type(self.exit_code) is not int:
+            raise VerifierProcessError("verifier process: child outcome is invalid")
+        if type(self.stdout) is not bytes or type(self.stderr) is not bytes:
+            raise VerifierProcessError("verifier process: child outcome is invalid")
+
+
+def run_verifier_command(
+    config: object,
+    request: object,
+    *,
+    environ: object = None,
+) -> VerifierProcessOutcome:
+    """Run the configured command once with the canonical request on stdin.
+
+    The argument vector is passed without a shell, stdin carries only the
+    canonical request bytes, and the child environment is minimal and
+    explicit. The child is started at most once: malformed inputs fail before
+    any spawn, and a timeout kills the child, reaps it and raises a stable
+    error without retry.
+    """
+
+    if type(config) is not VerifierProcessConfig:
+        raise VerifierProcessError("verifier process: command config is invalid")
+    if type(request) is not VerifierProcessRequest:
+        raise VerifierProcessError("verifier process: request shape is invalid")
+    child_environ = verifier_child_environ(environ)
+    stdin_bytes = serialize_verifier_request(request)
+    try:
+        process = subprocess.Popen(
+            list(config.argv),
+            executable=config.executable,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_environ,
+            shell=False,
+        )
+    except Exception:
+        raise VerifierProcessError("verifier process: child launch failed") from None
+    try:
+        stdout, stderr = process.communicate(stdin_bytes, timeout=config.timeout_seconds)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            stdout, stderr = process.communicate()
+        except Exception:
+            stdout, stderr = b"", b""
+        raise VerifierProcessError("verifier process: child timed out") from None
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            process.wait()
+        except Exception:
+            pass
+        raise VerifierProcessError("verifier process: child launch failed") from None
+    return VerifierProcessOutcome(process.returncode, stdout, stderr)
 
 
 @dataclass(frozen=True)

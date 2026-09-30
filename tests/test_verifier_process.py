@@ -1657,5 +1657,125 @@ class SubprocessVerdictMappingTests(unittest.TestCase):
                 self.assertEqual(result.failure_code, "verifier-not-pass")
 
 
+class SubprocessTimeoutCrashTests(unittest.TestCase):
+    def test_timeout_yields_stable_failure_without_retry_or_remnants(self):
+        import tempfile
+        import time
+
+        from app_contracts.executor import ExecutionStatus, run_local_execution
+
+        with tempfile.TemporaryDirectory() as directory:
+            counter = str(Path(directory) / "starts.txt")
+            script = (
+                "import sys, time; "
+                "sys.stdin.buffer.read(); "
+                f"open({counter!r}, 'a').write('started\\n'); "
+                "time.sleep(30);"
+            )
+            adapter = SubprocessVerifier(
+                valid_process_config(
+                    executable=sys.executable,
+                    argv=(sys.executable, "-c", script),
+                    timeout_seconds=1,
+                )
+            )
+            with pinned_subprocess_run("placeholder") as (
+                request, worker, _adapter, _proposed, _pin, _root
+            ):
+                started = time.monotonic()
+                result = run_local_execution(
+                    request, worker, verifier=adapter, require_pinned_snapshot=True
+                )
+                elapsed = time.monotonic() - started
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(result.failure_code, "verifier-failed")
+                self.assertNotEqual(result.status, ExecutionStatus.VERIFIED)
+            self.assertEqual(Path(counter).read_text(encoding="utf-8"), "started\n")
+            self.assertLess(elapsed, 20)
+
+    def test_crash_yields_stable_failure_without_retry(self):
+        import tempfile
+
+        from app_contracts.executor import ExecutionStatus, run_local_execution
+
+        with tempfile.TemporaryDirectory() as directory:
+            counter = str(Path(directory) / "starts.txt")
+            script = (
+                "import os, signal, sys; "
+                "sys.stdin.buffer.read(); "
+                f"open({counter!r}, 'a').write('started\\n'); "
+                "os.kill(os.getpid(), signal.SIGKILL);"
+            )
+            adapter = SubprocessVerifier(
+                valid_process_config(
+                    executable=sys.executable, argv=(sys.executable, "-c", script)
+                )
+            )
+            with self.assertRaisesRegex(
+                VerifierProcessError, "^verifier process: child exit failed$"
+            ):
+                adapter.verify(valid_verifier_input())
+            self.assertEqual(Path(counter).read_text(encoding="utf-8"), "started\n")
+            with pinned_subprocess_run("placeholder") as (
+                request, worker, _adapter, _proposed, _pin, _root
+            ):
+                result = run_local_execution(
+                    request, worker, verifier=adapter, require_pinned_snapshot=True
+                )
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(result.failure_code, "verifier-failed")
+
+    def test_no_request_output_temp_files_and_no_second_invocation(self):
+        import tempfile
+
+        from app_contracts.executor import ExecutionStatus, run_local_execution
+
+        with tempfile.TemporaryDirectory() as directory:
+            counter = str(Path(directory) / "starts.txt")
+            script = (
+                "import hashlib, json, sys; "
+                "raw = sys.stdin.buffer.read(); "
+                f"open({counter!r}, 'a').write('started\\n'); "
+                "req = json.loads(raw.decode('utf-8'))['verifier_input']; "
+                "result = {'process_id': req['process_id'], 'base_commit': req['base_commit'], "
+                "'snapshot_tree_digest': req['snapshot_tree_digest'], "
+                "'replay_result_digest': req['replay_result_digest'], "
+                "'verifier_id': 'tempfile-child-verifier', "
+                "'patch_digest': req['patch_digest'], 'evidence_digest': req['evidence_digest'], "
+                "'verification_digest': req['verification_digest'], "
+                "'verified_contents_digest': req['verified_contents_digest'], "
+                "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
+                "sys.stdout.write(json.dumps({'schema_version': 1, "
+                "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
+                "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
+            )
+            adapter = SubprocessVerifier(
+                valid_process_config(
+                    executable=sys.executable, argv=(sys.executable, "-c", script)
+                )
+            )
+            with pinned_subprocess_run("placeholder") as (
+                request, worker, _adapter, _proposed, pin, root
+            ):
+                result = run_local_execution(
+                    request, worker, verifier=adapter, require_pinned_snapshot=True
+                )
+                leftovers = [
+                    path.relative_to(root).as_posix()
+                    for path in root.rglob("*")
+                    if path.is_file()
+                    and ".git" not in path.parts
+                    and (
+                        path.suffix == ".json"
+                        or "request" in path.name
+                        or "response" in path.name
+                        or "output" in path.name
+                    )
+                ]
+                self.assertEqual(leftovers, [])
+                self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+            self.assertEqual(Path(counter).read_text(encoding="utf-8"), "started\n")
+
+
 if __name__ == "__main__":
     unittest.main()

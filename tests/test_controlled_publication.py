@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -31,6 +31,7 @@ import app_contracts.controlled_publication as gate_module
 from app_contracts.digests import sha256_digest
 from app_contracts.gateway import GatewayDecision, GatewayPath
 from app_contracts.executor import (
+    ExecutionError,
     ExecutionRequest,
     ExecutionStatus,
     VerifierInput,
@@ -49,6 +50,7 @@ from app_contracts.pinned_snapshot import (
 from app_contracts.publication_seed import (
     PublicationIntent,
     PublicationSeed,
+    PublicationSeedError,
     build_publication_seed,
     derive_publication_intent,
 )
@@ -392,7 +394,7 @@ class ApprovalGateTests(unittest.TestCase):
 
 
 @contextmanager
-def decided_gate_fixture(*, include_seed=False):
+def decided_gate_fixture(*, include_seed=False, include_details=False):
     captured = {}
     with tempfile.TemporaryDirectory() as temporary_directory:
         root = Path(temporary_directory)
@@ -492,7 +494,12 @@ def decided_gate_fixture(*, include_seed=False):
             )
             assert evaluated["effect"] == "allow", repr(evaluated)
             fixture = intent, approval, policy, engine_intent, staged_change, evaluated
-            yield (*fixture, seed) if include_seed else fixture
+            if include_details:
+                yield (*fixture, seed, request, result)
+            elif include_seed:
+                yield (*fixture, seed)
+            else:
+                yield fixture
         finally:
             lease.close()
 
@@ -1834,6 +1841,92 @@ class PinnedToMockPublicationTests(unittest.TestCase):
                         )
                     self.assertEqual(len(endpoint._by_idempotency_key), 1)
                     self.assertEqual(journal.get(intent.process_id).status, "completed")
+
+
+class InvalidExecutionEvidenceTests(unittest.TestCase):
+    def test_failed_verifier_replay_mismatch_and_stale_pin_stop_before_publication_gates(self):
+        with decided_gate_fixture(include_details=True) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated,
+            _seed, request, _verified_result,
+        ):
+            class FailedVerifier:
+                def verify(self, prepared):
+                    return replace(
+                        AcceptingVerifier().verify(prepared),
+                        verdict=VerifierVerdict.FAIL,
+                        blocker_codes=("verification-failed",),
+                    )
+
+            class ReplayMismatchVerifier:
+                def verify(self, prepared):
+                    return replace(
+                        AcceptingVerifier().verify(prepared),
+                        replay_result_digest=sha256_digest("mismatched-replay"),
+                    )
+
+            stale_pin = replace(
+                request.pinned_snapshot,
+                tree_digest=sha256_digest("stale-pinned-tree"),
+            )
+            stale_request = replace(request, pinned_snapshot=stale_pin)
+            cases = (
+                ("failed-verifier", request, FailedVerifier(), PublicationSeedError,
+                 "^publication seed: execution status is not verified$"),
+                ("replay-mismatch", request, ReplayMismatchVerifier(), ExecutionError,
+                 "^execution verifier: result binding mismatch$"),
+                ("stale-pin", stale_request, AcceptingVerifier(), ExecutionError,
+                 "^execution snapshot: digest mismatch$"),
+            )
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    gateway = FakeGateway(gateway_events)
+                    approval_calls = []
+                    policy_calls = []
+                    loader_calls = []
+                    original_approval_gate = gate_module.run_approval_gate
+                    original_decide = policy.decide
+
+                    def checked_attempt(candidate_request, verifier):
+                        result = run_local_execution(
+                            candidate_request,
+                            SeedWorker(),
+                            verifier=verifier,
+                            require_pinned_snapshot=True,
+                        )
+                        candidate_seed = build_publication_seed(candidate_request, result)
+                        return gate_module.run_controlled_local_publication(
+                            candidate_seed, intent, approval, policy, engine_intent,
+                            lambda _seed: loader_calls.append("called") or staged_change,
+                            "decision-local-001", gateway, gateway_envelope(intent),
+                            broker, matching_grant(intent), journal, endpoint,
+                            actuator_id="test-actuator", now=FIXED_NOW,
+                        )
+
+                    def record_approval_gate(*args, **kwargs):
+                        approval_calls.append("called")
+                        return original_approval_gate(*args, **kwargs)
+
+                    def record_policy_decide(**kwargs):
+                        policy_calls.append("called")
+                        return original_decide(**kwargs)
+
+                    with patch.object(gate_module, "run_approval_gate", record_approval_gate), \
+                         patch.object(policy, "decide", record_policy_decide):
+                        for label, candidate_request, verifier, error_type, message in cases:
+                            with self.subTest(case=label):
+                                with self.assertRaisesRegex(error_type, message):
+                                    checked_attempt(candidate_request, verifier)
+                                self.assertEqual(approval_calls, [])
+                                self.assertEqual(policy_calls, [])
+                                self.assertEqual(loader_calls, [])
+                                self.assertEqual(gateway_events, [])
+                                self.assertEqual(broker.opened_grants, [])
+                                self.assertEqual(len(endpoint._by_idempotency_key), 0)
+                                with self.assertRaises(KeyError):
+                                    journal.get(intent.process_id)
 
 if __name__ == "__main__":
     unittest.main()

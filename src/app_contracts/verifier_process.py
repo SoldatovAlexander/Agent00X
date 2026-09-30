@@ -11,7 +11,13 @@ import json
 import re
 
 from .digests import sha256_bytes
-from .executor import MAX_VERIFIER_BLOCKER_CODES, VerifierInput, VerifierResult, VerifierVerdict
+from .executor import (
+    MAX_VERIFIER_BLOCKER_CODES,
+    VerifierInput,
+    VerifierResult,
+    VerifierVerdict,
+    validate_verifier_result,
+)
 
 
 VERIFIER_PROCESS_SCHEMA_VERSION = 1
@@ -310,6 +316,29 @@ def parse_verifier_response(data: object) -> VerifierProcessResponse:
         evidence_origin=raw_result["evidence_origin"],
     )
     return VerifierProcessResponse(version, verifier_result)
+
+
+def bind_verifier_response(
+    request: VerifierProcessRequest,
+    request_digest: object,
+    response: VerifierProcessResponse,
+) -> VerifierResult:
+    """Bind a parsed response to its exact source request.
+
+    The presented request digest must equal the freshly recomputed digest of
+    the source request, and the response must satisfy every existing
+    ``validate_verifier_result`` binding against that same request. Any
+    substitution is rejected before the typed result is returned; the
+    existing executor bindings are reused unchanged, never reimplemented.
+    """
+
+    if type(request) is not VerifierProcessRequest:
+        raise VerifierProcessError("verifier process: request shape is invalid")
+    if type(response) is not VerifierProcessResponse:
+        raise VerifierProcessError("verifier process: response shape is invalid")
+    if type(request_digest) is not str or request_digest != digest_verifier_request(request):
+        raise VerifierProcessError("verifier process: request digest mismatch")
+    return validate_verifier_result(response.verifier_result, request.verifier_input)
 
 
 def _validate_verifier_result_shape(raw_result: dict[str, object]) -> None:

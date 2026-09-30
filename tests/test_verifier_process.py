@@ -8,12 +8,18 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.executor import VerifierInput, VerifierResult, VerifierVerdict
+from app_contracts.executor import (
+    ExecutionError,
+    VerifierInput,
+    VerifierResult,
+    VerifierVerdict,
+)
 from app_contracts.verifier_process import (
     VERIFIER_PROCESS_SCHEMA_VERSION,
     VerifierProcessError,
     VerifierProcessRequest,
     VerifierProcessResponse,
+    bind_verifier_response,
     digest_verifier_request,
     parse_verifier_request,
     parse_verifier_response,
@@ -589,6 +595,84 @@ class VerifierResponseParsingTests(unittest.TestCase):
             parse_verifier_response(
                 b'{"schema_version": 1, "verifier_result": {"verdict": "' + canary.encode() + b'"}}'
             )
+        self.assertNotIn(canary, str(raised.exception))
+
+
+def valid_bound_trio():
+    request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+    digest = digest_verifier_request(request)
+    response = parse_verifier_response(
+        encode_response_payload(valid_response_payload())
+    )
+    return request, digest, response
+
+
+class VerifierResponseBindingTests(unittest.TestCase):
+    def test_matching_trio_returns_typed_result(self):
+        request, digest, response = valid_bound_trio()
+        result = bind_verifier_response(request, digest, response)
+        self.assertEqual(result, response.verifier_result)
+        self.assertIsInstance(result, VerifierResult)
+        self.assertIs(result.verdict, VerifierVerdict.PASS)
+
+    def test_request_digest_must_match_exact_source_request(self):
+        request, digest, response = valid_bound_trio()
+        for forged_digest in (None, 42, "", "sha256:" + "f" * 64, digest + "tampered"):
+            with self.subTest(digest=repr(forged_digest)[:30]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: request digest mismatch$",
+                ):
+                    bind_verifier_response(request, forged_digest, response)
+        tampered_request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{**valid_verifier_input().__dict__, "process_id": "process-forged-001"}
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request digest mismatch$"
+        ):
+            bind_verifier_response(tampered_request, digest, response)
+
+    def test_any_binding_substitution_uses_existing_executor_contract(self):
+        request, digest, response = valid_bound_trio()
+        for field, value in (
+            ("process_id", "process-foreign-001"),
+            ("base_commit", "b" * 40),
+            ("snapshot_tree_digest", "sha256:" + "f" * 64),
+            ("replay_result_digest", "sha256:" + "e" * 64),
+            ("patch_digest", "sha256:" + "d" * 64),
+            ("evidence_digest", "sha256:" + "c" * 64),
+            ("verification_digest", "sha256:" + "b" * 64),
+            ("verified_contents_digest", "sha256:" + "a" * 64),
+        ):
+            with self.subTest(field=field):
+                forged_result = VerifierResult(
+                    **{**response.verifier_result.__dict__, field: value}
+                )
+                forged_response = VerifierProcessResponse(
+                    VERIFIER_PROCESS_SCHEMA_VERSION, forged_result
+                )
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution verifier: result binding mismatch$"
+                ):
+                    bind_verifier_response(request, digest, forged_response)
+
+    def test_malformed_binding_inputs_fail_closed_without_echo(self):
+        canary = "BIND-CANARY-SECRET-VALUE"
+        request, digest, response = valid_bound_trio()
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request shape is invalid$"
+        ):
+            bind_verifier_response({"forged": canary}, digest, response)
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: response shape is invalid$"
+        ):
+            bind_verifier_response(request, digest, {"verdict": canary})
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request digest mismatch$"
+        ) as raised:
+            bind_verifier_response(request, canary, response)
         self.assertNotIn(canary, str(raised.exception))
 
 

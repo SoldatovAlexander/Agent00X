@@ -2128,5 +2128,120 @@ class BrokerGrantMatrixTests(unittest.TestCase):
                     with self.assertRaises(KeyError):
                         journal.get(intent.process_id)
 
+
+class JournalIdempotencyIntegrationTests(unittest.TestCase):
+    def _authority(self, intent, approval_id, policy_version):
+        expires_at = format_time(FIXED_NOW + timedelta(hours=1))
+        engine_intent = {
+            "process_id": intent.process_id,
+            "repository_id": intent.repository_id,
+            "base_commit": intent.base_commit,
+            "operation": "publish_pull_request",
+            "approval_id": approval_id,
+            "expires_at": expires_at,
+            "branch_namespace": intent.branch.split("/", 1)[0],
+            "idempotency_key": intent.idempotency_key,
+            "staged_change_digest": intent.staged_change_digest,
+        }
+        approval = {
+            "process_id": intent.process_id,
+            "repository_id": intent.repository_id,
+            "operation": "publish_pull_request",
+            "approval_id": approval_id,
+            "policy_version": policy_version,
+            "expires_at": expires_at,
+            "staged_change_digest": intent.staged_change_digest,
+            "approved_intent_digest": sha256_digest(engine_intent),
+        }
+        return approval, engine_intent
+
+    def _run(self, seed, intent, staged_change, approval, engine_intent,
+             policy, journal, endpoint, grant_id, decision_id):
+        broker = InMemoryCredentialBroker(lambda: endpoint)
+        grant = dict(matching_grant(intent), credential_grant_id=grant_id)
+        return run_controlled_local_publication(
+            seed, intent, approval, policy, engine_intent,
+            lambda _seed: staged_change, decision_id, FakeGateway([]),
+            gateway_envelope(intent), broker, grant, journal, endpoint,
+            actuator_id="test-actuator", now=FIXED_NOW,
+        )
+
+    def test_matching_replay_is_idempotent_and_conflicting_intents_are_rejected(self):
+        with decided_gate_fixture(include_seed=True) as (
+            intent, _approval, _policy, _engine_intent, staged_change, _evaluated, seed
+        ):
+            config = PolicyConfig(
+                version="policy-test-v1",
+                allowed_repositories=frozenset({"fixture-repository", "foreign-repository"}),
+                allowed_actuators=frozenset({"test-actuator"}),
+            )
+            policy = DeterministicPolicy(config)
+            approval, engine_intent = self._authority(intent, "approval-original", config.version)
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    original_receipt = self._run(
+                        seed, intent, staged_change, approval, engine_intent, policy,
+                        journal, endpoint, "grant-original", "decision-original",
+                    )
+                    original_record = journal.get(intent.process_id)
+                    self.assertEqual(original_record.status, "completed")
+                    self.assertEqual(original_record.pull_request_id, original_receipt.pull_request_id)
+                    self.assertEqual(original_record.request_digest, journal.get(intent.process_id).request_digest)
+
+                    with self.assertRaisesRegex(ValueError, "^publication is not prepared$"):
+                        self._run(
+                            seed, intent, staged_change, approval, engine_intent, policy,
+                            journal, endpoint, "grant-repeat", "decision-original",
+                        )
+                    self.assertEqual(journal.get(intent.process_id), original_record)
+                    self.assertEqual(len(endpoint._by_idempotency_key), 1)
+
+                    changed_contents = dict(staged_change, staged_change_id="staged-alternate")
+                    changed_digest = sha256_digest(changed_contents)
+                    alternatives = (
+                        (
+                            "branch",
+                            seed,
+                            derive_publication_intent(seed, "agent/process-alternate"),
+                            staged_change,
+                        ),
+                        (
+                            "repository",
+                            replace(seed, repository_id="foreign-repository"),
+                            None,
+                            staged_change,
+                        ),
+                        (
+                            "staged-digest",
+                            replace(seed, staged_change_digest=changed_digest),
+                            None,
+                            changed_contents,
+                        ),
+                    )
+                    for label, alternate_seed, alternate_intent, contents in alternatives:
+                        with self.subTest(conflict=label):
+                            if alternate_intent is None:
+                                alternate_intent = derive_publication_intent(
+                                    alternate_seed, "agent/process-demo-001"
+                                )
+                            alternate_approval, alternate_engine_intent = self._authority(
+                                alternate_intent, f"approval-{label}", config.version
+                            )
+                            with self.assertRaisesRegex(
+                                ValueError, "^publication payload conflict$"
+                            ):
+                                self._run(
+                                    alternate_seed, alternate_intent, contents,
+                                    alternate_approval, alternate_engine_intent, policy,
+                                    journal, endpoint, f"grant-{label}", f"decision-{label}",
+                                )
+                            self.assertEqual(journal.get(intent.process_id), original_record)
+                            self.assertEqual(len(endpoint._by_idempotency_key), 1)
+                            self.assertEqual(
+                                endpoint.find_by_idempotency_key(intent.idempotency_key),
+                                original_receipt,
+                            )
+
 if __name__ == "__main__":
     unittest.main()

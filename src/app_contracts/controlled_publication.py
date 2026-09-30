@@ -189,6 +189,33 @@ def run_gateway_gate(
         raise ControlledPublicationError("controlled publication: gateway is invalid")
     moment = _require_clock(now)
     check_decision_usable(decision, now=moment)
+    _require_bound_envelope(intent, envelope)
+    try:
+        gateway_decision = gateway(envelope, now=moment)
+    except Exception:
+        raise ControlledPublicationError(
+            "controlled publication: gateway invocation failed"
+        ) from None
+    if (
+        not isinstance(gateway_decision, GatewayDecision)
+        or gateway_decision.allowed is not True
+        or gateway_decision.path is not GatewayPath.SLOW
+        or not isinstance(gateway_decision.reason_codes, tuple)
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: gateway has not authorized slow path"
+        )
+    return proceed(intent, approval, decision, gateway_decision)
+
+
+def _require_bound_envelope(intent: PublicationIntent, envelope: Any) -> None:
+    """Bind a gateway envelope to the same seed-bound intent.
+
+    Operation, destination repository, source principal, staged digest and
+    correlation key must equal the intent, so a gateway verdict cannot belong
+    to a foreign request. Shared by every gate that invokes the gateway.
+    """
+
     if not isinstance(envelope, dict):
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
     if not isinstance(envelope.get("intent"), dict) or envelope["intent"].get(
@@ -209,29 +236,14 @@ def run_gateway_gate(
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
     if envelope.get("correlation_id") != intent.idempotency_key:
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
-    try:
-        gateway_decision = gateway(envelope, now=moment)
-    except Exception:
-        raise ControlledPublicationError(
-            "controlled publication: gateway invocation failed"
-        ) from None
-    if (
-        not isinstance(gateway_decision, GatewayDecision)
-        or gateway_decision.allowed is not True
-        or gateway_decision.path is not GatewayPath.SLOW
-        or not isinstance(gateway_decision.reason_codes, tuple)
-    ):
-        raise ControlledPublicationError(
-            "controlled publication: gateway has not authorized slow path"
-        )
-    return proceed(intent, approval, decision, gateway_decision)
 
 
 def run_broker_gate(
     intent: PublicationIntent,
     approval: Any,
     decision: Any,
-    gateway_decision: Any,
+    gateway: Any,
+    envelope: Any,
     broker: Any,
     credential_grant: Any,
     *,
@@ -245,7 +257,10 @@ def run_broker_gate(
     credential class, single-use flag and expiry — are verified against the
     same seed-bound intent before the broker is touched, the policy decision
     itself is bound back to the same intent by operation, repository and
-    staged digest, and the slow-allow is re-verified for direct entry. The
+    staged digest, and the gateway transition is verified live: the envelope
+    bound to the same intent is passed to the injected gateway here, and only
+    its genuine slow-allow opens the broker path. A caller-constructed
+    verdict is never accepted, so no direct path can bypass the gateway. The
     channel itself is opened through the injected broker and handed
     downstream; this gate never calls the provider endpoint, so a refusal
     leaves zero endpoint side effects. A reused grant, a grant for another
@@ -262,15 +277,8 @@ def run_broker_gate(
         raise ControlledPublicationError("controlled publication: approval is missing")
     if not isinstance(decision, dict):
         raise ControlledPublicationError("controlled publication: decision is missing")
-    if (
-        not isinstance(gateway_decision, GatewayDecision)
-        or gateway_decision.allowed is not True
-        or gateway_decision.path is not GatewayPath.SLOW
-        or not isinstance(gateway_decision.reason_codes, tuple)
-    ):
-        raise ControlledPublicationError(
-            "controlled publication: gateway has not authorized slow path"
-        )
+    if not callable(gateway):
+        raise ControlledPublicationError("controlled publication: gateway is invalid")
     if not callable(getattr(broker, "open_github_publication_channel", None)):
         raise ControlledPublicationError("controlled publication: broker is invalid")
     if not isinstance(credential_grant, dict):
@@ -311,6 +319,22 @@ def run_broker_gate(
     }
     if credential_grant.get("request_digest") != sha256_digest(actuator_request):
         raise ControlledPublicationError("controlled publication: credential grant binding mismatch")
+    _require_bound_envelope(intent, envelope)
+    try:
+        gateway_decision = gateway(envelope, now=moment)
+    except Exception:
+        raise ControlledPublicationError(
+            "controlled publication: gateway invocation failed"
+        ) from None
+    if (
+        not isinstance(gateway_decision, GatewayDecision)
+        or gateway_decision.allowed is not True
+        or gateway_decision.path is not GatewayPath.SLOW
+        or not isinstance(gateway_decision.reason_codes, tuple)
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: gateway has not authorized slow path"
+        )
     try:
         channel = broker.open_github_publication_channel(
             credential_grant, actuator_request, now=moment

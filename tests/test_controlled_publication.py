@@ -1067,9 +1067,13 @@ class BrokerDownstream:
 
 def invoke_broker_gate(intent, approval, decision, broker, grant, downstream,
                        *, actuator_id="test-actuator", now=FIXED_NOW,
-                       gateway_decision=None):
+                       gateway=None, envelope=None):
+    if gateway is None:
+        gateway = FakeGateway([])
+    if envelope is None:
+        envelope = gateway_envelope(intent)
     return run_broker_gate(
-        intent, approval, decision, gateway_decision or slow_allow_decision(),
+        intent, approval, decision, gateway, envelope,
         broker, grant, actuator_id=actuator_id, now=now, proceed=downstream.proceed,
     )
 
@@ -1103,20 +1107,22 @@ class BrokerGateTests(unittest.TestCase):
             downstream = BrokerDownstream(events)
             envelope = gateway_envelope(intent)
 
-            def proceed_to_broker(gate_intent, gate_approval, gate_decision, gateway_decision):
+            def proceed_to_broker(gate_intent, gate_approval, gate_decision):
                 return invoke_broker_gate(
                     gate_intent, gate_approval, gate_decision, broker,
                     matching_grant(gate_intent), downstream,
-                    gateway_decision=gateway_decision,
+                    gateway=gateway, envelope=envelope,
                 )
 
-            marker, passed = run_gateway_gate(
-                intent, approval, evaluated, gateway, envelope,
-                now=FIXED_NOW, proceed=proceed_to_broker,
+            marker, passed = invoke_policy_gate(
+                intent, approval, policy, engine_intent, staged_change,
+                PolicyProceedAdapter(proceed_to_broker),
             )
             self.assertEqual(marker, "channel-ready")
             self.assertIs(passed, intent)
             self.assertEqual(events, ["gateway.call", "endpoint.ready"])
+            self.assertEqual(len(gateway.calls), 1)
+            self.assertIs(gateway.calls[0][0], envelope)
             self.assertEqual(len(broker.opens), 1)
 
     def test_binding_mismatch_stops_before_broker_open(self):
@@ -1194,7 +1200,7 @@ class BrokerGateTests(unittest.TestCase):
             self.assertEqual(len(broker.opens), 2)
             self.assertEqual(first.received[4].endpoint_calls, [])
 
-    def test_non_slow_gateway_decision_stops_before_broker_open(self):
+    def test_non_slow_gateway_output_stops_before_broker_open(self):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
             for label, verdict in {
                 "deny": GatewayDecision(GatewayPath.SLOW, False, ("denied",)),
@@ -1203,18 +1209,64 @@ class BrokerGateTests(unittest.TestCase):
                 "malformed": "not-a-decision",
             }.items():
                 with self.subTest(gateway=label):
+                    events = []
+                    gateway = FakeGateway(events, verdict=verdict)
                     broker = FakeBroker()
-                    downstream = BrokerDownstream(events := [])
+                    downstream = BrokerDownstream(events)
                     with self.assertRaisesRegex(
                         ControlledPublicationError,
                         "^controlled publication: gateway has not authorized slow path$",
                     ):
                         invoke_broker_gate(
                             intent, approval, evaluated, broker, matching_grant(intent),
-                            downstream, gateway_decision=verdict,
+                            downstream, gateway=gateway,
+                            envelope=gateway_envelope(intent),
                         )
+                    self.assertEqual(events, ["gateway.call"])
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(downstream.calls, 0)
+
+    def test_fabricated_verdict_cannot_replace_gateway_invocation(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            fabricated = slow_allow_decision()
+            self.assertIs(fabricated.path, GatewayPath.SLOW)
+            self.assertIs(fabricated.allowed, True)
+            events = []
+            broker = FakeBroker()
+            downstream = BrokerDownstream(events)
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: gateway is invalid$",
+            ):
+                invoke_broker_gate(
+                    intent, approval, evaluated, broker, matching_grant(intent),
+                    downstream, gateway=fabricated,
+                    envelope=gateway_envelope(intent),
+                )
+            self.assertEqual(events, [])
+            self.assertEqual(broker.opens, [])
+            self.assertEqual(downstream.calls, 0)
+
+    def test_unbound_envelope_never_reaches_live_gateway(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            foreign = dict(
+                gateway_envelope(intent), correlation_id="foreign-correlation"
+            )
+            events = []
+            gateway = FakeGateway(events)
+            broker = FakeBroker()
+            downstream = BrokerDownstream(events)
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: gateway envelope mismatch$",
+            ):
+                invoke_broker_gate(
+                    intent, approval, evaluated, broker, matching_grant(intent),
+                    downstream, gateway=gateway, envelope=foreign,
+                )
+            self.assertEqual(events, [])
+            self.assertEqual(broker.opens, [])
+            self.assertEqual(downstream.calls, 0)
 
     def test_stale_decision_and_bad_wiring_stop_before_broker_open(self):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
@@ -1228,6 +1280,8 @@ class BrokerGateTests(unittest.TestCase):
                 ("bad-intent", {"intent": None}),
                 ("bad-approval", {"approval": None}),
                 ("bad-decision", {"decision": None}),
+                ("bad-gateway", {"gateway": None}),
+                ("bad-envelope", {"envelope": "not-a-mapping"}),
                 ("bad-broker", {"broker": None}),
                 ("bad-actuator", {"actuator_id": ""}),
                 ("bad-now", {"now": None}),
@@ -1235,8 +1289,11 @@ class BrokerGateTests(unittest.TestCase):
                 with self.subTest(wiring=label):
                     broker = FakeBroker()
                     downstream = BrokerDownstream(events := [])
+                    gateway_events = []
                     base = {
                         "intent": intent, "approval": approval, "decision": evaluated,
+                        "gateway": FakeGateway(gateway_events),
+                        "envelope": gateway_envelope(intent),
                         "broker": broker, "grant": matching_grant(intent),
                         "downstream": downstream,
                     }
@@ -1248,12 +1305,13 @@ class BrokerGateTests(unittest.TestCase):
                     with self.assertRaises(ControlledPublicationError):
                         run_broker_gate(
                             base["intent"], base["approval"], base["decision"],
-                            slow_allow_decision(), broker_used, base["grant"],
+                            base["gateway"], base["envelope"], broker_used, base["grant"],
                             actuator_id=base.get("actuator_id", "test-actuator")
                             if label != "bad-actuator" else "",
                             now=base["now"] if "now" in base else FIXED_NOW,
                             proceed=downstream.proceed,
                         )
+                    self.assertEqual(gateway_events, [])
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(downstream.calls, 0)
 

@@ -27,6 +27,7 @@ from app_contracts.verifier_process import (
     parse_verifier_request,
     parse_verifier_response,
     serialize_verifier_request,
+    verifier_child_environ,
 )
 
 
@@ -908,6 +909,56 @@ class VerifierProcessConfigTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom):
                 imported.add((node.module or "").lower())
         self.assertTrue({"subprocess", "os", "pty", "multiprocessing"}.isdisjoint(imported))
+
+
+class VerifierChildEnvironTests(unittest.TestCase):
+    def test_default_environ_is_empty_and_explicit_mapping_is_copied(self):
+        self.assertEqual(verifier_child_environ(), {})
+        self.assertEqual(verifier_child_environ({}), {})
+        provided = {"VERIFIER_MODE": "local-check"}
+        built = verifier_child_environ(provided)
+        self.assertEqual(built, provided)
+        self.assertIsNot(built, provided)
+
+    def test_malformed_extra_mapping_is_rejected_without_echo(self):
+        canary = "ENV-CANARY-SECRET"
+        for extra in (42, "VAR=1", [("A", "B")], {None: "v"}, {"": "v"}, {"A": 1},
+                      {"A": None}, {canary: None}):
+            with self.subTest(extra=repr(extra)[:40]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: child environment is invalid$",
+                ) as raised:
+                    verifier_child_environ(extra)
+                self.assertNotIn(canary, str(raised.exception))
+
+    def test_canary_parent_variable_is_absent_from_child(self):
+        import json as json_module
+        import os
+        import subprocess
+
+        canary_key = "APP_CONTRACTS_TEST_CANARY_VARIABLE"
+        canary = "ENV-PARENT-CANARY-SECRET"
+        os.environ[canary_key] = canary
+        try:
+            child = subprocess.run(
+                [sys.executable, "-c",
+                 "import json, os; print(json.dumps(dict(os.environ)))"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=verifier_child_environ({"VERIFIER_MODE": "local-check"}),
+                check=False,
+            )
+        finally:
+            del os.environ[canary_key]
+        self.assertEqual(child.returncode, 0)
+        child_environ = json_module.loads(child.stdout)
+        self.assertEqual(child_environ.get("VERIFIER_MODE"), "local-check")
+        self.assertNotIn(canary_key, child_environ)
+        self.assertNotIn(canary, child.stdout)
+        self.assertLessEqual(len(child_environ), 3)
+        self.assertNotIn(canary_key, os.environ)
 
 
 if __name__ == "__main__":

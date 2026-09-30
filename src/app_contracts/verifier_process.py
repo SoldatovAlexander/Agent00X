@@ -113,6 +113,24 @@ class VerifierProcessError(ValueError):
     """A verifier process record is malformed or unsupported."""
 
 
+def verifier_child_environ(extra: object = None) -> dict[str, str]:
+    """Build the minimal explicit environment for one verifier child.
+
+    The host environment is never inherited: the child receives exactly the
+    explicitly provided mapping and nothing else, so credentials and
+    host-specific variables cannot become verifier input by default.
+    """
+
+    if extra is None:
+        return {}
+    if type(extra) is not dict:
+        raise VerifierProcessError("verifier process: child environment is invalid")
+    for key, value in extra.items():
+        if type(key) is not str or not key or type(value) is not str:
+            raise VerifierProcessError("verifier process: child environment is invalid")
+    return dict(extra)
+
+
 @dataclass(frozen=True)
 class VerifierProcessConfig:
     """Fixed adapter config for one local verifier child command.

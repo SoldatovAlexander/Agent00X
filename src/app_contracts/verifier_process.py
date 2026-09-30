@@ -121,6 +121,8 @@ class VerifierProcessRequest:
             raise VerifierProcessError("verifier process: request version is invalid")
         if type(self.verifier_input) is not VerifierInput:
             raise VerifierProcessError("verifier process: request shape is invalid")
+        if self.verifier_input.evidence_origin != "local_test":
+            raise VerifierProcessError("verifier process: request fields are invalid")
 
     @classmethod
     def from_verifier_input(cls, value: object) -> "VerifierProcessRequest":
@@ -385,6 +387,8 @@ def _validate_verifier_input_shape(raw_input: dict[str, object]) -> None:
         if value is not None and type(value) is not str:
             raise VerifierProcessError("verifier process: request fields are invalid")
     if type(raw_input["test_timeout_seconds"]) is not int:
+        raise VerifierProcessError("verifier process: request fields are invalid")
+    if raw_input["evidence_origin"] != "local_test":
         raise VerifierProcessError("verifier process: request fields are invalid")
     for field in _STR_LIST_FIELDS:
         values = raw_input[field]

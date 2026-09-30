@@ -130,6 +130,16 @@ class VerifierProcessRecordTests(unittest.TestCase):
         ):
             VerifierProcessResponse.from_verifier_result({"verdict": "pass"})
 
+    def test_request_record_rejects_non_local_evidence_origin(self):
+        malformed_input = VerifierInput(
+            **{**valid_verifier_input().__dict__, "evidence_origin": "remote-test"}
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: request fields are invalid$",
+        ):
+            VerifierProcessRequest.from_verifier_input(malformed_input)
+
     def test_request_serialization_is_canonical_utf8_and_does_not_mutate_input(self):
         request = VerifierProcessRequest.from_verifier_input(
             VerifierInput(
@@ -252,6 +262,21 @@ class VerifierRequestParsingTests(unittest.TestCase):
             ):
                 parse_verifier_request(tampered)
 
+    def test_non_local_evidence_origin_is_rejected(self):
+        import json as json_module
+
+        encoded = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        payload = json_module.loads(encoded.decode("utf-8"))
+        payload["verifier_input"]["evidence_origin"] = "remote-test"
+        tampered = json_module.dumps(payload).encode("utf-8")
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: request fields are invalid$",
+        ):
+            parse_verifier_request(tampered)
+
     def test_duplicate_keys_are_rejected_at_every_level(self):
         top_duplicate = (
             b'{"schema_version": 1, "schema_version": 1, "verifier_input": {}}'
@@ -346,7 +371,6 @@ class VerifierRequestDigestTests(unittest.TestCase):
             "evidence_digest": "sha256:" + "d" * 64,
             "verification_digest": "sha256:" + "c" * 64,
             "verified_contents_digest": "sha256:" + "b" * 64,
-            "evidence_origin": "remote-test",
             "replay_result_digest": None,
         }
         for field, value in alternates.items():

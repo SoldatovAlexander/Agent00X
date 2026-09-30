@@ -1066,14 +1066,17 @@ class BrokerDownstream:
 
 
 def invoke_broker_gate(intent, approval, decision, broker, grant, downstream,
-                       *, actuator_id="test-actuator", now=FIXED_NOW,
+                       *, policy=None, engine_intent=None, staged_change=None,
+                       actuator_id="test-actuator", now=FIXED_NOW,
                        gateway=None, envelope=None):
     if gateway is None:
         gateway = FakeGateway([])
     if envelope is None:
         envelope = gateway_envelope(intent)
     return run_broker_gate(
-        intent, approval, decision, gateway, envelope,
+        intent, approval, policy, engine_intent, staged_change,
+        decision.get("decision_id") if isinstance(decision, dict) else "decision-local-001",
+        gateway, envelope,
         broker, grant, actuator_id=actuator_id, now=now, proceed=downstream.proceed,
     )
 
@@ -1084,7 +1087,8 @@ class BrokerGateTests(unittest.TestCase):
             broker = FakeBroker()
             downstream = BrokerDownstream(events := [])
             marker, passed = invoke_broker_gate(
-                intent, approval, evaluated, broker, matching_grant(intent), downstream
+                intent, approval, evaluated, broker, matching_grant(intent), downstream,
+                policy=policy, engine_intent=engine_intent, staged_change=staged_change,
             )
             self.assertEqual(marker, "channel-ready")
             self.assertIs(passed, intent)
@@ -1111,6 +1115,8 @@ class BrokerGateTests(unittest.TestCase):
                 return invoke_broker_gate(
                     gate_intent, gate_approval, gate_decision, broker,
                     matching_grant(gate_intent), downstream,
+                    policy=policy, engine_intent=engine_intent,
+                    staged_change=staged_change,
                     gateway=gateway, envelope=envelope,
                 )
 
@@ -1145,7 +1151,11 @@ class BrokerGateTests(unittest.TestCase):
                         "^(controlled publication: credential grant binding mismatch"
                         "|controlled publication: credential grant must be single-use)$",
                     ):
-                        invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                        invoke_broker_gate(
+                            intent, approval, evaluated, broker, grant, downstream,
+                            policy=policy, engine_intent=engine_intent,
+                            staged_change=staged_change,
+                        )
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(events, [])
                     self.assertEqual(downstream.calls, 0)
@@ -1161,7 +1171,11 @@ class BrokerGateTests(unittest.TestCase):
                         ControlledPublicationError,
                         "^controlled publication: credential grant is invalid$",
                     ):
-                        invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                        invoke_broker_gate(
+                            intent, approval, evaluated, broker, grant, downstream,
+                            policy=policy, engine_intent=engine_intent,
+                            staged_change=staged_change,
+                        )
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(downstream.calls, 0)
 
@@ -1180,7 +1194,11 @@ class BrokerGateTests(unittest.TestCase):
                     downstream = BrokerDownstream(events := [])
                     grant = dict(matching_grant(intent), expires_at=expires_at)
                     with self.assertRaisesRegex(ControlledPublicationError, message):
-                        invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                        invoke_broker_gate(
+                            intent, approval, evaluated, broker, grant, downstream,
+                            policy=policy, engine_intent=engine_intent,
+                            staged_change=staged_change,
+                        )
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(downstream.calls, 0)
 
@@ -1188,14 +1206,20 @@ class BrokerGateTests(unittest.TestCase):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
             broker = FakeBroker()
             first = BrokerDownstream(events := [])
-            invoke_broker_gate(intent, approval, evaluated, broker, matching_grant(intent), first)
+            invoke_broker_gate(
+                intent, approval, evaluated, broker, matching_grant(intent), first,
+                policy=policy, engine_intent=engine_intent, staged_change=staged_change,
+            )
             self.assertEqual(first.calls, 1)
             second = BrokerDownstream(events)
             with self.assertRaisesRegex(
                 ControlledPublicationError,
                 "^controlled publication: broker invocation failed$",
             ):
-                invoke_broker_gate(intent, approval, evaluated, broker, matching_grant(intent), second)
+                invoke_broker_gate(
+                    intent, approval, evaluated, broker, matching_grant(intent), second,
+                    policy=policy, engine_intent=engine_intent, staged_change=staged_change,
+                )
             self.assertEqual(second.calls, 0)
             self.assertEqual(len(broker.opens), 2)
             self.assertEqual(first.received[4].endpoint_calls, [])
@@ -1220,6 +1244,8 @@ class BrokerGateTests(unittest.TestCase):
                         invoke_broker_gate(
                             intent, approval, evaluated, broker, matching_grant(intent),
                             downstream, gateway=gateway,
+                            policy=policy, engine_intent=engine_intent,
+                            staged_change=staged_change,
                             envelope=gateway_envelope(intent),
                         )
                     self.assertEqual(events, ["gateway.call"])
@@ -1240,7 +1266,10 @@ class BrokerGateTests(unittest.TestCase):
             ):
                 invoke_broker_gate(
                     intent, approval, evaluated, broker, matching_grant(intent),
-                    downstream, gateway=fabricated,
+                    downstream,
+                    policy=policy, engine_intent=engine_intent,
+                    staged_change=staged_change,
+                    gateway=fabricated,
                     envelope=gateway_envelope(intent),
                 )
             self.assertEqual(events, [])
@@ -1262,24 +1291,20 @@ class BrokerGateTests(unittest.TestCase):
             ):
                 invoke_broker_gate(
                     intent, approval, evaluated, broker, matching_grant(intent),
-                    downstream, gateway=gateway, envelope=foreign,
+                    downstream,
+                    policy=policy, engine_intent=engine_intent,
+                    staged_change=staged_change,
+                    gateway=gateway, envelope=foreign,
                 )
             self.assertEqual(events, [])
             self.assertEqual(broker.opens, [])
             self.assertEqual(downstream.calls, 0)
 
-    def test_stale_decision_and_bad_wiring_stop_before_broker_open(self):
+    def test_bad_wiring_stops_before_broker_open(self):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
-            stale = dict(evaluated, expires_at=format_time(FIXED_NOW - timedelta(seconds=1)))
-            broker = FakeBroker()
-            with self.assertRaisesRegex(ContractValidationError, "^decision: expired$"):
-                invoke_broker_gate(intent, approval, stale, broker, matching_grant(intent),
-                                   BrokerDownstream([]))
-            self.assertEqual(broker.opens, [])
             for label, kwargs in (
                 ("bad-intent", {"intent": None}),
                 ("bad-approval", {"approval": None}),
-                ("bad-decision", {"decision": None}),
                 ("bad-gateway", {"gateway": None}),
                 ("bad-envelope", {"envelope": "not-a-mapping"}),
                 ("bad-broker", {"broker": None}),
@@ -1304,8 +1329,9 @@ class BrokerGateTests(unittest.TestCase):
                         broker_used = broker
                     with self.assertRaises(ControlledPublicationError):
                         run_broker_gate(
-                            base["intent"], base["approval"], base["decision"],
-                            base["gateway"], base["envelope"], broker_used, base["grant"],
+                            base["intent"], base["approval"], policy, engine_intent,
+                            staged_change, "decision-local-001", base["gateway"],
+                            base["envelope"], broker_used, base["grant"],
                             actuator_id=base.get("actuator_id", "test-actuator")
                             if label != "bad-actuator" else "",
                             now=base["now"] if "now" in base else FIXED_NOW,
@@ -1315,46 +1341,43 @@ class BrokerGateTests(unittest.TestCase):
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(downstream.calls, 0)
 
-    def test_mismatched_decision_binding_stops_before_broker_open(self):
-        canary = "DECISION-BINDING-CANARY"
+    def test_policy_engine_is_rerun_inside_broker_gate(self):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
-            cases = [
-                ({"operation": "merge_pull_request"},
-                 "^controlled publication: decision operation mismatch$"),
-                ({"operation": canary},
-                 "^controlled publication: decision operation mismatch$"),
-                ({"repository_id": "repository-foreign"},
-                 "^controlled publication: decision repository mismatch$"),
-                ({"staged_change_digest": "sha256:" + "f" * 64},
-                 "^controlled publication: decision digest mismatch$"),
-                ({"staged_change_digest": canary},
-                 "^controlled publication: decision digest mismatch$"),
-            ]
-            for override, message in cases:
-                with self.subTest(override=tuple(override)):
-                    broker = FakeBroker()
-                    created = []
-                    original_open = broker.open_github_publication_channel
+            broker = FakeBroker()
+            downstream = BrokerDownstream(events := [])
+            with patch.object(policy, "decide", wraps=policy.decide) as decide:
+                invoke_broker_gate(
+                    intent, approval, evaluated, broker, matching_grant(intent), downstream,
+                    policy=policy, engine_intent=engine_intent,
+                    staged_change=staged_change,
+                    gateway=FakeGateway(events),
+                )
+            decide.assert_called_once()
+            self.assertEqual(len(broker.opens), 1)
+            self.assertEqual(downstream.calls, 1)
+            self.assertEqual(events, ["gateway.call", "endpoint.ready"])
 
-                    def tracking_open(*args, **kwargs):
-                        channel = original_open(*args, **kwargs)
-                        created.append(channel)
-                        return channel
-
-                    broker.open_github_publication_channel = tracking_open
-                    downstream = BrokerDownstream(events := [])
-                    with self.assertRaisesRegex(
-                        ControlledPublicationError, message
-                    ) as raised:
-                        invoke_broker_gate(
-                            intent, approval, dict(evaluated, **override), broker,
-                            matching_grant(intent), downstream,
-                        )
-                    self.assertNotIn(canary, str(raised.exception))
-                    self.assertEqual(broker.opens, [])
-                    self.assertEqual(created, [])
-                    self.assertEqual(events, [])
-                    self.assertEqual(downstream.calls, 0)
+    def test_forged_policy_decision_cannot_authorize_broker(self):
+        with decided_gate_fixture() as (intent, approval, _policy, engine_intent,
+                                        staged_change, evaluated):
+            forged_allow = dict(evaluated, effect="allow")
+            gateway_events = []
+            broker = FakeBroker()
+            downstream = BrokerDownstream([])
+            with self.assertRaisesRegex(
+                ControlledPublicationError,
+                "^controlled publication: policy engine is invalid$",
+            ):
+                run_broker_gate(
+                    intent, approval, forged_allow, engine_intent, staged_change,
+                    "decision-local-001", FakeGateway(gateway_events),
+                    gateway_envelope(intent), broker, matching_grant(intent),
+                    actuator_id="test-actuator", now=FIXED_NOW,
+                    proceed=downstream.proceed,
+                )
+            self.assertEqual(gateway_events, [])
+            self.assertEqual(broker.opens, [])
+            self.assertEqual(downstream.calls, 0)
 
     def test_grant_values_never_reach_errors_or_evidence(self):
         canary = "GRANT-CANARY-SECRET"
@@ -1367,7 +1390,11 @@ class BrokerGateTests(unittest.TestCase):
                 ControlledPublicationError,
                 "^controlled publication: credential grant binding mismatch$",
             ) as raised:
-                invoke_broker_gate(intent, approval, evaluated, broker, grant, downstream)
+                invoke_broker_gate(
+                    intent, approval, evaluated, broker, grant, downstream,
+                    policy=policy, engine_intent=engine_intent,
+                    staged_change=staged_change,
+                )
             self.assertNotIn(canary, str(raised.exception))
             self.assertEqual(broker.opens, [])
             self.assertEqual(downstream.calls, 0)
@@ -1378,7 +1405,9 @@ class BrokerGateTests(unittest.TestCase):
                 "^controlled publication: broker invocation failed$",
             ) as raised:
                 invoke_broker_gate(intent, approval, evaluated, exploding,
-                                   matching_grant(intent), downstream)
+                                   matching_grant(intent), downstream,
+                                   policy=policy, engine_intent=engine_intent,
+                                   staged_change=staged_change)
             self.assertNotIn("grant-local-001", str(raised.exception))
             received = downstream.received
             self.assertIsNone(received)

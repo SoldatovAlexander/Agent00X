@@ -5,11 +5,11 @@ exact seed-bound intent. The policy gate evaluates that exact approval
 through the existing deterministic Policy Engine itself and never accepts a
 caller-supplied decision. The gateway gate invokes the injected gateway with
 an envelope bound to the same intent and admits only a matching slow-allow.
-The broker gate opens one single-use channel for the same verified request
-through the injected broker after verifying grant bindings, without touching
-the provider endpoint. No gate calls gateway, broker or provider code beyond
-its own narrow collaborator: each downstream step runs only via an injected
-``proceed`` callable after every check passes.
+The broker gate re-evaluates policy for that same intent and staged change,
+then opens one single-use channel for the verified request through the
+injected broker after verifying grant bindings, without touching the provider
+endpoint. Each downstream step runs only via an injected ``proceed`` callable
+after every check passes.
 """
 
 from __future__ import annotations
@@ -241,7 +241,10 @@ def _require_bound_envelope(intent: PublicationIntent, envelope: Any) -> None:
 def run_broker_gate(
     intent: PublicationIntent,
     approval: Any,
-    decision: Any,
+    policy: Any,
+    engine_intent: Any,
+    staged_change: Any,
+    decision_id: Any,
     gateway: Any,
     envelope: Any,
     broker: Any,
@@ -253,46 +256,29 @@ def run_broker_gate(
 ) -> T:
     """Open one single-use channel for the same verified request.
 
-    Grant bindings — repository, operation, actuator, staged digest,
-    credential class, single-use flag and expiry — are verified against the
-    same seed-bound intent before the broker is touched, the policy decision
-    itself is bound back to the same intent by operation, repository and
-    staged digest, and the gateway transition is verified live: the envelope
-    bound to the same intent is passed to the injected gateway here, and only
-    its genuine slow-allow opens the broker path. A caller-constructed
-    verdict is never accepted, so no direct path can bypass the gateway. The
-    channel itself is opened through the injected broker and handed
+    The existing Policy Engine is run again inside this gate against the
+    supplied approved intent and staged change; no caller-supplied decision
+    can authorize the broker. The live gateway transition is then verified:
+    the envelope bound to the same intent is passed to the injected gateway,
+    and only its genuine slow-allow opens the broker path. Grant bindings —
+    repository, operation, actuator, staged digest, credential class,
+    single-use flag and expiry — are verified before the broker is touched.
+    A reused or mismatched grant stops the path. The channel is handed
     downstream; this gate never calls the provider endpoint, so a refusal
-    leaves zero endpoint side effects. A reused grant, a grant for another
-    repository, operation or digest, or a decision bound elsewhere stops the
-    path. Failures carry stable messages without grant, decision, approval,
-    intent or digest values.
+    leaves zero endpoint side effects. Failures carry stable messages without
+    grant, decision, approval, intent or digest values.
     """
 
     if not callable(proceed):
         raise ControlledPublicationError("controlled publication: downstream step is invalid")
     if not isinstance(intent, PublicationIntent):
         raise ControlledPublicationError("controlled publication: intent is invalid")
-    if not isinstance(approval, dict):
-        raise ControlledPublicationError("controlled publication: approval is missing")
-    if not isinstance(decision, dict):
-        raise ControlledPublicationError("controlled publication: decision is missing")
-    if not callable(gateway):
-        raise ControlledPublicationError("controlled publication: gateway is invalid")
     if not callable(getattr(broker, "open_github_publication_channel", None)):
         raise ControlledPublicationError("controlled publication: broker is invalid")
     if not isinstance(credential_grant, dict):
         raise ControlledPublicationError("controlled publication: credential grant is invalid")
     if not isinstance(actuator_id, str) or not actuator_id:
         raise ControlledPublicationError("controlled publication: actuator id is invalid")
-    moment = _require_clock(now)
-    check_decision_usable(decision, now=moment)
-    if decision.get("operation") != "publish_pull_request":
-        raise ControlledPublicationError("controlled publication: decision operation mismatch")
-    if decision.get("repository_id") != intent.repository_id:
-        raise ControlledPublicationError("controlled publication: decision repository mismatch")
-    if decision.get("staged_change_digest") != intent.staged_change_digest:
-        raise ControlledPublicationError("controlled publication: decision digest mismatch")
     if not isinstance(credential_grant.get("credential_grant_id"), str) or not credential_grant[
         "credential_grant_id"
     ]:
@@ -307,6 +293,7 @@ def run_broker_gate(
         raise ControlledPublicationError("controlled publication: credential grant binding mismatch")
     if credential_grant.get("single_use") is not True:
         raise ControlledPublicationError("controlled publication: credential grant must be single-use")
+    moment = _require_clock(now)
     if _require_grant_expiry(credential_grant) <= moment:
         raise ControlledPublicationError("controlled publication: credential grant expired")
     actuator_request = {
@@ -319,31 +306,51 @@ def run_broker_gate(
     }
     if credential_grant.get("request_digest") != sha256_digest(actuator_request):
         raise ControlledPublicationError("controlled publication: credential grant binding mismatch")
-    _require_bound_envelope(intent, envelope)
-    try:
-        gateway_decision = gateway(envelope, now=moment)
-    except Exception:
-        raise ControlledPublicationError(
-            "controlled publication: gateway invocation failed"
-        ) from None
-    if (
-        not isinstance(gateway_decision, GatewayDecision)
-        or gateway_decision.allowed is not True
-        or gateway_decision.path is not GatewayPath.SLOW
-        or not isinstance(gateway_decision.reason_codes, tuple)
-    ):
-        raise ControlledPublicationError(
-            "controlled publication: gateway has not authorized slow path"
-        )
-    try:
-        channel = broker.open_github_publication_channel(
-            credential_grant, actuator_request, now=moment
-        )
-    except Exception:
-        raise ControlledPublicationError(
-            "controlled publication: broker invocation failed"
-        ) from None
-    return proceed(intent, approval, decision, gateway_decision, channel)
+
+    def open_after_policy(
+        policy_intent: PublicationIntent,
+        policy_approval: dict,
+        decision: dict,
+    ) -> T:
+        if not callable(gateway):
+            raise ControlledPublicationError("controlled publication: gateway is invalid")
+        _require_bound_envelope(policy_intent, envelope)
+        try:
+            gateway_decision = gateway(envelope, now=moment)
+        except Exception:
+            raise ControlledPublicationError(
+                "controlled publication: gateway invocation failed"
+            ) from None
+        if (
+            not isinstance(gateway_decision, GatewayDecision)
+            or gateway_decision.allowed is not True
+            or gateway_decision.path is not GatewayPath.SLOW
+            or not isinstance(gateway_decision.reason_codes, tuple)
+        ):
+            raise ControlledPublicationError(
+                "controlled publication: gateway has not authorized slow path"
+            )
+        try:
+            channel = broker.open_github_publication_channel(
+                credential_grant, actuator_request, now=moment
+            )
+        except Exception:
+            raise ControlledPublicationError(
+                "controlled publication: broker invocation failed"
+            ) from None
+        return proceed(policy_intent, policy_approval, decision, gateway_decision, channel)
+
+    return run_policy_gate(
+        intent,
+        approval,
+        policy,
+        engine_intent,
+        staged_change,
+        decision_id=decision_id,
+        actuator_id=actuator_id,
+        now=moment,
+        proceed=open_after_policy,
+    )
 
 
 def _require_grant_expiry(credential_grant: dict) -> datetime:

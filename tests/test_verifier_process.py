@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
 import sys
@@ -1369,105 +1370,171 @@ COMPOSITION_CHILD_SCRIPT = (
 )
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def pinned_subprocess_run(child_script):
+    import shutil
+    import subprocess
+    import tempfile
+
+    from app_contracts.executor import (
+        ExecutionRequest,
+        WorkerInput,
+        WorkerProposal,
+    )
+    from app_contracts.pinned_snapshot import (
+        PinnedSnapshot,
+        compute_snapshot_tree_digest,
+        export_local_commit_tree,
+        open_local_repository,
+    )
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        repository = root / "source-repository"
+        shutil.copytree(ROOT / "fixtures/repository/project", repository)
+        subprocess.run(["git", "init", "--quiet", str(repository)], check=True)
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(repository), "-c", "user.name=Composition Test",
+                "-c", "user.email=composition@example.invalid",
+                "commit", "--quiet", "-m", "fixture snapshot",
+            ],
+            check=True,
+        )
+        commit_oid = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        lease = export_local_commit_tree(
+            open_local_repository(repository), commit_oid, root
+        )
+        try:
+            pin = PinnedSnapshot(
+                repository_id="fixture-repository",
+                commit_oid=commit_oid,
+                tree_digest=compute_snapshot_tree_digest(lease.path),
+                snapshot_path=lease.path,
+            )
+            request = ExecutionRequest(
+                process_id="process-local-001",
+                task_id="task-local-001",
+                repository_id=pin.repository_id,
+                base_commit=pin.commit_oid,
+                snapshot_path=lease.path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-c", "print('ok')"),
+                pinned_snapshot=pin,
+            )
+            original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+            proposed = original + "\n# composition-change\n"
+
+            class CompositionWorker:
+                def __init__(self):
+                    self.received = None
+
+                def propose(self, task: WorkerInput) -> WorkerProposal:
+                    self.received = task
+                    return WorkerProposal((("calculator.py", proposed),))
+
+            worker = CompositionWorker()
+            adapter = SubprocessVerifier(
+                valid_process_config(
+                    executable=sys.executable, argv=(sys.executable, "-c", child_script)
+                )
+            )
+            yield request, worker, adapter, proposed, pin, root
+        finally:
+            lease.close()
+
+
 class SubprocessAdapterCompositionTests(unittest.TestCase):
     def test_matching_child_result_passes_local_pinned_execution(self):
-        import shutil
-        import subprocess
-        import tempfile
-
         from app_contracts.digests import sha256_digest
-        from app_contracts.executor import (
-            ExecutionRequest,
-            ExecutionStatus,
-            WorkerInput,
-            WorkerProposal,
-            run_local_execution,
-        )
-        from app_contracts.pinned_snapshot import (
-            PinnedSnapshot,
-            compute_snapshot_tree_digest,
-            export_local_commit_tree,
-            open_local_repository,
-        )
+        from app_contracts.executor import ExecutionStatus, run_local_execution
 
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            repository = root / "source-repository"
-            shutil.copytree(ROOT / "fixtures/repository/project", repository)
-            subprocess.run(["git", "init", "--quiet", str(repository)], check=True)
-            subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
-            subprocess.run(
-                [
-                    "git", "-C", str(repository), "-c", "user.name=Composition Test",
-                    "-c", "user.email=composition@example.invalid",
-                    "commit", "--quiet", "-m", "fixture snapshot",
-                ],
-                check=True,
+        with pinned_subprocess_run(COMPOSITION_CHILD_SCRIPT) as (
+            request, worker, adapter, proposed, pin, root
+        ):
+            result = run_local_execution(
+                request, worker, verifier=adapter, require_pinned_snapshot=True
             )
-            commit_oid = subprocess.run(
-                ["git", "-C", str(repository), "rev-parse", "HEAD"],
-                check=True, capture_output=True, text=True,
-            ).stdout.strip()
-            lease = export_local_commit_tree(
-                open_local_repository(repository), commit_oid, root
+            self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+            self.assertIs(result.verifier_result.verdict, VerifierVerdict.PASS)
+            self.assertEqual(
+                result.verifier_result.verifier_id, "composition-child-verifier"
             )
-            try:
-                pin = PinnedSnapshot(
-                    repository_id="fixture-repository",
-                    commit_oid=commit_oid,
-                    tree_digest=compute_snapshot_tree_digest(lease.path),
-                    snapshot_path=lease.path,
-                )
-                request = ExecutionRequest(
-                    process_id="process-local-001",
-                    task_id="task-local-001",
-                    repository_id=pin.repository_id,
-                    base_commit=pin.commit_oid,
-                    snapshot_path=lease.path,
-                    allowed_commands=frozenset({"python3"}),
-                    declared_change_paths=("calculator.py",),
-                    test_command=("python3", "-c", "print('ok')"),
-                    pinned_snapshot=pin,
-                )
-                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
-                proposed = original + "\n# composition-change\n"
+            self.assertEqual(result.snapshot_tree_digest, pin.tree_digest)
+            self.assertRegex(
+                result.verifier_result.replay_result_digest, r"^sha256:[0-9a-f]{64}$"
+            )
+            self.assertEqual(
+                result.verified_contents_digest,
+                sha256_digest((("calculator.py", proposed),)),
+            )
+            self.assertEqual(worker.received.snapshot_tree_digest, pin.tree_digest)
+            self.assertEqual(worker.received.base_commit, pin.commit_oid)
+            self.assertNotIn(str(root), repr(result))
 
-                class CompositionWorker:
-                    def __init__(self):
-                        self.received = None
 
-                    def propose(self, task: WorkerInput) -> WorkerProposal:
-                        self.received = task
-                        return WorkerProposal((("calculator.py", proposed),))
+TAMPERING_CHILD_SCRIPT = (
+    "import hashlib, json, sys; "
+    "raw = sys.stdin.buffer.read(); "
+    "req = json.loads(raw.decode('utf-8'))['verifier_input']; "
+    "result = {'process_id': req['process_id'], 'base_commit': req['base_commit'], "
+    "'snapshot_tree_digest': req['snapshot_tree_digest'], "
+    "'replay_result_digest': req['replay_result_digest'], "
+    "'verifier_id': 'tampering-child-verifier', "
+    "'patch_digest': req['patch_digest'], 'evidence_digest': req['evidence_digest'], "
+    "'verification_digest': req['verification_digest'], "
+    "'verified_contents_digest': req['verified_contents_digest'], "
+    "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
+    "result[sys.argv[1]] = sys.argv[2]; "
+    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
+    "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
+)
 
-                worker = CompositionWorker()
-                adapter = SubprocessVerifier(
-                    valid_process_config(
-                        executable=sys.executable,
-                        argv=(sys.executable, "-c", COMPOSITION_CHILD_SCRIPT),
+
+class SubprocessBindingRegressionTests(unittest.TestCase):
+    def test_each_substituted_binding_denies_verified_without_echo(self):
+        from app_contracts.executor import ExecutionStatus, run_local_execution
+
+        cases = (
+            ("process_id", "process-FOREIGN-CANARY-007"),
+            ("base_commit", "b" * 40),
+            ("snapshot_tree_digest", "sha256:" + "f" * 64),
+            ("replay_result_digest", "sha256:" + "e" * 64),
+            ("patch_digest", "sha256:" + "d" * 64),
+            ("evidence_digest", "sha256:" + "c" * 64),
+            ("verification_digest", "sha256:" + "b" * 64),
+            ("verified_contents_digest", "sha256:" + "a" * 64),
+        )
+        for field, forged in cases:
+            with self.subTest(binding=field):
+                with pinned_subprocess_run("placeholder") as (
+                    request, worker, _adapter, _proposed, _pin, _root
+                ):
+                    tampering = SubprocessVerifier(
+                        valid_process_config(
+                            executable=sys.executable,
+                            argv=(sys.executable, "-c", TAMPERING_CHILD_SCRIPT, field, forged),
+                        )
                     )
-                )
-                result = run_local_execution(
-                    request, worker, verifier=adapter, require_pinned_snapshot=True
-                )
-                self.assertEqual(result.status, ExecutionStatus.VERIFIED)
-                self.assertIs(result.verifier_result.verdict, VerifierVerdict.PASS)
-                self.assertEqual(
-                    result.verifier_result.verifier_id, "composition-child-verifier"
-                )
-                self.assertEqual(result.snapshot_tree_digest, pin.tree_digest)
-                self.assertRegex(
-                    result.verifier_result.replay_result_digest, r"^sha256:[0-9a-f]{64}$"
-                )
-                self.assertEqual(
-                    result.verified_contents_digest,
-                    sha256_digest((("calculator.py", proposed),)),
-                )
-                self.assertEqual(worker.received.snapshot_tree_digest, pin.tree_digest)
-                self.assertEqual(worker.received.base_commit, pin.commit_oid)
-                self.assertNotIn(str(root), repr(result))
-            finally:
-                lease.close()
+                    result = run_local_execution(
+                        request, worker, verifier=tampering,
+                        require_pinned_snapshot=True,
+                    )
+                    self.assertEqual(result.status, ExecutionStatus.FAILED)
+                    self.assertNotEqual(
+                        result.status, ExecutionStatus.VERIFIED
+                    )
+                    self.assertNotIn("FOREIGN-CANARY", repr(result))
+                    self.assertNotIn(forged, repr(result))
 
 
 if __name__ == "__main__":

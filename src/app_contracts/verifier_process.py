@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 
+from .digests import sha256_bytes
 from .executor import VerifierInput, VerifierResult
 
 
@@ -167,6 +168,17 @@ def parse_verifier_request(data: object) -> VerifierProcessRequest:
         replay_result_digest=raw_input["replay_result_digest"],
     )
     return VerifierProcessRequest(version, verifier_input)
+
+
+def digest_verifier_request(value: object) -> str:
+    """Return the canonical digest of one request's exact wire payload.
+
+    The digest covers the same deterministic bytes the child would receive,
+    so any field change between serialization and launch changes the digest.
+    It is only a change-detection binding, not authentication of the child.
+    """
+
+    return sha256_bytes(serialize_verifier_request(value))
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:

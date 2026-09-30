@@ -14,6 +14,7 @@ from app_contracts.verifier_process import (
     VerifierProcessError,
     VerifierProcessRequest,
     VerifierProcessResponse,
+    digest_verifier_request,
     parse_verifier_request,
     serialize_verifier_request,
 )
@@ -307,6 +308,62 @@ class VerifierRequestParsingTests(unittest.TestCase):
                 with self.assertRaises(VerifierProcessError) as raised:
                     parse_verifier_request(data)
                 self.assertNotIn(canary, str(raised.exception))
+
+
+class VerifierRequestDigestTests(unittest.TestCase):
+    EXPECTED_FIXTURE_DIGEST = (
+        "sha256:612127173a24c53bcb2cb55ce2153db552e62a18ad4cdca36451b43dde396cb6"
+    )
+
+    def test_digest_is_canonical_and_pinned(self):
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        digest = digest_verifier_request(request)
+        self.assertEqual(digest, self.EXPECTED_FIXTURE_DIGEST)
+        self.assertRegex(digest, r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(digest_verifier_request(request), digest)
+
+    def test_any_bound_field_change_mismatches_digest(self):
+        baseline = digest_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        alternates = {
+            "process_id": "process-forged-001",
+            "repository_id": "repository-forged",
+            "base_commit": "b" * 40,
+            "snapshot_tree_digest": "sha256:" + "f" * 64,
+            "declared_change_paths": ("other.py",),
+            "verified_contents": (("other.py", "other contents"),),
+            "test_command": ("python3", "-m", "pytest"),
+            "test_timeout_seconds": 31,
+            "patch_digest": "sha256:" + "e" * 64,
+            "evidence_digest": "sha256:" + "d" * 64,
+            "verification_digest": "sha256:" + "c" * 64,
+            "verified_contents_digest": "sha256:" + "b" * 64,
+            "evidence_origin": "remote-test",
+            "replay_result_digest": None,
+        }
+        for field, value in alternates.items():
+            with self.subTest(field=field):
+                forged = VerifierProcessRequest.from_verifier_input(
+                    VerifierInput(**{**valid_verifier_input().__dict__, field: value})
+                )
+                self.assertNotEqual(digest_verifier_request(forged), baseline)
+
+    def test_digest_rejects_non_request_without_echo(self):
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request shape is invalid$"
+        ) as raised:
+            digest_verifier_request({"verifier_input": "forged"})
+        self.assertNotIn("forged", str(raised.exception))
+
+    def test_digest_is_documented_as_change_detection_only(self):
+        import app_contracts.verifier_process as module
+
+        documented = (module.__doc__ or "") + (
+            module.digest_verifier_request.__doc__ or ""
+        )
+        self.assertNotIn("signature", documented.lower())
+        self.assertNotIn("proof", documented.lower())
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from app_contracts.verifier_process import (
     VerifierProcessError,
     VerifierProcessRequest,
     VerifierProcessResponse,
+    serialize_verifier_request,
 )
 
 
@@ -119,6 +120,48 @@ class VerifierProcessRecordTests(unittest.TestCase):
             VerifierProcessError, "^verifier process: response shape is invalid$"
         ):
             VerifierProcessResponse.from_verifier_result({"verdict": "pass"})
+
+    def test_request_serialization_is_canonical_utf8_and_does_not_mutate_input(self):
+        request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "verified_contents": (("calculator.py", "café"),),
+                }
+            )
+        )
+        original = request.verifier_input
+
+        first = serialize_verifier_request(request)
+        second = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(
+                VerifierInput(**request.verifier_input.__dict__)
+            )
+        )
+
+        self.assertIsInstance(first, bytes)
+        self.assertEqual(first, second)
+        self.assertIn("café".encode("utf-8"), first)
+        self.assertNotIn(b"\\u00e9", first)
+        self.assertFalse(first.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(request.verifier_input, original)
+        self.assertFalse(first.endswith(b"\n"))
+
+    def test_request_serialization_rejects_non_json_values_without_echo(self):
+        malformed_input = VerifierInput(
+            **{
+                **valid_verifier_input().__dict__,
+                "test_command": ("python3", object()),
+            }
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: request serialization failed$",
+        ) as raised:
+            serialize_verifier_request(
+                VerifierProcessRequest.from_verifier_input(malformed_input)
+            )
+        self.assertNotIn("object at", str(raised.exception))
 
 
 if __name__ == "__main__":

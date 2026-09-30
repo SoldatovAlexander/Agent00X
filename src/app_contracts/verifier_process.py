@@ -6,7 +6,8 @@ process isolation, verifier identity, or independent trust by themselves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import json
 
 from .executor import VerifierInput, VerifierResult
 
@@ -56,3 +57,21 @@ class VerifierProcessResponse:
         if type(value) is not VerifierResult:
             raise VerifierProcessError("verifier process: response shape is invalid")
         return cls(VERIFIER_PROCESS_SCHEMA_VERSION, value)
+
+
+def serialize_verifier_request(value: object) -> bytes:
+    """Serialize one request to canonical UTF-8 JSON without mutating it."""
+
+    if type(value) is not VerifierProcessRequest:
+        raise VerifierProcessError("verifier process: request shape is invalid")
+    try:
+        encoded = json.dumps(
+            asdict(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except Exception:
+        raise VerifierProcessError("verifier process: request serialization failed") from None
+    return encoded

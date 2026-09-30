@@ -46,9 +46,11 @@ from app_contracts.pinned_snapshot import (
 )
 from app_contracts.publication_seed import (
     PublicationIntent,
+    PublicationSeed,
     build_publication_seed,
     derive_publication_intent,
 )
+from app_contracts.publication import PublicationJournal, PublicationRecord
 from app_contracts.repository_process import prepare_change as real_prepare_change
 from app_contracts.validator import ContractValidationError
 
@@ -1065,19 +1067,47 @@ class BrokerDownstream:
         return ("channel-ready", intent)
 
 
+class InMemoryPublicationJournal:
+    def __init__(self):
+        self.records = {}
+
+    def get(self, process_id):
+        return self.records[process_id]
+
+    def prepare(self, process_id, *, idempotency_key, request_digest, repository_id):
+        existing = self.records.get(process_id)
+        if existing is not None:
+            if (existing.idempotency_key, existing.request_digest, existing.repository_id) == (
+                idempotency_key, request_digest, repository_id
+            ):
+                return existing
+            raise ValueError("publication payload conflict")
+        record = PublicationRecord(
+            process_id, idempotency_key, request_digest, repository_id, "prepared", None
+        )
+        self.records[process_id] = record
+        return record
+
+
 def invoke_broker_gate(intent, approval, decision, broker, grant, downstream,
                        *, policy=None, engine_intent=None, staged_change=None,
+                       seed=None, journal=None,
                        actuator_id="test-actuator", now=FIXED_NOW,
                        gateway=None, envelope=None):
     if gateway is None:
         gateway = FakeGateway([])
     if envelope is None:
         envelope = gateway_envelope(intent)
+    if seed is None:
+        seed = journal_seed_for(intent)
+    if journal is None:
+        journal = InMemoryPublicationJournal()
     return run_broker_gate(
         intent, approval, policy, engine_intent, staged_change,
         decision.get("decision_id") if isinstance(decision, dict) else "decision-local-001",
         gateway, envelope,
         broker, grant, actuator_id=actuator_id, now=now, proceed=downstream.proceed,
+        seed=seed, journal=journal,
     )
 
 
@@ -1308,6 +1338,8 @@ class BrokerGateTests(unittest.TestCase):
                 ("bad-gateway", {"gateway": None}),
                 ("bad-envelope", {"envelope": "not-a-mapping"}),
                 ("bad-broker", {"broker": None}),
+                ("bad-seed", {"seed": None}),
+                ("bad-journal", {"journal": None}),
                 ("bad-actuator", {"actuator_id": ""}),
                 ("bad-now", {"now": None}),
             ):
@@ -1320,6 +1352,8 @@ class BrokerGateTests(unittest.TestCase):
                         "gateway": FakeGateway(gateway_events),
                         "envelope": gateway_envelope(intent),
                         "broker": broker, "grant": matching_grant(intent),
+                        "seed": journal_seed_for(intent),
+                        "journal": InMemoryPublicationJournal(),
                         "downstream": downstream,
                     }
                     base.update(kwargs)
@@ -1336,6 +1370,7 @@ class BrokerGateTests(unittest.TestCase):
                             if label != "bad-actuator" else "",
                             now=base["now"] if "now" in base else FIXED_NOW,
                             proceed=downstream.proceed,
+                            seed=base["seed"], journal=base["journal"],
                         )
                     self.assertEqual(gateway_events, [])
                     self.assertEqual(broker.opens, [])
@@ -1373,7 +1408,8 @@ class BrokerGateTests(unittest.TestCase):
                     "decision-local-001", FakeGateway(gateway_events),
                     gateway_envelope(intent), broker, matching_grant(intent),
                     actuator_id="test-actuator", now=FIXED_NOW,
-                    proceed=downstream.proceed,
+                    proceed=downstream.proceed, seed=journal_seed_for(intent),
+                    journal=InMemoryPublicationJournal(),
                 )
             self.assertEqual(gateway_events, [])
             self.assertEqual(broker.opens, [])
@@ -1412,6 +1448,131 @@ class BrokerGateTests(unittest.TestCase):
             received = downstream.received
             self.assertIsNone(received)
 
+
+def journal_seed_for(intent):
+    digest = sha256_digest("journal-test-evidence")
+    return PublicationSeed(
+        process_id=intent.process_id,
+        repository_id=intent.repository_id,
+        base_commit=intent.base_commit,
+        staged_change_digest=intent.staged_change_digest,
+        verified_contents_digest=digest,
+        verifier_id="journal-test-verifier",
+        verdict="pass",
+        replay_result_digest=digest,
+        snapshot_tree_digest=digest,
+        snapshot_origin="local_git_commit",
+    )
+
+
+class JournalPreparationTests(unittest.TestCase):
+    def test_journal_is_prepared_only_after_policy_gateway_and_broker(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    events = []
+                    gateway = FakeGateway(events)
+                    broker = FakeBroker()
+                    seed = journal_seed_for(intent)
+                    approval_with_canary = dict(approval, access_token="APPROVAL-TOKEN-CANARY")
+                    original_prepare = journal.prepare
+
+                    def record_prepare(*args, **kwargs):
+                        events.append("journal.prepare")
+                        return original_prepare(*args, **kwargs)
+
+                    journal.prepare = record_prepare
+
+                    def after_gates(gate_intent, _gate_approval, _decision,
+                                    _gateway_decision, _channel):
+                        events.append("endpoint.ready")
+                        return journal.get(gate_intent.process_id)
+
+                    prepared = run_broker_gate(
+                        intent, approval_with_canary, policy, engine_intent,
+                        staged_change, "decision-local-001", gateway,
+                        gateway_envelope(intent), broker, matching_grant(intent),
+                        actuator_id="test-actuator", now=FIXED_NOW,
+                        proceed=after_gates, seed=seed, journal=journal,
+                    )
+                    self.assertEqual(
+                        events, ["gateway.call", "journal.prepare", "endpoint.ready"]
+                    )
+                    self.assertEqual(len(broker.opens), 1)
+                    self.assertEqual(prepared.status, "prepared")
+                    self.assertRegex(prepared.request_digest, r"^sha256:[0-9a-f]{64}$")
+                    self.assertEqual(prepared.process_id, intent.process_id)
+                    self.assertEqual(prepared.repository_id, intent.repository_id)
+                    self.assertNotIn("APPROVAL-TOKEN-CANARY", repr(prepared))
+                    self.assertEqual(journal.get(intent.process_id), prepared)
+
+                    replayed = run_broker_gate(
+                        intent, approval_with_canary, policy, engine_intent,
+                        staged_change, "decision-local-001", FakeGateway([]),
+                        gateway_envelope(intent), FakeBroker(), matching_grant(intent),
+                        actuator_id="test-actuator", now=FIXED_NOW,
+                        proceed=lambda gate_intent, *_args: journal.get(gate_intent.process_id),
+                        seed=seed, journal=journal,
+                    )
+                    self.assertEqual(replayed, prepared)
+
+    def test_conflicting_journal_binding_is_not_reused_or_overwritten(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    original = journal.prepare(
+                        intent.process_id,
+                        idempotency_key=intent.idempotency_key,
+                        request_digest=sha256_digest("preexisting-conflicting-request"),
+                        repository_id=intent.repository_id,
+                    )
+                    downstream = BrokerDownstream(events := [])
+                    gateway = FakeGateway(events)
+                    broker = FakeBroker()
+                    with self.assertRaisesRegex(ValueError, "^publication payload conflict$"):
+                        run_broker_gate(
+                            intent, approval, policy, engine_intent, staged_change,
+                            "decision-local-001", gateway, gateway_envelope(intent),
+                            broker, matching_grant(intent), actuator_id="test-actuator",
+                            now=FIXED_NOW, proceed=downstream.proceed,
+                            seed=journal_seed_for(intent), journal=journal,
+                        )
+                    self.assertEqual(journal.get(intent.process_id), original)
+                    self.assertEqual(original.status, "prepared")
+                    self.assertEqual(events, ["gateway.call"])
+                    self.assertEqual(len(broker.opens), 1)
+                    self.assertEqual(downstream.calls, 0)
+
+    def test_denied_gateway_never_creates_journal_record(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    events = []
+                    denied = FakeGateway(
+                        events,
+                        verdict=GatewayDecision(GatewayPath.SLOW, False, ("denied",)),
+                    )
+
+                    downstream = BrokerDownstream(events)
+
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway has not authorized slow path$",
+                    ):
+                        run_broker_gate(
+                            intent, approval, policy, engine_intent, staged_change,
+                            "decision-local-001", denied, gateway_envelope(intent),
+                            FakeBroker(), matching_grant(intent), actuator_id="test-actuator",
+                            now=FIXED_NOW, proceed=downstream.proceed,
+                            seed=journal_seed_for(intent), journal=journal,
+                        )
+                    self.assertEqual(events, ["gateway.call"])
+                    self.assertEqual(downstream.calls, 0)
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,10 +6,9 @@ through the existing deterministic Policy Engine itself and never accepts a
 caller-supplied decision. The gateway gate invokes the injected gateway with
 an envelope bound to the same intent and admits only a matching slow-allow.
 The broker gate re-evaluates policy for that same intent and staged change,
-then opens one single-use channel for the verified request through the
-injected broker after verifying grant bindings, without touching the provider
-endpoint. Each downstream step runs only via an injected ``proceed`` callable
-after every check passes.
+then checks the live gateway and one single-use broker grant before preparing
+a digest-only journal record. The provider endpoint is still reached only
+through the injected downstream continuation after those checks pass.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from typing import Any, Callable, TypeVar
 from .authority import DeterministicPolicy, check_decision_usable, check_intent_approved
 from .digests import sha256_digest
 from .gateway import GatewayDecision, GatewayPath
-from .publication_seed import PublicationIntent
+from .publication_seed import PublicationIntent, PublicationSeed
 
 
 class ControlledPublicationError(ValueError):
@@ -253,6 +252,8 @@ def run_broker_gate(
     actuator_id: Any,
     now: datetime,
     proceed: Callable[[PublicationIntent, Any, dict, GatewayDecision, Any], T],
+    seed: Any,
+    journal: Any,
 ) -> T:
     """Open one single-use channel for the same verified request.
 
@@ -263,16 +264,24 @@ def run_broker_gate(
     and only its genuine slow-allow opens the broker path. Grant bindings —
     repository, operation, actuator, staged digest, credential class,
     single-use flag and expiry — are verified before the broker is touched.
-    A reused or mismatched grant stops the path. The channel is handed
-    downstream; this gate never calls the provider endpoint, so a refusal
-    leaves zero endpoint side effects. Failures carry stable messages without
-    grant, decision, approval, intent or digest values.
+    A reused or mismatched grant stops the path. After the channel opens, a
+    canonical digest-only journal row is prepared before downstream runs. The
+    channel is handed downstream; this gate never calls the provider endpoint,
+    so a refusal leaves zero endpoint side effects. Failures carry stable
+    messages without grant, decision, approval, intent or digest values.
     """
 
     if not callable(proceed):
         raise ControlledPublicationError("controlled publication: downstream step is invalid")
     if not isinstance(intent, PublicationIntent):
         raise ControlledPublicationError("controlled publication: intent is invalid")
+    if not isinstance(seed, PublicationSeed):
+        raise ControlledPublicationError("controlled publication: publication seed is invalid")
+    if (
+        not callable(getattr(journal, "prepare", None))
+        or not callable(getattr(journal, "get", None))
+    ):
+        raise ControlledPublicationError("controlled publication: journal is invalid")
     if not callable(getattr(broker, "open_github_publication_channel", None)):
         raise ControlledPublicationError("controlled publication: broker is invalid")
     if not isinstance(credential_grant, dict):
@@ -338,6 +347,16 @@ def run_broker_gate(
             raise ControlledPublicationError(
                 "controlled publication: broker invocation failed"
             ) from None
+        _prepare_publication_journal(
+            seed,
+            policy_intent,
+            policy_approval,
+            engine_intent,
+            decision,
+            gateway_decision,
+            journal,
+            now=moment,
+        )
         return proceed(policy_intent, policy_approval, decision, gateway_decision, channel)
 
     return run_policy_gate(
@@ -350,6 +369,116 @@ def run_broker_gate(
         actuator_id=actuator_id,
         now=moment,
         proceed=open_after_policy,
+    )
+
+
+def _prepare_publication_journal(
+    seed: Any,
+    intent: Any,
+    approval: Any,
+    engine_intent: Any,
+    decision: Any,
+    gateway_decision: Any,
+    journal: Any,
+    *,
+    now: datetime,
+) -> Any:
+    """Prepare one local journal row from the request cleared by all gates.
+
+    This private helper is called by ``run_broker_gate`` only after policy,
+    gateway and broker checks have all succeeded. Only bounded seed/intent
+    and decision metadata participate in the canonical request digest; the
+    journal stores the digest, never the approval object, credential grant or
+    channel. Replaying the same request is idempotent at the journal boundary,
+    while a conflicting request remains a conflict.
+    """
+
+    if not isinstance(seed, PublicationSeed):
+        raise ControlledPublicationError("controlled publication: publication seed is invalid")
+    if not isinstance(intent, PublicationIntent):
+        raise ControlledPublicationError("controlled publication: intent is invalid")
+    if not isinstance(approval, dict):
+        raise ControlledPublicationError("controlled publication: approval is missing")
+    if not isinstance(engine_intent, dict):
+        raise ControlledPublicationError("controlled publication: engine intent is missing")
+    if not isinstance(decision, dict):
+        raise ControlledPublicationError("controlled publication: policy decision is invalid")
+    if (
+        not callable(getattr(journal, "prepare", None))
+        or not callable(getattr(journal, "get", None))
+    ):
+        raise ControlledPublicationError("controlled publication: journal is invalid")
+    moment = _require_clock(now)
+
+    if (
+        seed.process_id != intent.process_id
+        or seed.repository_id != intent.repository_id
+        or seed.base_commit != intent.base_commit
+        or seed.staged_change_digest != intent.staged_change_digest
+    ):
+        raise ControlledPublicationError("controlled publication: seed binding mismatch")
+    for field in (
+        "process_id", "repository_id", "base_commit", "staged_change_digest",
+        "idempotency_key",
+    ):
+        if engine_intent.get(field) != getattr(intent, field):
+            raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if engine_intent.get("operation") != "publish_pull_request":
+        raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    try:
+        check_intent_approved(engine_intent, approval)
+        if _require_approval_expiry(approval) <= moment:
+            raise ControlledPublicationError("controlled publication: approval expired")
+        check_decision_usable(decision, now=moment)
+    except ControlledPublicationError:
+        raise
+    except Exception:
+        raise ControlledPublicationError("controlled publication: approval binding is invalid") from None
+    if (
+        decision.get("operation") != "publish_pull_request"
+        or decision.get("repository_id") != intent.repository_id
+        or decision.get("staged_change_digest") != intent.staged_change_digest
+        or decision.get("policy_version") != approval.get("policy_version")
+    ):
+        raise ControlledPublicationError("controlled publication: policy decision binding mismatch")
+    if (
+        not isinstance(gateway_decision, GatewayDecision)
+        or gateway_decision.allowed is not True
+        or gateway_decision.path is not GatewayPath.SLOW
+        or not isinstance(gateway_decision.reason_codes, tuple)
+    ):
+        raise ControlledPublicationError("controlled publication: gateway has not authorized slow path")
+
+    approval_fingerprint = sha256_digest({
+        "approval_id": approval.get("approval_id"),
+        "approved_intent_digest": approval.get("approved_intent_digest"),
+        "expires_at": approval.get("expires_at"),
+        "policy_version": approval.get("policy_version"),
+    })
+    decision_metadata = {
+        key: decision.get(key)
+        for key in (
+            "decision_id", "effect", "reason_codes", "operation", "repository_id",
+            "staged_change_digest", "policy_version", "evaluated_at", "expires_at",
+        )
+    }
+    request_digest = sha256_digest({
+        "schema_version": 1,
+        "seed": asdict(seed),
+        "intent": asdict(intent),
+        "approval_fingerprint": approval_fingerprint,
+        "policy_decision": decision_metadata,
+        "gateway_decision": {
+            "path": gateway_decision.path.value,
+            "allowed": gateway_decision.allowed,
+            "reason_codes": gateway_decision.reason_codes,
+        },
+    })
+    return journal.prepare(
+        intent.process_id,
+        idempotency_key=intent.idempotency_key,
+        request_digest=request_digest,
+        repository_id=intent.repository_id,
     )
 
 

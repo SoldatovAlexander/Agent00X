@@ -1257,6 +1257,47 @@ class BrokerGateTests(unittest.TestCase):
                     self.assertEqual(broker.opens, [])
                     self.assertEqual(downstream.calls, 0)
 
+    def test_mismatched_decision_binding_stops_before_broker_open(self):
+        canary = "DECISION-BINDING-CANARY"
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):
+            cases = [
+                ({"operation": "merge_pull_request"},
+                 "^controlled publication: decision operation mismatch$"),
+                ({"operation": canary},
+                 "^controlled publication: decision operation mismatch$"),
+                ({"repository_id": "repository-foreign"},
+                 "^controlled publication: decision repository mismatch$"),
+                ({"staged_change_digest": "sha256:" + "f" * 64},
+                 "^controlled publication: decision digest mismatch$"),
+                ({"staged_change_digest": canary},
+                 "^controlled publication: decision digest mismatch$"),
+            ]
+            for override, message in cases:
+                with self.subTest(override=tuple(override)):
+                    broker = FakeBroker()
+                    created = []
+                    original_open = broker.open_github_publication_channel
+
+                    def tracking_open(*args, **kwargs):
+                        channel = original_open(*args, **kwargs)
+                        created.append(channel)
+                        return channel
+
+                    broker.open_github_publication_channel = tracking_open
+                    downstream = BrokerDownstream(events := [])
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError, message
+                    ) as raised:
+                        invoke_broker_gate(
+                            intent, approval, dict(evaluated, **override), broker,
+                            matching_grant(intent), downstream,
+                        )
+                    self.assertNotIn(canary, str(raised.exception))
+                    self.assertEqual(broker.opens, [])
+                    self.assertEqual(created, [])
+                    self.assertEqual(events, [])
+                    self.assertEqual(downstream.calls, 0)
+
     def test_grant_values_never_reach_errors_or_evidence(self):
         canary = "GRANT-CANARY-SECRET"
         with decided_gate_fixture() as (intent, approval, policy, engine_intent, staged_change, evaluated):

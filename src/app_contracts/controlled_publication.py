@@ -243,13 +243,15 @@ def run_broker_gate(
 
     Grant bindings — repository, operation, actuator, staged digest,
     credential class, single-use flag and expiry — are verified against the
-    same seed-bound intent before the broker is touched, and the slow-allow
-    is re-verified for direct entry. The channel itself is opened through the
-    injected broker and handed downstream; this gate never calls the provider
-    endpoint, so a refusal leaves zero endpoint side effects. A reused grant
-    or a grant for another repository, operation or digest stops the path.
-    Failures carry stable messages without grant, decision, approval, intent
-    or digest values.
+    same seed-bound intent before the broker is touched, the policy decision
+    itself is bound back to the same intent by operation, repository and
+    staged digest, and the slow-allow is re-verified for direct entry. The
+    channel itself is opened through the injected broker and handed
+    downstream; this gate never calls the provider endpoint, so a refusal
+    leaves zero endpoint side effects. A reused grant, a grant for another
+    repository, operation or digest, or a decision bound elsewhere stops the
+    path. Failures carry stable messages without grant, decision, approval,
+    intent or digest values.
     """
 
     if not callable(proceed):
@@ -277,6 +279,12 @@ def run_broker_gate(
         raise ControlledPublicationError("controlled publication: actuator id is invalid")
     moment = _require_clock(now)
     check_decision_usable(decision, now=moment)
+    if decision.get("operation") != "publish_pull_request":
+        raise ControlledPublicationError("controlled publication: decision operation mismatch")
+    if decision.get("repository_id") != intent.repository_id:
+        raise ControlledPublicationError("controlled publication: decision repository mismatch")
+    if decision.get("staged_change_digest") != intent.staged_change_digest:
+        raise ControlledPublicationError("controlled publication: decision digest mismatch")
     if not isinstance(credential_grant.get("credential_grant_id"), str) or not credential_grant[
         "credential_grant_id"
     ]:

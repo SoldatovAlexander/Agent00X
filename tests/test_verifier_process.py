@@ -1065,5 +1065,98 @@ class VerifierCommandInvocationTests(unittest.TestCase):
             VerifierProcessOutcome(0, "not-bytes", b"")
 
 
+class VerifierOutputBoundsTests(unittest.TestCase):
+    def test_over_limit_stdout_terminates_child_fail_closed(self):
+        flood_bytes = 3_000_000
+        script = (
+            "import sys; "
+            f"sys.stdout.buffer.write(b'Q' * {flood_bytes}); "
+            "import time; time.sleep(30);"
+        )
+        config = valid_process_config(
+            executable=sys.executable,
+            argv=(sys.executable, "-c", script),
+            timeout_seconds=30,
+            max_stdout_bytes=100_000,
+        )
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: child output exceeds limit$",
+        ):
+            run_verifier_command(config, request)
+        follow_up = run_verifier_command(
+            valid_process_config(
+                executable=sys.executable, argv=(sys.executable, "-c", "pass")
+            ),
+            request,
+        )
+        self.assertEqual(follow_up.exit_code, 0)
+
+    def test_over_limit_stderr_never_reaches_errors(self):
+        canary = "STDERR-CANARY-SECRET"
+        script = (
+            "import sys; "
+            f"sys.stderr.buffer.write(({canary!r} * 40_000).encode()); "
+        )
+        config = valid_process_config(
+            executable=sys.executable,
+            argv=(sys.executable, "-c", script),
+            max_stderr_bytes=100_000,
+        )
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: child output exceeds limit$",
+        ) as raised:
+            run_verifier_command(config, request)
+        self.assertNotIn(canary, str(raised.exception))
+
+    def test_bounded_streams_are_delivered_byte_exact(self):
+        canary = "STREAM-CANARY-MARKER"
+        script = (
+            "import sys; "
+            f"sys.stdout.buffer.write({canary!r}.encode()); "
+            f"sys.stderr.buffer.write(({canary!r} + '-err').encode());"
+        )
+        config = valid_process_config(
+            executable=sys.executable, argv=(sys.executable, "-c", script)
+        )
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        outcome = run_verifier_command(config, request)
+        self.assertEqual(outcome.exit_code, 0)
+        self.assertEqual(outcome.stdout, canary.encode("utf-8"))
+        self.assertEqual(outcome.stderr, (canary + "-err").encode("utf-8"))
+        boundary_script = "import sys; sys.stdout.buffer.write(b'Z' * 100_000);"
+        boundary = run_verifier_command(
+            valid_process_config(
+                executable=sys.executable,
+                argv=(sys.executable, "-c", boundary_script),
+                max_stdout_bytes=100_000,
+            ),
+            request,
+        )
+        self.assertEqual(len(boundary.stdout), 100_000)
+
+    def test_stdout_accepts_only_single_response_record(self):
+        import json as json_module
+
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        record = json_module.dumps(
+            {"schema_version": 1, "verifier_result": "placeholder"},
+            separators=(",", ":"),
+        )
+        script = f"import sys; sys.stdout.write({record!r} + {record!r});"
+        config = valid_process_config(
+            executable=sys.executable, argv=(sys.executable, "-c", script)
+        )
+        outcome = run_verifier_command(config, request)
+        self.assertEqual(outcome.exit_code, 0)
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: response payload is invalid$"
+        ):
+            parse_verifier_response(outcome.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

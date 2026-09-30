@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import os
 import re
+import selectors
 import subprocess
+import time
 
 from .digests import sha256_bytes
 from .executor import (
@@ -161,9 +164,11 @@ def run_verifier_command(
 
     The argument vector is passed without a shell, stdin carries only the
     canonical request bytes, and the child environment is minimal and
-    explicit. The child is started at most once: malformed inputs fail before
-    any spawn, and a timeout kills the child, reaps it and raises a stable
-    error without retry.
+    explicit. Stdout and stderr are collected incrementally under the
+    configured per-stream caps: an over-limit stream terminates the child
+    and fails closed. The child is started at most once: malformed inputs
+    fail before any spawn, and a timeout kills the child, reaps it and
+    raises a stable error without retry.
     """
 
     if type(config) is not VerifierProcessConfig:
@@ -185,28 +190,130 @@ def run_verifier_command(
     except Exception:
         raise VerifierProcessError("verifier process: child launch failed") from None
     try:
-        stdout, stderr = process.communicate(stdin_bytes, timeout=config.timeout_seconds)
-    except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-        except Exception:
-            pass
-        try:
-            stdout, stderr = process.communicate()
-        except Exception:
-            stdout, stderr = b"", b""
-        raise VerifierProcessError("verifier process: child timed out") from None
+        stdout, stderr, exit_code = _collect_bounded_output(
+            process,
+            stdin_bytes,
+            stdout_cap=config.max_stdout_bytes,
+            stderr_cap=config.max_stderr_bytes,
+            timeout_seconds=config.timeout_seconds,
+        )
+    except VerifierProcessError:
+        raise
     except Exception:
-        try:
-            process.kill()
-        except Exception:
-            pass
-        try:
-            process.wait()
-        except Exception:
-            pass
+        _quietly_reap(process)
         raise VerifierProcessError("verifier process: child launch failed") from None
-    return VerifierProcessOutcome(process.returncode, stdout, stderr)
+    return VerifierProcessOutcome(exit_code, stdout, stderr)
+
+
+def _quietly_reap(process: subprocess.Popen) -> None:
+    try:
+        process.kill()
+    except Exception:
+        pass
+    try:
+        process.wait()
+    except Exception:
+        pass
+
+
+def _collect_bounded_output(
+    process: subprocess.Popen,
+    stdin_bytes: bytes,
+    *,
+    stdout_cap: int,
+    stderr_cap: int,
+    timeout_seconds: int,
+) -> tuple[bytes, bytes, int]:
+    """Stream one child within per-stream caps and an overall deadline.
+
+    Returns ``(stdout, stderr, exit_code)``. An over-limit stream kills the
+    child and fails closed; an expired deadline kills, reaps and reports a
+    timeout. File descriptors are always closed and the child reaped.
+    """
+
+    deadline = time.monotonic() + timeout_seconds
+    pending = memoryview(stdin_bytes)
+    stdout_chunks = bytearray()
+    stderr_chunks = bytearray()
+    for stream in (process.stdin, process.stdout, process.stderr):
+        os.set_blocking(stream.fileno(), False)
+    try:
+        with selectors.DefaultSelector() as selector:
+            if pending:
+                selector.register(process.stdin, selectors.EVENT_WRITE)
+            else:
+                process.stdin.close()
+            selector.register(process.stdout, selectors.EVENT_READ)
+            selector.register(process.stderr, selectors.EVENT_READ)
+            stdin_open = bool(pending)
+            stdout_open = True
+            stderr_open = True
+            while stdin_open or stdout_open or stderr_open:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _quietly_reap(process)
+                    raise VerifierProcessError("verifier process: child timed out")
+                for key, mask in selector.select(timeout=remaining):
+                    if key.fileobj is process.stdin and mask & selectors.EVENT_WRITE:
+                        try:
+                            written = os.write(process.stdin.fileno(), pending)
+                        except BlockingIOError:
+                            continue
+                        except OSError:
+                            pending = memoryview(b"")
+                        else:
+                            pending = pending[written:]
+                        if not pending and stdin_open:
+                            stdin_open = False
+                            selector.unregister(process.stdin)
+                            process.stdin.close()
+                    if key.fileobj is process.stdout and mask & selectors.EVENT_READ:
+                        try:
+                            chunk = os.read(process.stdout.fileno(), 65536)
+                        except BlockingIOError:
+                            continue
+                        except OSError:
+                            chunk = b""
+                        if chunk == b"":
+                            stdout_open = False
+                            selector.unregister(process.stdout)
+                        else:
+                            stdout_chunks += chunk
+                            if len(stdout_chunks) > stdout_cap:
+                                _quietly_reap(process)
+                                raise VerifierProcessError(
+                                    "verifier process: child output exceeds limit"
+                                )
+                    if key.fileobj is process.stderr and mask & selectors.EVENT_READ:
+                        try:
+                            chunk = os.read(process.stderr.fileno(), 65536)
+                        except BlockingIOError:
+                            continue
+                        except OSError:
+                            chunk = b""
+                        if chunk == b"":
+                            stderr_open = False
+                            selector.unregister(process.stderr)
+                        else:
+                            stderr_chunks += chunk
+                            if len(stderr_chunks) > stderr_cap:
+                                _quietly_reap(process)
+                                raise VerifierProcessError(
+                                    "verifier process: child output exceeds limit"
+                                )
+            try:
+                remaining = deadline - time.monotonic()
+                process.wait(timeout=max(remaining, 0))
+            except subprocess.TimeoutExpired:
+                _quietly_reap(process)
+                raise VerifierProcessError("verifier process: child timed out") from None
+    finally:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            try:
+                stream.close()
+            except Exception:
+                pass
+    return bytes(stdout_chunks), bytes(stderr_chunks), process.returncode
 
 
 @dataclass(frozen=True)

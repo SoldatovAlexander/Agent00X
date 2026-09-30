@@ -392,7 +392,7 @@ class ApprovalGateTests(unittest.TestCase):
 
 
 @contextmanager
-def decided_gate_fixture():
+def decided_gate_fixture(*, include_seed=False):
     captured = {}
     with tempfile.TemporaryDirectory() as temporary_directory:
         root = Path(temporary_directory)
@@ -491,7 +491,8 @@ def decided_gate_fixture():
                 now=FIXED_NOW,
             )
             assert evaluated["effect"] == "allow", repr(evaluated)
-            yield intent, approval, policy, engine_intent, staged_change, evaluated
+            fixture = intent, approval, policy, engine_intent, staged_change, evaluated
+            yield (*fixture, seed) if include_seed else fixture
         finally:
             lease.close()
 
@@ -1729,6 +1730,110 @@ class ControlledLocalPublicationTests(unittest.TestCase):
                     self.assertEqual(broker.opened_grants, [])
                     with self.assertRaises(KeyError):
                         journal.get(intent.process_id)
+
+
+class PinnedToMockPublicationTests(unittest.TestCase):
+    def test_pinned_verified_seed_produces_one_mock_receipt_and_completed_journal(self):
+        with decided_gate_fixture(include_seed=True) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated, seed
+        ):
+            self.assertEqual(seed.verdict, "pass")
+            self.assertEqual(seed.snapshot_origin, "local_git_commit")
+            self.assertEqual(seed.base_commit, intent.base_commit)
+            self.assertEqual(seed.repository_id, intent.repository_id)
+            self.assertEqual(seed.staged_change_digest, intent.staged_change_digest)
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    events = []
+                    gateway = FakeGateway(events)
+                    raw_content = repr(staged_change)
+
+                    original_decide = policy.decide
+
+                    def record_decide(**kwargs):
+                        events.append("policy.evaluate")
+                        return original_decide(**kwargs)
+
+                    policy.decide = record_decide
+                    original_open = broker.open_github_publication_channel
+
+                    def record_open(*args, **kwargs):
+                        events.append("broker.open")
+                        return original_open(*args, **kwargs)
+
+                    broker.open_github_publication_channel = record_open
+                    original_prepare = journal.prepare
+
+                    def record_prepare(*args, **kwargs):
+                        events.append("journal.prepare")
+                        return original_prepare(*args, **kwargs)
+
+                    journal.prepare = record_prepare
+                    original_attempting = journal.mark_attempting
+
+                    def record_attempting(*args, **kwargs):
+                        events.append("journal.mark_attempting")
+                        return original_attempting(*args, **kwargs)
+
+                    journal.mark_attempting = record_attempting
+                    original_publish = endpoint.publish_pull_request
+
+                    def record_publish(*args, **kwargs):
+                        events.append("mock.publish")
+                        return original_publish(*args, **kwargs)
+
+                    endpoint.publish_pull_request = record_publish
+                    original_completed = journal.mark_completed
+
+                    def record_completed(*args, **kwargs):
+                        events.append("journal.mark_completed")
+                        return original_completed(*args, **kwargs)
+
+                    journal.mark_completed = record_completed
+
+                    def load_staged_change(request_seed):
+                        events.append("staged.load")
+                        self.assertIs(request_seed, seed)
+                        return staged_change
+
+                    receipt = run_controlled_local_publication(
+                        seed, intent, approval, policy, engine_intent,
+                        load_staged_change, "decision-local-001", gateway,
+                        gateway_envelope(intent), broker, matching_grant(intent),
+                        journal, endpoint, actuator_id="test-actuator", now=FIXED_NOW,
+                    )
+                    self.assertEqual(events, [
+                        "staged.load", "policy.evaluate", "gateway.call", "broker.open",
+                        "journal.prepare", "journal.mark_attempting", "mock.publish",
+                        "journal.mark_completed",
+                    ])
+                    record = journal.get(intent.process_id)
+                    self.assertEqual(record.status, "completed")
+                    self.assertEqual(record.pull_request_id, receipt.pull_request_id)
+                    self.assertEqual(receipt.repository_id, seed.repository_id)
+                    self.assertEqual(receipt.branch, intent.branch)
+                    self.assertEqual(receipt.staged_change_digest, seed.staged_change_digest)
+                    self.assertEqual(receipt.idempotency_key, intent.idempotency_key)
+                    self.assertEqual(len(endpoint._by_idempotency_key), 1)
+                    serialized_evidence = repr((receipt, record))
+                    self.assertNotIn(approval["approval_id"], serialized_evidence)
+                    self.assertNotIn("grant-local-001", serialized_evidence)
+                    self.assertNotIn(raw_content, serialized_evidence)
+
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: broker invocation failed$",
+                    ):
+                        run_controlled_local_publication(
+                            seed, intent, approval, policy, engine_intent,
+                            load_staged_change, "decision-local-001", gateway,
+                            gateway_envelope(intent), broker, matching_grant(intent),
+                            journal, endpoint, actuator_id="test-actuator", now=FIXED_NOW,
+                        )
+                    self.assertEqual(len(endpoint._by_idempotency_key), 1)
+                    self.assertEqual(journal.get(intent.process_id).status, "completed")
 
 if __name__ == "__main__":
     unittest.main()

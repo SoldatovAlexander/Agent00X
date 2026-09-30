@@ -54,9 +54,10 @@ from app_contracts.publication_seed import (
     build_publication_seed,
     derive_publication_intent,
 )
-from app_contracts.mock_github import MockGitHubEndpoint
+from app_contracts.mock_github import MockGitHubEndpoint, MockPullRequest
 from app_contracts.publication import (
     PublicationJournal,
+    PublicationRecoveryRequired,
     PublicationRecord,
     SimulatedCrash,
     recover_publication,
@@ -2250,6 +2251,75 @@ class JournalIdempotencyIntegrationTests(unittest.TestCase):
 
 
 class PublicationRecoveryIntegrationTests(unittest.TestCase):
+    def test_unknown_error_and_mismatched_receipt_require_reconciliation_without_retry(self):
+        with decided_gate_fixture(include_seed=True) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated, seed
+        ):
+            for outcome in ("unknown", "mismatch"):
+                with self.subTest(outcome=outcome):
+                    endpoint = MockGitHubEndpoint()
+                    original_publish = endpoint.publish_pull_request
+                    publish_calls = []
+
+                    def unknown_result(_request):
+                        publish_calls.append("called")
+                        raise RuntimeError("endpoint outcome unavailable")
+
+                    def mismatched_receipt(_request):
+                        publish_calls.append("called")
+                        return MockPullRequest(
+                            91, "foreign-repository", intent.branch,
+                            intent.staged_change_digest, intent.idempotency_key,
+                        )
+
+                    endpoint.publish_pull_request = (
+                        unknown_result if outcome == "unknown" else mismatched_receipt
+                    )
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    with tempfile.TemporaryDirectory() as temporary_directory:
+                        with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                            with self.assertRaises(PublicationRecoveryRequired):
+                                run_controlled_local_publication(
+                                    seed, intent, approval, policy, engine_intent,
+                                    lambda _seed: staged_change, "decision-unknown-001",
+                                    FakeGateway([]), gateway_envelope(intent), broker,
+                                    matching_grant(intent), journal, endpoint,
+                                    actuator_id="test-actuator", now=FIXED_NOW,
+                                )
+                            self.assertEqual(journal.get(intent.process_id).status,
+                                             "reconciliation_required")
+                            self.assertEqual(publish_calls, ["called"])
+
+                            # Fresh gate decisions and a fresh grant cannot reopen the
+                            # uncertain process or issue a second endpoint call.
+                            endpoint.publish_pull_request = original_publish
+                            fresh_engine_intent = dict(
+                                engine_intent,
+                                approval_id="approval-fresh-after-unknown",
+                            )
+                            fresh_approval = dict(
+                                approval,
+                                approval_id="approval-fresh-after-unknown",
+                                approved_intent_digest=sha256_digest(fresh_engine_intent),
+                            )
+                            with self.assertRaisesRegex(
+                                ValueError, "^publication payload conflict$"
+                            ):
+                                run_controlled_local_publication(
+                                    seed, intent, fresh_approval, policy,
+                                    fresh_engine_intent,
+                                    lambda _seed: staged_change, "decision-unknown-002",
+                                    FakeGateway([]), gateway_envelope(intent), broker,
+                                    dict(matching_grant(intent),
+                                         credential_grant_id="grant-fresh-after-unknown"),
+                                    journal, endpoint, actuator_id="test-actuator",
+                                    now=FIXED_NOW,
+                                )
+                            self.assertEqual(journal.get(intent.process_id).status,
+                                             "reconciliation_required")
+                            self.assertEqual(publish_calls, ["called"])
+                            self.assertEqual(len(endpoint._by_idempotency_key), 0)
+
     def test_reopen_recovers_one_matching_mock_effect_and_repeated_recovery_never_republishes(self):
         with decided_gate_fixture(include_seed=True) as (
             intent, approval, policy, engine_intent, staged_change, _evaluated, seed

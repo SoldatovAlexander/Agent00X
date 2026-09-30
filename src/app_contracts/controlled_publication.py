@@ -22,7 +22,13 @@ from .broker import InMemoryCredentialBroker
 from .digests import sha256_digest
 from .gateway import GatewayDecision, GatewayPath
 from .mock_github import MockGitHubEndpoint, MockPullRequest
-from .publication import PublicationJournal, execute_publication
+from .publication import (
+    PublicationJournal,
+    PublicationRecoveryRequired,
+    SimulatedCrash,
+    execute_publication,
+    recover_publication,
+)
 from .publication_seed import PublicationIntent, PublicationSeed
 
 
@@ -454,20 +460,51 @@ def run_controlled_local_publication(
                 raise ControlledPublicationError(
                     "controlled publication: mock broker channel is invalid"
                 )
-            return execute_publication(
-                journal,
-                channel,
-                {
-                    "process_id": gate_intent.process_id,
-                    "operation": "publish_pull_request",
-                    "repository_id": gate_intent.repository_id,
-                    "branch": gate_intent.branch,
-                    "staged_change_digest": gate_intent.staged_change_digest,
-                    "idempotency_key": gate_intent.idempotency_key,
-                    "policy_effect": decision["effect"],
-                    "approval_valid": True,
-                },
-            )
+            request = {
+                "process_id": gate_intent.process_id,
+                "operation": "publish_pull_request",
+                "repository_id": gate_intent.repository_id,
+                "branch": gate_intent.branch,
+                "staged_change_digest": gate_intent.staged_change_digest,
+                "idempotency_key": gate_intent.idempotency_key,
+                "policy_effect": decision["effect"],
+                "approval_valid": True,
+            }
+            try:
+                return execute_publication(journal, channel, request)
+            except SimulatedCrash:
+                # Keep crash injection observable; the caller owns recovery.
+                raise
+            except Exception:
+                # A failed/invalid receipt is an uncertain external outcome.
+                # Reconcile by idempotency lookup only; never repeat publish.
+                try:
+                    current = journal.get(gate_intent.process_id)
+                except Exception:
+                    raise
+                if current.status != "attempting":
+                    raise
+                try:
+                    recovered = recover_publication(
+                        journal, channel, gate_intent.process_id
+                    )
+                    if recovered.status == "completed":
+                        receipt = channel.find_by_idempotency_key(
+                            gate_intent.idempotency_key
+                        )
+                        if isinstance(receipt, MockPullRequest):
+                            return receipt
+                except Exception:
+                    pass
+                try:
+                    current = journal.get(gate_intent.process_id)
+                    if current.status == "attempting":
+                        journal.mark_reconciliation_required(gate_intent.process_id)
+                except Exception:
+                    pass
+                raise PublicationRecoveryRequired(
+                    "publication recovery required"
+                ) from None
 
         return run_broker_gate(
             approved_intent,

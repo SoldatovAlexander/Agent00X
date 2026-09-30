@@ -18,10 +18,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from unittest.mock import patch
 
 from app_contracts.authority import DeterministicPolicy, PolicyConfig
+from app_contracts.broker import InMemoryCredentialBroker
 from app_contracts.controlled_publication import (
     ControlledPublicationError,
     run_approval_gate,
     run_broker_gate,
+    run_controlled_local_publication,
     run_gateway_gate,
     run_policy_gate,
 )
@@ -50,6 +52,7 @@ from app_contracts.publication_seed import (
     build_publication_seed,
     derive_publication_intent,
 )
+from app_contracts.mock_github import MockGitHubEndpoint
 from app_contracts.publication import PublicationJournal, PublicationRecord
 from app_contracts.repository_process import prepare_change as real_prepare_change
 from app_contracts.validator import ContractValidationError
@@ -350,18 +353,29 @@ class ApprovalGateTests(unittest.TestCase):
                     called_names.add(node.func.attr.lower())
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 defined_names.add(node.name.lower())
-        forbidden_modules = {"broker", "actuator", "mock_github", "github_app"}
+        self.assertFalse(any("github_app" in module for module in imported_modules))
+        approval_gate = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "run_approval_gate"
+        )
+        approval_gate_calls = {
+            node.func.id.lower() if isinstance(node.func, ast.Name)
+            else node.func.attr.lower() if isinstance(node.func, ast.Attribute)
+            else ""
+            for node in ast.walk(approval_gate)
+            if isinstance(node, ast.Call)
+        }
         self.assertTrue(
-            all(
-                not any(forbidden in module for module in imported_modules)
-                for forbidden in forbidden_modules
-            )
+            {"run_broker_gate", "execute_publication", "publish_pull_request",
+             "open_github_publication_channel"}.isdisjoint(approval_gate_calls)
         )
         if "gateway" in from_modules:
             self.assertEqual(gateway_type_names, {"gatewaydecision", "gatewaypath"})
         for module in from_modules:
             if "publication" in module:
-                self.assertIn(module, {"publication_seed", "controlled_publication"})
+                self.assertIn(
+                    module, {"publication_seed", "controlled_publication", "publication"}
+                )
         self.assertTrue({"now", "utcnow", "monotonic", "monotonic_ns"}.isdisjoint(called_names))
         self.assertTrue(
             not any(
@@ -1571,6 +1585,148 @@ class JournalPreparationTests(unittest.TestCase):
                         )
                     self.assertEqual(events, ["gateway.call"])
                     self.assertEqual(downstream.calls, 0)
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
+
+
+class ControlledLocalPublicationTests(unittest.TestCase):
+    def _run(self, intent, approval, policy, engine_intent, staged_change,
+             gateway, broker, journal, endpoint, loader):
+        return run_controlled_local_publication(
+            journal_seed_for(intent), intent, approval, policy, engine_intent,
+            loader, "decision-local-001", gateway, gateway_envelope(intent),
+            broker, matching_grant(intent), journal, endpoint,
+            actuator_id="test-actuator", now=FIXED_NOW,
+        )
+
+    def test_composes_approval_policy_gateway_broker_journal_and_mock(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    gateway = FakeGateway(gateway_events)
+                    loader_calls = []
+
+                    def load_staged_change(seed):
+                        loader_calls.append(seed.staged_change_digest)
+                        return staged_change
+
+                    with patch.object(policy, "decide", wraps=policy.decide) as decide:
+                        receipt = self._run(
+                            intent, approval, policy, engine_intent, staged_change,
+                            gateway, broker, journal, endpoint, load_staged_change,
+                        )
+
+                    decide.assert_called_once()
+                    self.assertEqual(loader_calls, [intent.staged_change_digest])
+                    self.assertEqual(len(gateway.calls), 1)
+                    self.assertEqual(len(broker.opened_grants), 1)
+                    self.assertEqual(broker.opened_grants, ["grant-local-001"])
+                    self.assertEqual(receipt.repository_id, intent.repository_id)
+                    self.assertEqual(receipt.branch, intent.branch)
+                    self.assertEqual(receipt.staged_change_digest, intent.staged_change_digest)
+                    self.assertEqual(receipt.idempotency_key, intent.idempotency_key)
+                    self.assertEqual(
+                        endpoint.find_by_idempotency_key(intent.idempotency_key), receipt
+                    )
+                    self.assertEqual(journal.get(intent.process_id).status, "completed")
+
+    def test_missing_approval_stops_before_loader_or_effectful_collaborators(self):
+        with decided_gate_fixture() as (intent, _approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    loader_calls = []
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: approval is missing$",
+                    ):
+                        self._run(
+                            intent, None, policy, engine_intent, staged_change,
+                            FakeGateway(gateway_events), broker, journal, endpoint,
+                            lambda _seed: loader_calls.append("called"),
+                        )
+                    self.assertEqual(loader_calls, [])
+                    self.assertEqual(gateway_events, [])
+                    self.assertEqual(broker.opened_grants, [])
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
+
+    def test_staged_digest_mismatch_stops_before_gateway_broker_journal_and_mock(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: staged change digest mismatch$",
+                    ):
+                        self._run(
+                            intent, approval, policy, engine_intent, staged_change,
+                            FakeGateway(gateway_events), broker, journal, endpoint,
+                            lambda _seed: {"tampered.py": "unapproved"},
+                        )
+                    self.assertEqual(gateway_events, [])
+                    self.assertEqual(broker.opened_grants, [])
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
+                    self.assertIsNone(endpoint.find_by_idempotency_key(intent.idempotency_key))
+
+    def test_gateway_deny_stops_before_broker_journal_and_mock(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    endpoint = MockGitHubEndpoint()
+                    broker = InMemoryCredentialBroker(lambda: endpoint)
+                    gateway_events = []
+                    denied = FakeGateway(
+                        gateway_events,
+                        verdict=GatewayDecision(GatewayPath.SLOW, False, ("denied",)),
+                    )
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: gateway has not authorized slow path$",
+                    ):
+                        self._run(
+                            intent, approval, policy, engine_intent, staged_change,
+                            denied, broker, journal, endpoint, lambda _seed: staged_change,
+                        )
+                    self.assertEqual(gateway_events, ["gateway.call"])
+                    self.assertEqual(broker.opened_grants, [])
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
+                    self.assertIsNone(endpoint.find_by_idempotency_key(intent.idempotency_key))
+
+    def test_non_mock_endpoint_is_rejected_before_approval_or_loader(self):
+        with decided_gate_fixture() as (intent, approval, policy, engine_intent,
+                                        staged_change, _evaluated):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    gateway_events = []
+                    broker = InMemoryCredentialBroker(lambda: MockGitHubEndpoint())
+                    loader_calls = []
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: mock endpoint is required$",
+                    ):
+                        self._run(
+                            intent, approval, policy, engine_intent, staged_change,
+                            FakeGateway(gateway_events), broker, journal, object(),
+                            lambda _seed: loader_calls.append("called"),
+                        )
+                    self.assertEqual(loader_calls, [])
+                    self.assertEqual(gateway_events, [])
+                    self.assertEqual(broker.opened_grants, [])
                     with self.assertRaises(KeyError):
                         journal.get(intent.process_id)
 

@@ -18,8 +18,11 @@ from datetime import datetime, timezone
 from typing import Any, Callable, TypeVar
 
 from .authority import DeterministicPolicy, check_decision_usable, check_intent_approved
+from .broker import InMemoryCredentialBroker
 from .digests import sha256_digest
 from .gateway import GatewayDecision, GatewayPath
+from .mock_github import MockGitHubEndpoint, MockPullRequest
+from .publication import PublicationJournal, execute_publication
 from .publication_seed import PublicationIntent, PublicationSeed
 
 
@@ -34,6 +37,7 @@ def run_approval_gate(
     intent: PublicationIntent,
     approval: Any,
     *,
+    engine_intent: Any = None,
     now: datetime,
     proceed: Callable[[PublicationIntent], T],
 ) -> T:
@@ -51,7 +55,20 @@ def run_approval_gate(
     if not isinstance(approval, dict):
         raise ControlledPublicationError("controlled publication: approval is missing")
     moment = _require_clock(now)
-    check_intent_approved(asdict(intent), approval)
+    if engine_intent is None:
+        check_intent_approved(asdict(intent), approval)
+    else:
+        _require_engine_intent_binding(intent, engine_intent)
+        try:
+            check_intent_approved(engine_intent, approval)
+        except Exception:
+            raise ControlledPublicationError(
+                "controlled publication: approval binding is invalid"
+            ) from None
+        if _require_approval_expiry(
+            {"expires_at": engine_intent.get("expires_at")}
+        ) <= moment:
+            raise ControlledPublicationError("controlled publication: engine intent expired")
     if _require_approval_expiry(approval) <= moment:
         raise ControlledPublicationError("controlled publication: approval expired")
     return proceed(intent)
@@ -370,6 +387,140 @@ def run_broker_gate(
         now=moment,
         proceed=open_after_policy,
     )
+
+
+def run_controlled_local_publication(
+    seed: Any,
+    intent: Any,
+    approval: Any,
+    policy: Any,
+    engine_intent: Any,
+    load_staged_change: Any,
+    decision_id: Any,
+    gateway: Any,
+    envelope: Any,
+    broker: Any,
+    credential_grant: Any,
+    journal: Any,
+    endpoint: Any,
+    *,
+    actuator_id: Any,
+    now: datetime,
+) -> MockPullRequest:
+    """Run the narrow local approval-to-mock publication path.
+
+    File contents are supplied only by a bounded injected loader for the
+    policy digest check; callers do not pass raw content or a provider channel
+    into this coordinator. The only endpoint accepted here is the existing
+    in-memory ``MockGitHubEndpoint``, returned as the private channel by the
+    test-only in-memory broker. No real provider, credential value, or network
+    capability is accepted.
+    """
+
+    if type(seed) is not PublicationSeed:
+        raise ControlledPublicationError("controlled publication: publication seed is invalid")
+    if type(intent) is not PublicationIntent:
+        raise ControlledPublicationError("controlled publication: intent is invalid")
+    if type(policy) is not DeterministicPolicy:
+        raise ControlledPublicationError("controlled publication: policy engine is invalid")
+    if not callable(load_staged_change):
+        raise ControlledPublicationError("controlled publication: staged change loader is invalid")
+    if type(broker) is not InMemoryCredentialBroker:
+        raise ControlledPublicationError("controlled publication: in-memory broker is required")
+    if type(journal) is not PublicationJournal:
+        raise ControlledPublicationError("controlled publication: local journal is required")
+    if type(endpoint) is not MockGitHubEndpoint:
+        raise ControlledPublicationError("controlled publication: mock endpoint is required")
+    _require_seed_intent_binding(seed, intent)
+
+    def after_approval(approved_intent: PublicationIntent) -> MockPullRequest:
+        try:
+            staged_change = load_staged_change(seed)
+        except Exception:
+            raise ControlledPublicationError(
+                "controlled publication: staged change load failed"
+            ) from None
+        if not isinstance(staged_change, dict):
+            raise ControlledPublicationError("controlled publication: staged change is invalid")
+
+        def publish_after_broker(
+            gate_intent: PublicationIntent,
+            _gate_approval: dict,
+            decision: dict,
+            _gateway_decision: GatewayDecision,
+            channel: Any,
+        ) -> MockPullRequest:
+            if type(channel) is not MockGitHubEndpoint or channel is not endpoint:
+                raise ControlledPublicationError(
+                    "controlled publication: mock broker channel is invalid"
+                )
+            return execute_publication(
+                journal,
+                channel,
+                {
+                    "process_id": gate_intent.process_id,
+                    "operation": "publish_pull_request",
+                    "repository_id": gate_intent.repository_id,
+                    "branch": gate_intent.branch,
+                    "staged_change_digest": gate_intent.staged_change_digest,
+                    "idempotency_key": gate_intent.idempotency_key,
+                    "policy_effect": decision["effect"],
+                    "approval_valid": True,
+                },
+            )
+
+        return run_broker_gate(
+            approved_intent,
+            approval,
+            policy,
+            engine_intent,
+            staged_change,
+            decision_id,
+            gateway,
+            envelope,
+            broker,
+            credential_grant,
+            actuator_id=actuator_id,
+            now=now,
+            proceed=publish_after_broker,
+            seed=seed,
+            journal=journal,
+        )
+
+    return run_approval_gate(
+        intent,
+        approval,
+        engine_intent=engine_intent,
+        now=now,
+        proceed=after_approval,
+    )
+
+
+def _require_seed_intent_binding(seed: PublicationSeed, intent: PublicationIntent) -> None:
+    if (
+        seed.process_id != intent.process_id
+        or seed.repository_id != intent.repository_id
+        or seed.base_commit != intent.base_commit
+        or seed.staged_change_digest != intent.staged_change_digest
+    ):
+        raise ControlledPublicationError("controlled publication: seed binding mismatch")
+
+
+def _require_engine_intent_binding(intent: PublicationIntent, engine_intent: Any) -> None:
+    if not isinstance(engine_intent, dict):
+        raise ControlledPublicationError("controlled publication: engine intent is missing")
+    for field in (
+        "process_id", "repository_id", "base_commit", "staged_change_digest",
+        "idempotency_key",
+    ):
+        if engine_intent.get(field) != getattr(intent, field):
+            raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if engine_intent.get("operation") != "publish_pull_request":
+        raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if engine_intent.get("branch_namespace") != intent.branch.split("/", 1)[0]:
+        raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if not isinstance(engine_intent.get("expires_at"), str):
+        raise ControlledPublicationError("controlled publication: engine intent binding is invalid")
 
 
 def _prepare_publication_journal(

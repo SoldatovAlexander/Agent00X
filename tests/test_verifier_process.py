@@ -61,6 +61,11 @@ def valid_verifier_result() -> VerifierResult:
     )
 
 
+VALID_REQUEST_DIGEST = (
+    "sha256:612127173a24c53bcb2cb55ce2153db552e62a18ad4cdca36451b43dde396cb6"
+)
+
+
 class VerifierProcessRecordTests(unittest.TestCase):
     def test_request_record_is_versioned_and_has_only_verifier_input_fields(self):
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
@@ -86,11 +91,16 @@ class VerifierProcessRecordTests(unittest.TestCase):
             self.assertNotIn(forbidden_field, serialized)
 
     def test_response_record_contains_only_bounded_verifier_result_fields(self):
-        response = VerifierProcessResponse.from_verifier_result(valid_verifier_result())
+        response = VerifierProcessResponse.from_verifier_result(
+            valid_verifier_result(), VALID_REQUEST_DIGEST
+        )
 
         self.assertEqual(response.schema_version, VERIFIER_PROCESS_SCHEMA_VERSION)
         payload = asdict(response)
-        self.assertEqual(set(payload), {"schema_version", "verifier_result"})
+        self.assertEqual(
+            set(payload), {"schema_version", "request_digest", "verifier_result"}
+        )
+        self.assertEqual(payload["request_digest"], VALID_REQUEST_DIGEST)
         self.assertEqual(
             set(payload["verifier_result"]),
             {
@@ -103,7 +113,9 @@ class VerifierProcessRecordTests(unittest.TestCase):
 
     def test_records_are_immutable_and_reject_invalid_types_or_versions(self):
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
-        response = VerifierProcessResponse.from_verifier_result(valid_verifier_result())
+        response = VerifierProcessResponse.from_verifier_result(
+            valid_verifier_result(), VALID_REQUEST_DIGEST
+        )
 
         with self.assertRaises(FrozenInstanceError):
             request.schema_version = 2  # type: ignore[misc]
@@ -119,7 +131,9 @@ class VerifierProcessRecordTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     VerifierProcessError, "^verifier process: response version is invalid$"
                 ):
-                    VerifierProcessResponse(bad_version, valid_verifier_result())
+                    VerifierProcessResponse(
+                        bad_version, VALID_REQUEST_DIGEST, valid_verifier_result()
+                    )
 
         with self.assertRaisesRegex(
             VerifierProcessError, "^verifier process: request shape is invalid$"
@@ -128,7 +142,15 @@ class VerifierProcessRecordTests(unittest.TestCase):
         with self.assertRaisesRegex(
             VerifierProcessError, "^verifier process: response shape is invalid$"
         ):
-            VerifierProcessResponse.from_verifier_result({"verdict": "pass"})
+            VerifierProcessResponse.from_verifier_result(
+                {"verdict": "pass"}, VALID_REQUEST_DIGEST
+            )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: response fields are invalid$"
+        ):
+            VerifierProcessResponse.from_verifier_result(
+                valid_verifier_result(), "not-a-digest"
+            )
 
     def test_request_record_rejects_non_local_evidence_origin(self):
         malformed_input = VerifierInput(
@@ -343,9 +365,7 @@ class VerifierRequestParsingTests(unittest.TestCase):
 
 
 class VerifierRequestDigestTests(unittest.TestCase):
-    EXPECTED_FIXTURE_DIGEST = (
-        "sha256:612127173a24c53bcb2cb55ce2153db552e62a18ad4cdca36451b43dde396cb6"
-    )
+    EXPECTED_FIXTURE_DIGEST = VALID_REQUEST_DIGEST
 
     def test_digest_is_canonical_and_pinned(self):
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
@@ -542,6 +562,7 @@ class VerifierRequestBoundsTests(unittest.TestCase):
 
 def valid_response_payload(**overrides):
     payload = {
+        "request_digest": VALID_REQUEST_DIGEST,
         "process_id": "process-local-001",
         "base_commit": "a" * 40,
         "snapshot_tree_digest": "sha256:" + "1" * 64,
@@ -562,8 +583,14 @@ def valid_response_payload(**overrides):
 def encode_response_payload(result_payload):
     import json as json_module
 
+    payload = dict(result_payload)
+    request_digest = payload.pop("request_digest", VALID_REQUEST_DIGEST)
     return json_module.dumps(
-        {"schema_version": 1, "verifier_result": result_payload},
+        {
+            "schema_version": 1,
+            "request_digest": request_digest,
+            "verifier_result": payload,
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -574,7 +601,9 @@ class VerifierResponseParsingTests(unittest.TestCase):
         response = parse_verifier_response(
             encode_response_payload(valid_response_payload())
         )
-        expected = VerifierProcessResponse.from_verifier_result(valid_verifier_result())
+        expected = VerifierProcessResponse.from_verifier_result(
+            valid_verifier_result(), VALID_REQUEST_DIGEST
+        )
         self.assertEqual(response, expected)
         self.assertIs(response.verifier_result.verdict, VerifierVerdict.PASS)
         self.assertEqual(response.verifier_result.blocker_codes, ())
@@ -616,6 +645,19 @@ class VerifierResponseParsingTests(unittest.TestCase):
                     if not isinstance(mutate(valid_response_payload()), bytes)
                     else mutate(valid_response_payload())
                 )
+
+    def test_request_digest_field_is_required_and_canonical(self):
+        for value in (None, 42, "", "sha256:" + "A" * 64, "sha256:" + "f" * 63):
+            with self.subTest(value=repr(value)):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: response fields are invalid$",
+                ):
+                    parse_verifier_response(
+                        encode_response_payload(
+                            valid_response_payload(request_digest=value)
+                        )
+                    )
 
     def test_malformed_encoding_shape_and_duplicates_fail_closed(self):
         for data in (None, 42, b"\xff\xfe{}", b"", b"[]", b"NaN"):
@@ -688,20 +730,22 @@ def valid_bound_trio():
 class VerifierResponseBindingTests(unittest.TestCase):
     def test_matching_trio_returns_typed_result(self):
         request, digest, response = valid_bound_trio()
-        result = bind_verifier_response(request, digest, response)
+        result = bind_verifier_response(request, response)
         self.assertEqual(result, response.verifier_result)
         self.assertIsInstance(result, VerifierResult)
         self.assertIs(result.verdict, VerifierVerdict.PASS)
 
-    def test_request_digest_must_match_exact_source_request(self):
+    def test_response_digest_must_match_exact_source_request(self):
         request, digest, response = valid_bound_trio()
-        for forged_digest in (None, 42, "", "sha256:" + "f" * 64, digest + "tampered"):
-            with self.subTest(digest=repr(forged_digest)[:30]):
-                with self.assertRaisesRegex(
-                    VerifierProcessError,
-                    "^verifier process: request digest mismatch$",
-                ):
-                    bind_verifier_response(request, forged_digest, response)
+        forged_response = VerifierProcessResponse(
+            VERIFIER_PROCESS_SCHEMA_VERSION,
+            "sha256:" + "f" * 64,
+            response.verifier_result,
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request digest mismatch$"
+        ):
+            bind_verifier_response(request, forged_response)
         tampered_request = VerifierProcessRequest.from_verifier_input(
             VerifierInput(
                 **{**valid_verifier_input().__dict__, "process_id": "process-forged-001"}
@@ -710,7 +754,23 @@ class VerifierResponseBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(
             VerifierProcessError, "^verifier process: request digest mismatch$"
         ):
-            bind_verifier_response(tampered_request, digest, response)
+            bind_verifier_response(tampered_request, response)
+
+    def test_stale_response_for_different_test_command_is_rejected(self):
+        request, digest, response = valid_bound_trio()
+        foreign_request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "test_command": ("python3", "-m", "pytest"),
+                }
+            )
+        )
+        self.assertNotEqual(digest_verifier_request(foreign_request), digest)
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: request digest mismatch$"
+        ):
+            bind_verifier_response(foreign_request, response)
 
     def test_any_binding_substitution_uses_existing_executor_contract(self):
         request, digest, response = valid_bound_trio()
@@ -729,12 +789,12 @@ class VerifierResponseBindingTests(unittest.TestCase):
                     **{**response.verifier_result.__dict__, field: value}
                 )
                 forged_response = VerifierProcessResponse(
-                    VERIFIER_PROCESS_SCHEMA_VERSION, forged_result
+                    VERIFIER_PROCESS_SCHEMA_VERSION, digest, forged_result
                 )
                 with self.assertRaisesRegex(
                     ExecutionError, "^execution verifier: result binding mismatch$"
                 ):
-                    bind_verifier_response(request, digest, forged_response)
+                    bind_verifier_response(request, forged_response)
 
     def test_malformed_binding_inputs_fail_closed_without_echo(self):
         canary = "BIND-CANARY-SECRET-VALUE"
@@ -742,16 +802,11 @@ class VerifierResponseBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(
             VerifierProcessError, "^verifier process: request shape is invalid$"
         ):
-            bind_verifier_response({"forged": canary}, digest, response)
+            bind_verifier_response({"forged": canary}, response)
         with self.assertRaisesRegex(
             VerifierProcessError, "^verifier process: response shape is invalid$"
         ):
-            bind_verifier_response(request, digest, {"verdict": canary})
-        with self.assertRaisesRegex(
-            VerifierProcessError, "^verifier process: request digest mismatch$"
-        ) as raised:
-            bind_verifier_response(request, canary, response)
-        self.assertNotIn(canary, str(raised.exception))
+            bind_verifier_response(request, {"verdict": canary})
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ MAX_VERIFIER_REQUEST_COMMAND_ARGS = 64
 
 _REQUEST_FIELDS = frozenset({"schema_version", "verifier_input"})
 
-_RESPONSE_FIELDS = frozenset({"schema_version", "verifier_result"})
+_RESPONSE_FIELDS = frozenset({"schema_version", "request_digest", "verifier_result"})
 
 _VERIFIER_RESULT_FIELDS = frozenset(
     {
@@ -68,6 +68,7 @@ _RESULT_OPTIONAL_STR_FIELDS = frozenset({"snapshot_tree_digest", "replay_result_
 _VERDICTS = frozenset({"pass", "fail", "blocked"})
 
 _BLOCKER_CODE_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
+_REQUEST_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 _VERIFIER_INPUT_FIELDS = frozenset(
     {
@@ -137,19 +138,32 @@ class VerifierProcessResponse:
     """Versioned handoff containing one bounded typed verifier result."""
 
     schema_version: int
+    request_digest: str
     verifier_result: VerifierResult
 
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != VERIFIER_PROCESS_SCHEMA_VERSION:
             raise VerifierProcessError("verifier process: response version is invalid")
+        if (
+            type(self.request_digest) is not str
+            or _REQUEST_DIGEST_PATTERN.fullmatch(self.request_digest) is None
+        ):
+            raise VerifierProcessError("verifier process: response fields are invalid")
         if type(self.verifier_result) is not VerifierResult:
             raise VerifierProcessError("verifier process: response shape is invalid")
 
     @classmethod
-    def from_verifier_result(cls, value: object) -> "VerifierProcessResponse":
+    def from_verifier_result(
+        cls, value: object, request_digest: object
+    ) -> "VerifierProcessResponse":
         if type(value) is not VerifierResult:
             raise VerifierProcessError("verifier process: response shape is invalid")
-        return cls(VERIFIER_PROCESS_SCHEMA_VERSION, value)
+        if (
+            type(request_digest) is not str
+            or _REQUEST_DIGEST_PATTERN.fullmatch(request_digest) is None
+        ):
+            raise VerifierProcessError("verifier process: response fields are invalid")
+        return cls(VERIFIER_PROCESS_SCHEMA_VERSION, request_digest, value)
 
 
 def serialize_verifier_request(value: object) -> bytes:
@@ -353,6 +367,12 @@ def parse_verifier_response(data: object) -> VerifierProcessResponse:
         raise VerifierProcessError("verifier process: response version is invalid")
     if set(payload) != _RESPONSE_FIELDS:
         raise VerifierProcessError("verifier process: response fields are invalid")
+    request_digest = payload["request_digest"]
+    if (
+        type(request_digest) is not str
+        or _REQUEST_DIGEST_PATTERN.fullmatch(request_digest) is None
+    ):
+        raise VerifierProcessError("verifier process: response fields are invalid")
     raw_result = payload["verifier_result"]
     if type(raw_result) is not dict or set(raw_result) != _VERIFIER_RESULT_FIELDS:
         raise VerifierProcessError("verifier process: response fields are invalid")
@@ -375,17 +395,16 @@ def parse_verifier_response(data: object) -> VerifierProcessResponse:
         blocker_codes=tuple(raw_result["blocker_codes"]),
         evidence_origin=raw_result["evidence_origin"],
     )
-    return VerifierProcessResponse(version, verifier_result)
+    return VerifierProcessResponse(version, request_digest, verifier_result)
 
 
 def bind_verifier_response(
     request: VerifierProcessRequest,
-    request_digest: object,
     response: VerifierProcessResponse,
 ) -> VerifierResult:
     """Bind a parsed response to its exact source request.
 
-    The presented request digest must equal the freshly recomputed digest of
+    The response's request digest must equal the freshly recomputed digest of
     the source request, and the response must satisfy every existing
     ``validate_verifier_result`` binding against that same request. Any
     substitution is rejected before the typed result is returned; the
@@ -396,7 +415,7 @@ def bind_verifier_response(
         raise VerifierProcessError("verifier process: request shape is invalid")
     if type(response) is not VerifierProcessResponse:
         raise VerifierProcessError("verifier process: response shape is invalid")
-    if type(request_digest) is not str or request_digest != digest_verifier_request(request):
+    if response.request_digest != digest_verifier_request(request):
         raise VerifierProcessError("verifier process: request digest mismatch")
     return validate_verifier_result(response.verifier_result, request.verifier_input)
 

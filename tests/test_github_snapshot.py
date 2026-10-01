@@ -781,6 +781,39 @@ class SnapshotReaderCompositionTests(unittest.TestCase):
                 None,
             )
 
+    def test_oversized_bodies_fail_closed_before_decode_per_limit(self):
+        files = [("calculator.py", b"print('ok')\n", "100644")]
+        owner_url = f"{API_BASE}/repos/{VALID_OWNER}/{VALID_REPOSITORY}"
+        commit_url = f"{owner_url}/git/commits/{READER_COMMIT_OID}"
+        tree_url = f"{owner_url}/git/trees/{READER_TREE_OID}?recursive=1"
+        blob_sha = git_blob_sha(files[0][1])
+        blob_url = f"{owner_url}/git/blobs/{blob_sha}"
+        request = GitHubSnapshotRequest(
+            owner=VALID_OWNER, repository=VALID_REPOSITORY, commit_oid=READER_COMMIT_OID
+        )
+        oversized = b"x" * 10_000_001
+        for label, target_url in (
+            ("commit-limit", commit_url),
+            ("tree-limit", tree_url),
+            ("blob-limit", blob_url),
+        ):
+            with self.subTest(limit=label):
+                routes = reader_fixture_routes(files)
+                routes[("GET", target_url)] = (200, oversized)
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: snapshot response exceeds limit$",
+                ):
+                    read_github_snapshot(request, FakeTransport(routes))
+        oversized_error = dict(reader_fixture_routes(files))
+        oversized_error[("GET", commit_url)] = (404, oversized)
+        with self.subTest(limit="error-status-still-size-gated"):
+            with self.assertRaisesRegex(
+                GitHubSnapshotError,
+                "^github snapshot: snapshot response exceeds limit$",
+            ):
+                read_github_snapshot(request, FakeTransport(oversized_error))
+
     def test_reader_uses_no_live_network_or_default_transport(self):
         import ast
 

@@ -455,6 +455,8 @@ def _get_json(transport: object, path: str, max_bytes: int) -> object:
     body = result.get("body")
     if type(status) is not int or type(body) is not bytes:
         raise GitHubSnapshotError("github snapshot: transport result is invalid")
+    if len(body) > max_bytes:
+        raise GitHubSnapshotError("github snapshot: snapshot response exceeds limit")
     if status != 200:
         raise GitHubSnapshotError("github snapshot: snapshot response failed")
     try:

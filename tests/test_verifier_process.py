@@ -1120,6 +1120,100 @@ class VerifierOutputBoundsTests(unittest.TestCase):
             run_verifier_command(config, request)
         self.assertNotIn(canary, str(raised.exception))
 
+    def test_slow_trickle_breach_fails_fast_without_buffering_all(self):
+        import time
+
+        script = (
+            "import sys, time\n"
+            "for _ in range(3000):\n"
+            "    sys.stdout.buffer.write(b'Q' * 1000)\n"
+            "    sys.stdout.buffer.flush()\n"
+            "    time.sleep(0.008)\n"
+        )
+        config = valid_process_config(
+            executable=sys.executable,
+            argv=(sys.executable, "-c", script),
+            timeout_seconds=60,
+            max_stdout_bytes=100_000,
+        )
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        started = time.monotonic()
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: child output exceeds limit$",
+        ):
+            run_verifier_command(config, request)
+        self.assertLess(time.monotonic() - started, 20)
+
+    def test_stderr_limit_enforced_exactly_at_boundary_and_beyond(self):
+        record_text = encode_response_payload(valid_response_payload()).decode("utf-8")
+        for extra_bytes, succeeds in ((0, True), (1, False)):
+            with self.subTest(extra_bytes=extra_bytes):
+                filler = 50_000 + extra_bytes
+                script = (
+                    "import sys; "
+                    f"sys.stderr.buffer.write(b'E' * {filler}); "
+                    "sys.stdout.write(sys.argv[1]);"
+                )
+                config = valid_process_config(
+                    executable=sys.executable,
+                    argv=(sys.executable, "-c", script, record_text),
+                    max_stderr_bytes=50_000,
+                )
+                request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+                if succeeds:
+                    response = run_verifier_command(config, request)
+                    self.assertIsInstance(response, VerifierProcessResponse)
+                else:
+                    with self.assertRaisesRegex(
+                        VerifierProcessError,
+                        "^verifier process: child output exceeds limit$",
+                    ):
+                        run_verifier_command(config, request)
+
+    def test_runner_canary_matrix_never_echoes_any_source(self):
+        canary = "OVERFLOW-MATRIX-CANARY"
+        request_with_canary = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "verified_contents": (("calculator.py", f"ok\n{canary}\n"),),
+                }
+            )
+        )
+        plain_request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        record_text = encode_response_payload(valid_response_payload()).decode("utf-8")
+        cases = (
+            ("request", request_with_canary, "import sys; sys.stdout.write('not-json{{');",
+             None, "^verifier process: child response is malformed$"),
+            ("stderr", plain_request,
+             f"import sys; sys.stderr.write({canary!r}); sys.exit(3);",
+             None, "^verifier process: child exit failed$"),
+            ("argv", plain_request,
+             "import sys; sys.exit(3);",
+             ("unused", canary), "^verifier process: child exit failed$"),
+            ("response", plain_request, None,
+             None, "^verifier process: child response is malformed$"),
+        )
+        for source, request, script, argv_extra, message in cases:
+            with self.subTest(source=source):
+                if source == "response":
+                    script = (
+                        "import sys; "
+                        f"sys.stdout.write({canary!r} + 'not-json{{');"
+                    )
+                    argv = (sys.executable, "-c", script)
+                elif argv_extra is not None:
+                    argv = (sys.executable, "-c", script) + argv_extra
+                else:
+                    argv = (sys.executable, "-c", script)
+                config = valid_process_config(executable=sys.executable, argv=argv)
+                with self.assertRaisesRegex(
+                    VerifierProcessError, message
+                ) as raised:
+                    run_verifier_command(config, request)
+                self.assertNotIn(canary, str(raised.exception))
+
     def test_no_raw_streams_reach_caller(self):
         canary = "STREAM-CANARY-MARKER"
         record_text = encode_response_payload(valid_response_payload()).decode("utf-8")

@@ -44,8 +44,8 @@ R2 follow-up (20 карточек): bounded subprocess JSON handoff ограни
 `VerifierInput` в дочерний процесс и приём только bound `VerifierResult`
 (AI-1—AI-4 — wire contract, AI-5—AI-12 — процессный адаптер и fail-closed
 поведение, AI-13—AI-19 — интеграция и отказная матрица). На 2026-10-01 принято
-17/20 карточек Batch AI, карточки EXP-365—367 выполнены локально и ожидают
-приёмки Control Plane. Это process-boundary prototype на текущем host, а не
+19/20 карточек Batch AI: EXP-365 и EXP-366 приняты, EXP-367 выполнен локально
+и остаётся в REVIEW — ожидает приёмки Control Plane. Это process-boundary prototype на текущем host, а не
 independently trusted verifier: process separation не является security
 isolation, remote provenance, production sandbox, реальная модель и external
 providers остаются открытыми.

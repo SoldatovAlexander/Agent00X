@@ -52,8 +52,8 @@ trust boundaries. Наблюдатель и обучение через конт
    provider/credentials остаются открытыми. Локальное закрытие трёх батчей не
    означает завершение цели этапа R2. Отдельный локальный follow-up Batch AI
    (EXP-348—367, 20 карточек): bounded subprocess JSON handoff и приём только
-   bound результата; на 2026-10-01 принято 17/20 карточек, EXP-365—367
-   выполнены локально и ожидают приёмки. Это не independently trusted
+   bound результата; на 2026-10-01 принято 19/20 карточек: EXP-365 и EXP-366
+   приняты, EXP-367 остаётся в REVIEW и ожидает приёмки. Это не independently trusted
    verification и не production sandbox/isolation: process separation не
    представлена как trust independence.
 4. **R3 — наблюдатель и исторический отчёт.** Отчёты сейчас/на момент T,

@@ -9,11 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.github_snapshot import (
+    GitHubBlobClaim,
     GitHubCommitClaim,
     GitHubSnapshotError,
     GitHubSnapshotRequest,
     GitHubTreeClaim,
     GitHubTreeEntry,
+    parse_github_blob,
     parse_github_commit,
     parse_github_tree,
 )
@@ -380,6 +382,143 @@ class TreeResponseBindingTests(unittest.TestCase):
             GitHubSnapshotError, "^github snapshot: tree response is invalid$"
         ):
             parse_github_tree(valid_claim(), valid_tree_response(tree=entries))
+
+
+def git_blob_sha(content: bytes) -> str:
+    import hashlib as hashlib_module
+
+    return hashlib_module.sha1(
+        b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+    ).hexdigest()
+
+
+def valid_blob_entry(content: bytes = b"print('ok')\n"):
+    return GitHubTreeEntry(
+        path="calculator.py", mode="100644", entry_type="blob",
+        sha=git_blob_sha(content),
+    )
+
+
+def valid_blob_response(content: bytes = b"print('ok')\n", **overrides):
+    import base64 as base64_module
+
+    response = {
+        "sha": git_blob_sha(content),
+        "size": len(content),
+        "encoding": "base64",
+        "content": base64_module.b64encode(content).decode("ascii"),
+    }
+    response.update(overrides)
+    return response, content
+
+
+class BlobDecodeVerificationTests(unittest.TestCase):
+    def test_valid_text_and_binary_blobs_verify(self):
+        for content in (b"print('ok')\n", bytes(range(256))):
+            with self.subTest(size=len(content)):
+                response, _ = valid_blob_response(content)
+                claim = parse_github_blob(valid_blob_entry(content), response)
+                self.assertEqual(claim.sha, git_blob_sha(content))
+                self.assertEqual(claim.size, len(content))
+                self.assertEqual(claim.content, content)
+                self.assertEqual(claim.path, "calculator.py")
+                self.assertEqual(claim.evidence_origin, "github_rest_api_claim")
+                self.assertNotIn("content=", repr(claim))
+                self.assertNotIn(repr(content), repr(claim))
+
+    def test_invalid_encoding_or_base64_fails_closed(self):
+        response, content = valid_blob_response()
+        entry = valid_blob_entry(content)
+        for override in (
+            {"encoding": "utf-8"},
+            {"encoding": None},
+            {"content": "not base64!!!"},
+            {"content": "aGVsbG8\n"},
+            {"content": 42},
+            {"content": None},
+        ):
+            with self.subTest(override=repr(override)[:40]):
+                tampered = dict(response, **override)
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: blob response is invalid$",
+                ):
+                    parse_github_blob(entry, tampered)
+        for response in (None, [], "blob"):
+            with self.subTest(response=repr(response)[:20]):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: blob response is invalid$",
+                ):
+                    parse_github_blob(entry, response)
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: blob entry is invalid$"
+        ):
+            parse_github_blob("not-an-entry", response)
+
+    def test_size_and_sha_mismatch_fail_closed_without_echo(self):
+        canary = "BLOB-CANARY-SECRET"
+        content = f"payload with {canary} inside\n".encode("utf-8")
+        response, _ = valid_blob_response(content)
+        entry = valid_blob_entry(content)
+        mismatched = [
+            (dict(response, size=len(content) + 1),
+             "^github snapshot: blob size mismatch$"),
+            (dict(response, size="12"),
+             "^github snapshot: blob size mismatch$"),
+            (dict(response, sha="f" * 40),
+             "^github snapshot: blob OID mismatch$"),
+        ]
+        for tampered, message in mismatched:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError, message
+                ) as raised:
+                    parse_github_blob(entry, tampered)
+                self.assertNotIn(canary, str(raised.exception))
+                self.assertNotIn("f" * 40, str(raised.exception))
+
+    def test_oversized_payload_fails_closed_before_full_decode(self):
+        import base64 as base64_module
+
+        wire_huge = {
+            "sha": "f" * 40,
+            "size": 1,
+            "encoding": "base64",
+            "content": "A" * 300_000,
+        }
+        entry = valid_blob_entry()
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: blob size exceeds limit$"
+        ):
+            parse_github_blob(entry, wire_huge)
+        big = b"Q" * 150_000
+        oversized = {
+            "sha": git_blob_sha(big),
+            "size": len(big),
+            "encoding": "base64",
+            "content": base64_module.b64encode(big).decode("ascii"),
+        }
+        entry = GitHubTreeEntry(
+            path="big.py", mode="100644", entry_type="blob", sha=git_blob_sha(big)
+        )
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: blob size exceeds limit$"
+        ):
+            parse_github_blob(entry, oversized)
+        medium = b"M" * 60_000
+        total_response, _ = valid_blob_response(medium)
+        medium_entry = valid_blob_entry(medium)
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: blob contents exceed limit$"
+        ):
+            parse_github_blob(
+                medium_entry, total_response, content_bytes_used=950_001
+            )
+        ok_claim = parse_github_blob(
+            medium_entry, total_response, content_bytes_used=940_000
+        )
+        self.assertEqual(ok_claim.size, 60_000)
 
 
 if __name__ == "__main__":

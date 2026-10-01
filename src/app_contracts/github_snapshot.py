@@ -7,15 +7,19 @@ network retrieval and its credibility are out of scope here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import base64
+import hashlib
 import posixpath
 import re
 from typing import Literal
 
+from .digests import sha256_bytes
 from .pinned_snapshot import (
     MAX_SNAPSHOT_FILE_BYTES,
     MAX_SNAPSHOT_FILES,
     MAX_SNAPSHOT_PATH_BYTES,
+    MAX_SNAPSHOT_TOTAL_BYTES,
 )
 
 
@@ -29,6 +33,8 @@ _OID_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 
 _BLOB_MODES = frozenset({"100644", "100755"})
 _TREE_MODE = "040000"
+_BLOB_ENCODING = "base64"
+_MAX_BLOB_WIRE_BYTES = MAX_SNAPSHOT_FILE_BYTES * 2
 
 
 @dataclass(frozen=True)
@@ -166,6 +172,93 @@ def parse_github_tree(claim: GitHubCommitClaim, response: object) -> GitHubTreeC
         repository=claim.repository,
         tree_oid=claim.tree_oid,
         entries=tuple(entries),
+    )
+
+
+@dataclass(frozen=True)
+class GitHubBlobClaim:
+    """Immutable API claim binding one blob OID to its verified bytes.
+
+    Raw bytes never appear in the record representation; only the digest
+    does. The ``size`` always equals the content length.
+    """
+
+    path: str
+    sha: str
+    size: int
+    content: bytes = field(repr=False)
+    content_digest: str = field(repr=False)
+    evidence_origin: Literal["github_rest_api_claim"] = "github_rest_api_claim"
+
+    def __post_init__(self) -> None:
+        if not _is_safe_tree_path(self.path):
+            raise GitHubSnapshotError("github snapshot: blob entry is invalid")
+        _validate_oid(self.sha, "github snapshot: blob OID is invalid")
+        if type(self.size) is not int or self.size != len(self.content):
+            raise GitHubSnapshotError("github snapshot: blob size is invalid")
+        if type(self.content_digest) is not str or not self.content_digest:
+            raise GitHubSnapshotError("github snapshot: blob digest is invalid")
+        if self.evidence_origin != "github_rest_api_claim":
+            raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
+
+
+def parse_github_blob(
+    entry: GitHubTreeEntry,
+    response: object,
+    *,
+    content_bytes_used: int = 0,
+) -> GitHubBlobClaim:
+    """Decode one blob API response and verify it against a tree entry.
+
+    Only ``base64`` responses are accepted, decoded strictly and bounded
+    before use. The response size must match the decoded length, the decoded
+    length must fit per-blob and running total snapshot limits, and the Git
+    blob identity ``SHA1("blob <size>\\0" + bytes)`` must equal the entry OID.
+    Raw bytes never enter errors, representations or diagnostics.
+    """
+
+    if type(entry) is not GitHubTreeEntry or entry.entry_type != "blob":
+        raise GitHubSnapshotError("github snapshot: blob entry is invalid")
+    if type(response) is not dict:
+        raise GitHubSnapshotError("github snapshot: blob response is invalid")
+    if response.get("encoding") != _BLOB_ENCODING:
+        raise GitHubSnapshotError("github snapshot: blob response is invalid")
+    if type(content_bytes_used) is not int or content_bytes_used < 0:
+        raise GitHubSnapshotError("github snapshot: blob response is invalid")
+    encoded = response.get("content")
+    if not isinstance(encoded, str):
+        raise GitHubSnapshotError("github snapshot: blob response is invalid")
+    try:
+        wire_bytes = encoded.encode("ascii")
+    except UnicodeEncodeError:
+        raise GitHubSnapshotError("github snapshot: blob response is invalid") from None
+    if len(wire_bytes) > _MAX_BLOB_WIRE_BYTES:
+        raise GitHubSnapshotError("github snapshot: blob size exceeds limit")
+    try:
+        content = base64.b64decode(wire_bytes, validate=True)
+    except Exception:
+        raise GitHubSnapshotError("github snapshot: blob response is invalid") from None
+    size = response.get("size")
+    if type(size) is not int or size != len(content):
+        raise GitHubSnapshotError("github snapshot: blob size mismatch")
+    if len(content) > MAX_SNAPSHOT_FILE_BYTES:
+        raise GitHubSnapshotError("github snapshot: blob size exceeds limit")
+    if content_bytes_used + len(content) > MAX_SNAPSHOT_TOTAL_BYTES:
+        raise GitHubSnapshotError("github snapshot: blob contents exceed limit")
+    git_identity = hashlib.sha1(
+        b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+    ).hexdigest()
+    if git_identity != entry.sha:
+        raise GitHubSnapshotError("github snapshot: blob OID mismatch")
+    response_sha = response.get("sha")
+    if response_sha != entry.sha:
+        raise GitHubSnapshotError("github snapshot: blob OID mismatch")
+    return GitHubBlobClaim(
+        path=entry.path,
+        sha=entry.sha,
+        size=len(content),
+        content=content,
+        content_digest=sha256_bytes(content),
     )
 
 

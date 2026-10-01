@@ -10,16 +10,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import base64
 import hashlib
+import json
 import posixpath
 import re
-from typing import Literal
+from typing import Any, Literal
 
-from .digests import sha256_bytes
+from .digests import sha256_bytes, sha256_digest
 from .pinned_snapshot import (
     MAX_SNAPSHOT_FILE_BYTES,
     MAX_SNAPSHOT_FILES,
     MAX_SNAPSHOT_PATH_BYTES,
     MAX_SNAPSHOT_TOTAL_BYTES,
+    MAX_SNAPSHOT_TREE_LIST_BYTES,
+    SNAPSHOT_DIGEST_CANONICALIZATION,
 )
 
 
@@ -30,11 +33,19 @@ class GitHubSnapshotError(ValueError):
 _OWNER_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z")
 _REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
 _OID_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
+_DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 _BLOB_MODES = frozenset({"100644", "100755"})
 _TREE_MODE = "040000"
 _BLOB_ENCODING = "base64"
 _MAX_BLOB_WIRE_BYTES = MAX_SNAPSHOT_FILE_BYTES * 2
+
+_GITHUB_API_BASE = "https://api.github.com"
+_GITHUB_API_VERSION = "2026-03-10"
+_GITHUB_ACCEPT_HEADER = "application/vnd.github+json"
+_MAX_COMMIT_RESPONSE_BYTES = 1_000_000
+_MAX_TREE_RESPONSE_BYTES = MAX_SNAPSHOT_TREE_LIST_BYTES
+_MAX_BLOB_RESPONSE_BYTES = _MAX_BLOB_WIRE_BYTES
 
 
 @dataclass(frozen=True)
@@ -330,3 +341,140 @@ def _validate_repository(value: object) -> None:
 def _validate_oid(value: object, message: str) -> None:
     if not isinstance(value, str) or _OID_PATTERN.fullmatch(value) is None:
         raise GitHubSnapshotError(message)
+
+
+@dataclass(frozen=True)
+class GitHubSnapshotClaim:
+    """Immutable read-only claim over one exact remote snapshot."""
+
+    owner: str
+    repository: str
+    commit_oid: str
+    tree_oid: str
+    content_digest: str
+    evidence_origin: Literal["github_rest_api_claim"] = "github_rest_api_claim"
+
+    def __post_init__(self) -> None:
+        _validate_owner(self.owner)
+        _validate_repository(self.repository)
+        _validate_oid(self.commit_oid, "github snapshot: commit OID is invalid")
+        _validate_oid(self.tree_oid, "github snapshot: tree OID is invalid")
+        if type(self.content_digest) is not str or _DIGEST_PATTERN.fullmatch(
+            self.content_digest
+        ) is None:
+            raise GitHubSnapshotError("github snapshot: content digest is invalid")
+        if self.evidence_origin != "github_rest_api_claim":
+            raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
+
+
+def read_github_snapshot(
+    request: GitHubSnapshotRequest, transport: object
+) -> GitHubSnapshotClaim:
+    """Read one exact snapshot through an injected bounded GET transport.
+
+    The object chain links the requested commit to its tree SHA and then to
+    bounded verified blob contents; the content digest is computed with the
+    same canonicalization as local snapshots. There is no default network
+    transport: every byte arrives through the injected collaborator, which is
+    only ever called with ``GET``, the fixed API endpoints, explicit headers
+    and redirects disabled.
+    """
+
+    if type(request) is not GitHubSnapshotRequest:
+        raise GitHubSnapshotError("github snapshot: request shape is invalid")
+    if not callable(transport):
+        raise GitHubSnapshotError("github snapshot: transport is invalid")
+    commit_payload = _get_json(
+        transport,
+        f"/repos/{request.owner}/{request.repository}/git/commits/{request.commit_oid}",
+        _MAX_COMMIT_RESPONSE_BYTES,
+    )
+    commit_claim = parse_github_commit(request, commit_payload)
+    tree_payload = _get_json(
+        transport,
+        f"/repos/{request.owner}/{request.repository}/git/trees/{commit_claim.tree_oid}?recursive=1",
+        _MAX_TREE_RESPONSE_BYTES,
+    )
+    tree_claim = parse_github_tree(commit_claim, tree_payload)
+    bound_files: list[tuple[str, str, bytes]] = []
+    running_total_bytes = 0
+    for entry in tree_claim.entries:
+        if entry.entry_type != "blob":
+            continue
+        blob_payload = _get_json(
+            transport,
+            f"/repos/{request.owner}/{request.repository}/git/blobs/{entry.sha}",
+            _MAX_BLOB_RESPONSE_BYTES,
+        )
+        blob = parse_github_blob(
+            entry, blob_payload, content_bytes_used=running_total_bytes
+        )
+        bound_files.append((blob.path, entry.mode, blob.content))
+        running_total_bytes += blob.size
+    return GitHubSnapshotClaim(
+        owner=request.owner,
+        repository=request.repository,
+        commit_oid=request.commit_oid,
+        tree_oid=tree_claim.tree_oid,
+        content_digest=_snapshot_content_digest(bound_files),
+    )
+
+
+def _snapshot_content_digest(files: list[tuple[str, str, bytes]]) -> str:
+    entries = [
+        {
+            "path": path,
+            "content_digest": sha256_bytes(content),
+            "mode": mode,
+        }
+        for path, mode, content in sorted(files, key=lambda item: item[0])
+    ]
+    return sha256_digest(
+        {"canonicalization": SNAPSHOT_DIGEST_CANONICALIZATION, "files": entries}
+    )
+
+
+def _get_json(transport: object, path: str, max_bytes: int) -> object:
+    headers = {
+        "Accept": _GITHUB_ACCEPT_HEADER,
+        "X-GitHub-Api-Version": _GITHUB_API_VERSION,
+    }
+    try:
+        result = transport(
+            "GET", _GITHUB_API_BASE + path, headers, max_bytes, allow_redirects=False
+        )
+    except Exception:
+        raise GitHubSnapshotError("github snapshot: snapshot transport failed") from None
+    if type(result) is not dict:
+        raise GitHubSnapshotError("github snapshot: transport result is invalid")
+    status = result.get("status")
+    body = result.get("body")
+    if type(status) is not int or type(body) is not bytes:
+        raise GitHubSnapshotError("github snapshot: transport result is invalid")
+    if status != 200:
+        raise GitHubSnapshotError("github snapshot: snapshot response failed")
+    try:
+        text = body.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        raise GitHubSnapshotError("github snapshot: snapshot payload is invalid") from None
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_json_constant,
+        )
+    except Exception:
+        raise GitHubSnapshotError("github snapshot: snapshot payload is invalid") from None
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError("non-standard JSON constant")

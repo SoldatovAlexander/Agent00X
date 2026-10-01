@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from app_contracts.github_snapshot import (
     GitHubBlobClaim,
     GitHubCommitClaim,
+    GitHubSnapshotClaim,
     GitHubSnapshotError,
     GitHubSnapshotRequest,
     GitHubTreeClaim,
@@ -18,6 +19,7 @@ from app_contracts.github_snapshot import (
     parse_github_blob,
     parse_github_commit,
     parse_github_tree,
+    read_github_snapshot,
 )
 import app_contracts.github_snapshot as snapshot_module
 
@@ -76,8 +78,9 @@ class SnapshotClaimRecordTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, serialized)
         source = Path(snapshot_module.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("http", source.lower())
-        self.assertNotIn("://", source)
+        self.assertEqual(source.count("https://"), 1)
+        self.assertIn('_GITHUB_API_BASE = "https://api.github.com"', source)
+        self.assertNotIn("http://", source)
 
     def test_malformed_repository_identities_fail_closed_without_echo(self):
         canary = "REPO-CANARY-SECRET"
@@ -519,6 +522,276 @@ class BlobDecodeVerificationTests(unittest.TestCase):
             medium_entry, total_response, content_bytes_used=940_000
         )
         self.assertEqual(ok_claim.size, 60_000)
+
+
+API_BASE = "https://api.github.com"
+EXPECTED_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2026-03-10",
+}
+READER_COMMIT_OID = "a" * 40
+READER_TREE_OID = "b" * 40
+
+
+class FakeTransport:
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+
+    def __call__(self, method, url, headers, max_bytes, allow_redirects=False):
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(headers),
+                "max_bytes": max_bytes,
+                "allow_redirects": allow_redirects,
+            }
+        )
+        if (method, url) in self.routes:
+            status, body = self.routes[(method, url)]
+            return {"status": status, "body": body}
+        return {"status": 404, "body": b"{}"}
+
+
+def reader_fixture_routes(files, commit_oid=READER_COMMIT_OID, tree_oid=READER_TREE_OID):
+    import base64 as base64_module
+    import json as json_module
+
+    owner, repository = VALID_OWNER, VALID_REPOSITORY
+    entries = []
+    blobs = {}
+    for path, content, mode in files:
+        blob_sha = git_blob_sha(content)
+        if mode is not None:
+            entries.append(
+                {
+                    "path": path, "mode": mode,
+                    "type": "blob" if mode != "040000" else "tree",
+                    "sha": blob_sha, "size": len(content),
+                }
+            )
+        if mode != "040000":
+            blobs[blob_sha] = {
+                "sha": blob_sha, "size": len(content), "encoding": "base64",
+                "content": base64_module.b64encode(content).decode("ascii"),
+            }
+    routes = {
+        ("GET", f"{API_BASE}/repos/{owner}/{repository}/git/commits/{commit_oid}"): (
+            200,
+            json_module.dumps(
+                {"sha": commit_oid, "commit": {"tree": {"sha": tree_oid}}}
+            ).encode("utf-8"),
+        ),
+        ("GET", f"{API_BASE}/repos/{owner}/{repository}/git/trees/{tree_oid}?recursive=1"): (
+            200,
+            json_module.dumps(
+                {"sha": tree_oid, "truncated": False, "tree": entries}
+            ).encode("utf-8"),
+        ),
+    }
+    for blob_sha, payload in blobs.items():
+        routes[
+            ("GET", f"{API_BASE}/repos/{owner}/{repository}/git/blobs/{blob_sha}")
+        ] = (200, json_module.dumps(payload).encode("utf-8"))
+    return routes
+
+
+class SnapshotReaderCompositionTests(unittest.TestCase):
+    def test_mock_transport_digest_matches_local_fixture_digest(self):
+        import tempfile
+
+        from app_contracts.pinned_snapshot import compute_snapshot_tree_digest
+
+        calculator = b"print('ok')\n"
+        readme = b"# Fixture\n"
+        notes = b"nested notes\n"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "calculator.py").write_bytes(calculator)
+            (root / "calculator.py").chmod(0o755)
+            (root / "README.md").write_bytes(readme)
+            (root / "docs").mkdir()
+            (root / "docs" / "notes.txt").write_bytes(notes)
+            expected = compute_snapshot_tree_digest(root)
+            transport = FakeTransport(
+                reader_fixture_routes(
+                    [
+                        ("README.md", readme, "100644"),
+                        ("docs", b"", "040000"),
+                        ("calculator.py", calculator, "100755"),
+                        ("docs/notes.txt", notes, "100644"),
+                    ]
+                )
+            )
+            request = GitHubSnapshotRequest(
+                owner=VALID_OWNER, repository=VALID_REPOSITORY,
+                commit_oid=READER_COMMIT_OID,
+            )
+            claim = read_github_snapshot(request, transport)
+            self.assertEqual(
+                claim,
+                GitHubSnapshotClaim(
+                    owner=VALID_OWNER, repository=VALID_REPOSITORY,
+                    commit_oid=READER_COMMIT_OID, tree_oid=READER_TREE_OID,
+                    content_digest=expected,
+                ),
+            )
+            self.assertEqual(claim.evidence_origin, "github_rest_api_claim")
+            self.assertEqual(len(transport.calls), 5)
+            for call in transport.calls:
+                self.assertEqual(call["method"], "GET")
+                self.assertIs(call["allow_redirects"], False)
+                self.assertEqual(call["headers"], EXPECTED_HEADERS)
+                self.assertTrue(call["url"].startswith(API_BASE + "/repos/"))
+                self.assertIsInstance(call["max_bytes"], int)
+                self.assertGreater(call["max_bytes"], 0)
+            for header_key in transport.calls[0]["headers"]:
+                self.assertNotIn("authoriz", header_key.lower())
+
+    def test_mismatch_and_incomplete_chain_yield_no_claim(self):
+        import base64 as base64_module
+        import json as json_module
+
+        files = [("calculator.py", b"print('ok')\n", "100644")]
+        tampered_content = b"print('forged')\n"
+        tampered_blob = {
+            "sha": git_blob_sha(files[0][1]),
+            "size": len(tampered_content),
+            "encoding": "base64",
+            "content": base64_module.b64encode(tampered_content).decode("ascii"),
+        }
+        owner_url = f"{API_BASE}/repos/{VALID_OWNER}/{VALID_REPOSITORY}"
+        blob_url = f"{owner_url}/git/blobs/{git_blob_sha(files[0][1])}"
+        request = GitHubSnapshotRequest(
+            owner=VALID_OWNER, repository=VALID_REPOSITORY, commit_oid=READER_COMMIT_OID
+        )
+        base_routes = reader_fixture_routes(files)
+        tampered_routes = dict(base_routes)
+        tampered_routes[("GET", blob_url)] = (
+            200, json_module.dumps(tampered_blob).encode("utf-8"),
+        )
+        truncated_payload = json_module.dumps(
+            {"sha": READER_TREE_OID, "truncated": True, "tree": []}
+        ).encode("utf-8")
+        truncated_routes = dict(base_routes)
+        truncated_routes[
+            ("GET", f"{owner_url}/git/trees/{READER_TREE_OID}?recursive=1")
+        ] = (200, truncated_payload)
+        mismatched_payload = json_module.dumps(
+            {"sha": "f" * 40, "commit": {"tree": {"sha": READER_TREE_OID}}}
+        ).encode("utf-8")
+        mismatched_routes = dict(base_routes)
+        mismatched_routes[
+            ("GET", f"{owner_url}/git/commits/{READER_COMMIT_OID}")
+        ] = (200, mismatched_payload)
+        for label, routes in (
+            ("tampered-blob", tampered_routes),
+            ("truncated-tree", truncated_routes),
+            ("commit-mismatch", mismatched_routes),
+        ):
+            with self.subTest(chain=label):
+                with self.assertRaises(GitHubSnapshotError):
+                    read_github_snapshot(request, FakeTransport(routes))
+
+    def test_transport_json_and_http_failures_are_sanitized(self):
+        canary = "TRANSPORT-CANARY-SECRET"
+
+        class ExplodingTransport:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, *args, **kwargs):
+                self.calls += 1
+                raise RuntimeError(f"connection blew up: {canary}")
+
+        request = GitHubSnapshotRequest(
+            owner=VALID_OWNER, repository=VALID_REPOSITORY, commit_oid=READER_COMMIT_OID
+        )
+        exploding = ExplodingTransport()
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: snapshot transport failed$"
+        ) as raised:
+            read_github_snapshot(request, exploding)
+        self.assertNotIn(canary, str(raised.exception))
+        self.assertEqual(exploding.calls, 1)
+        bad_results = (
+            ["not-a-mapping"],
+            {"status": "200", "body": b"{}"},
+            {"status": 200, "body": {"already": "parsed"}},
+            {"status": 404, "body": b"{}"},
+            {"status": 200, "body": b"not json{{{"},
+            {"status": 200, "body": b'{"a": 1, "a": 2}'},
+        )
+        for result in bad_results:
+            with self.subTest(result=repr(result)[:30]):
+
+                class FixedTransport:
+                    def __init__(self):
+                        self.calls = 0
+
+                    def __call__(self, *args, **kwargs):
+                        self.calls += 1
+                        return result
+
+                with self.assertRaises(GitHubSnapshotError):
+                    read_github_snapshot(request, FixedTransport())
+
+    def test_invalid_request_makes_zero_transport_calls(self):
+        class CountingTransport:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, *args, **kwargs):
+                self.calls += 1
+                raise AssertionError("transport must not be called")
+
+        counting = CountingTransport()
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: request shape is invalid$"
+        ):
+            read_github_snapshot("not-a-request", counting)
+        self.assertEqual(counting.calls, 0)
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: transport is invalid$"
+        ):
+            read_github_snapshot(
+                GitHubSnapshotRequest(
+                    owner=VALID_OWNER, repository=VALID_REPOSITORY,
+                    commit_oid=READER_COMMIT_OID,
+                ),
+                None,
+            )
+
+    def test_reader_uses_no_live_network_or_default_transport(self):
+        import ast
+
+        source = Path(snapshot_module.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported_modules = set()
+        called_names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.update(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported_modules.add((node.module or "").lower())
+                imported_modules.update(alias.name.lower() for alias in node.names)
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name):
+                    called_names.add(node.func.id.lower())
+                elif isinstance(node.func, ast.Attribute):
+                    called_names.add(node.func.attr.lower())
+        for forbidden in ("urllib", "requests", "http", "socket", "ssl"):
+            self.assertTrue(
+                all(forbidden not in module for module in imported_modules),
+                forbidden,
+            )
+        self.assertTrue(
+            {
+                "urlopen", "urlretrieve", "create_connection", "getaddrinfo",
+                "socket", "request",
+            }.isdisjoint(called_names)
+        )
 
 
 if __name__ == "__main__":

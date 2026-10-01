@@ -19,6 +19,7 @@ from app_contracts.executor import (
 from app_contracts.verifier_process import (
     MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS,
     MAX_VERIFIER_RESPONSE_BYTES,
+    VERIFIER_PROCESS_LIMITATIONS,
     VERIFIER_PROCESS_SCHEMA_VERSION,
     SubprocessVerifier,
     VerifierProcessConfig,
@@ -1869,6 +1870,98 @@ class SubprocessTimeoutCrashTests(unittest.TestCase):
                 self.assertEqual(leftovers, [])
                 self.assertEqual(result.status, ExecutionStatus.VERIFIED)
             self.assertEqual(Path(counter).read_text(encoding="utf-8"), "started\n")
+
+
+class VerifierPrototypeLimitationTests(unittest.TestCase):
+    EXPECTED_LIMITATIONS = frozenset(
+        {
+            "local_test_evidence_only",
+            "no_process_isolation_claim",
+            "no_independent_trust_claim",
+            "no_remote_provenance_claim",
+        }
+    )
+
+    def test_adapter_carries_explicit_limiting_marking(self):
+        adapter = SubprocessVerifier(
+            valid_process_config(
+                executable=sys.executable, argv=(sys.executable, "-c", "pass")
+            )
+        )
+        self.assertEqual(frozenset(adapter.limitations), self.EXPECTED_LIMITATIONS)
+        self.assertEqual(frozenset(VERIFIER_PROCESS_LIMITATIONS), self.EXPECTED_LIMITATIONS)
+        self.assertIn("local_test_evidence_only", adapter.limitations)
+
+    def test_non_local_evidence_origin_is_rejected_at_parse(self):
+        import json as json_module
+
+        payload = valid_response_payload()
+        foreign = json_module.dumps(
+            {
+                "schema_version": 1,
+                "verifier_result": {**payload, "evidence_origin": "remote-attested"},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: response fields are invalid$",
+        ) as raised:
+            parse_verifier_response(foreign)
+        self.assertNotIn("remote-attested", str(raised.exception))
+
+    def test_adapter_round_trip_preserves_local_test_origin(self):
+        record_text = encode_response_payload(valid_response_payload()).decode("utf-8")
+        self.assertIn('"evidence_origin":"local_test"', record_text)
+        adapter = SubprocessVerifier(
+            valid_process_config(
+                executable=sys.executable,
+                argv=(
+                    sys.executable, "-c",
+                    "import sys; sys.stdout.write(sys.argv[1]);",
+                    record_text,
+                ),
+            )
+        )
+        result = adapter.verify(valid_verifier_input())
+        self.assertEqual(result.evidence_origin, "local_test")
+
+    def test_no_isolation_or_trust_claims_in_prototype(self):
+        import app_contracts.verifier_process as module
+
+        text = (module.__doc__ or "") + inspect_module_source()
+        forbidden_claims = (
+            "network isolated",
+            "network-isolated",
+            "trusted production",
+            "production trusted",
+            "production-trusted",
+            "independently trusted",
+            "independently-trusted",
+            "signed",
+            "signature",
+            "attestation",
+            "attested",
+            "secure enclave",
+            "security isolation",
+            "isolation boundary",
+            "isolation guarantee",
+        )
+        lowered = text.lower()
+        for claim in forbidden_claims:
+            with self.subTest(claim=claim):
+                self.assertNotIn(claim, lowered)
+        for marker in VERIFIER_PROCESS_LIMITATIONS:
+            self.assertIn(marker, text)
+
+
+def inspect_module_source() -> str:
+    from pathlib import Path as PathLib
+
+    return (PathLib(__file__).resolve().parents[1] / "src" / "app_contracts" / "verifier_process.py").read_text(
+        encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

@@ -35,6 +35,13 @@ MAX_VERIFIER_REQUEST_COMMAND_ARGS = 64
 MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS = 86_400
 MAX_VERIFIER_RESPONSE_BYTES = 2_000_000
 
+VERIFIER_PROCESS_LIMITATIONS = (
+    "local_test_evidence_only",
+    "no_process_isolation_claim",
+    "no_independent_trust_claim",
+    "no_remote_provenance_claim",
+)
+
 _REQUEST_FIELDS = frozenset({"schema_version", "verifier_input"})
 
 _RESPONSE_FIELDS = frozenset({"schema_version", "request_digest", "verifier_result"})
@@ -132,6 +139,11 @@ class SubprocessVerifier:
             raise VerifierProcessError("verifier process: command config is invalid")
         self._config = config
         self._child_environ = verifier_child_environ(environ)
+
+    @property
+    def limitations(self) -> tuple[str, ...]:
+        """Explicit prototype boundary marking carried by the adapter."""
+        return VERIFIER_PROCESS_LIMITATIONS
 
     def verify(self, prepared: VerifierInput) -> VerifierResult:
         request = VerifierProcessRequest.from_verifier_input(prepared)
@@ -638,7 +650,8 @@ def parse_verifier_response(data: object) -> VerifierProcessResponse:
     """Parse child output bytes back into a bounded response record.
 
     Only the stated schema version, the exact result field set, the known
-    verdict labels and well-formed blocker codes are accepted. The restored
+    verdict labels and well-formed blocker codes are accepted, and the
+    evidence origin stays pinned to local test evidence. The restored
     record carries a typed ``VerifierResult`` with a real verdict enum.
     Malformed encoding, JSON shape, duplicate keys and values fail closed
     without echoing the output or field values.
@@ -673,6 +686,8 @@ def parse_verifier_response(data: object) -> VerifierProcessResponse:
         raise VerifierProcessError("verifier process: response fields are invalid")
     raw_result = payload["verifier_result"]
     if type(raw_result) is not dict or set(raw_result) != _VERIFIER_RESULT_FIELDS:
+        raise VerifierProcessError("verifier process: response fields are invalid")
+    if raw_result.get("evidence_origin") != "local_test":
         raise VerifierProcessError("verifier process: response fields are invalid")
     _validate_verifier_result_shape(raw_result)
     try:

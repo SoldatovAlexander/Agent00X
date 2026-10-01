@@ -12,6 +12,7 @@ from app_contracts.github_snapshot import (
     GitHubCommitClaim,
     GitHubSnapshotError,
     GitHubSnapshotRequest,
+    parse_github_commit,
 )
 import app_contracts.github_snapshot as snapshot_module
 
@@ -138,6 +139,95 @@ class SnapshotClaimRecordTests(unittest.TestCase):
                 commit_oid=VALID_COMMIT_OID, tree_oid=VALID_TREE_OID,
                 evidence_origin="local_test",
             )
+
+
+def valid_commit_response(**overrides):
+    response = {
+        "sha": VALID_COMMIT_OID,
+        "commit": {
+            "message": "fixture commit",
+            "tree": {"sha": VALID_TREE_OID},
+            "author": {"name": "Fixture Author", "email": "author@example.invalid"},
+            "committer": {"name": "Fixture Committer", "email": "committer@example.invalid"},
+            "verification": {"verified": True, "reason": "valid", "signature": "fixture-sig"},
+        },
+        "parents": [{"sha": "c" * 40}],
+    }
+    response.update(overrides)
+    return response
+
+
+class CommitResponseBindingTests(unittest.TestCase):
+    def test_matching_response_binds_exact_claim(self):
+        claim = parse_github_commit(valid_request(), valid_commit_response())
+        self.assertEqual(
+            claim,
+            GitHubCommitClaim(
+                owner=VALID_OWNER, repository=VALID_REPOSITORY,
+                commit_oid=VALID_COMMIT_OID, tree_oid=VALID_TREE_OID,
+            ),
+        )
+        self.assertEqual(claim.evidence_origin, "github_rest_api_claim")
+
+    def test_missing_or_malformed_fields_fail_closed(self):
+        malformed = (
+            None, [], "response",
+            {},
+            {"sha": VALID_COMMIT_OID},
+            {"sha": None, "commit": {"tree": {"sha": VALID_TREE_OID}}},
+            {"sha": "short", "commit": {"tree": {"sha": VALID_TREE_OID}}},
+            {"sha": "A" * 40, "commit": {"tree": {"sha": VALID_TREE_OID}}},
+            {"sha": VALID_COMMIT_OID, "commit": None},
+            {"sha": VALID_COMMIT_OID, "commit": {"tree": None}},
+            {"sha": VALID_COMMIT_OID, "commit": {"tree": {"sha": "xyz"}}},
+            {"sha": VALID_COMMIT_OID, "commit": {"tree": {}}},
+        )
+        for response in malformed:
+            with self.subTest(response=repr(response)[:50]):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: commit response is invalid$",
+                ):
+                    parse_github_commit(valid_request(), response)
+
+    def test_mismatched_commit_oid_is_rejected_without_echo(self):
+        canary = "COMMIT-CANARY-SECRET"
+        foreign = dict(
+            valid_commit_response(),
+            sha="f" * 40,
+            commit={
+                "message": canary,
+                "tree": {"sha": VALID_TREE_OID},
+            },
+        )
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: commit OID mismatch$"
+        ) as raised:
+            parse_github_commit(valid_request(), foreign)
+        self.assertNotIn(canary, str(raised.exception))
+        self.assertNotIn("f" * 40, str(raised.exception))
+
+    def test_signature_metadata_never_elevates_the_claim(self):
+        for verification in (
+            {"verified": True, "reason": "valid", "signature": "fixture-valid-sig"},
+            {"verified": False, "reason": "unsigned", "signature": None},
+            {"verified": "yes", "reason": 42},
+        ):
+            with self.subTest(verification=repr(verification)[:40]):
+                response = dict(
+                    valid_commit_response(),
+                    commit={**valid_commit_response()["commit"], "verification": verification},
+                )
+                claim = parse_github_commit(valid_request(), response)
+                self.assertEqual(claim.tree_oid, VALID_TREE_OID)
+                self.assertNotIn("verification", GitHubCommitClaim.__dataclass_fields__)
+                self.assertNotIn("author", GitHubCommitClaim.__dataclass_fields__)
+
+    def test_non_request_input_is_rejected(self):
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: request shape is invalid$"
+        ):
+            parse_github_commit({"commit_oid": VALID_COMMIT_OID}, valid_commit_response())
 
 
 if __name__ == "__main__":

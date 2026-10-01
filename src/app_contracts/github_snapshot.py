@@ -57,6 +57,41 @@ class GitHubCommitClaim:
             raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
 
 
+def parse_github_commit(request: GitHubSnapshotRequest, response: object) -> GitHubCommitClaim:
+    """Bind one commit API response to the requested commit OID.
+
+    Only an object whose ``sha`` exactly matches the requested full commit
+    OID and whose ``commit.tree.sha`` is a well-formed tree OID is accepted.
+    Author, committer and verification metadata are never read and never
+    elevate the claim: the result stays a plain API claim.
+    """
+
+    if type(request) is not GitHubSnapshotRequest:
+        raise GitHubSnapshotError("github snapshot: request shape is invalid")
+    if type(response) is not dict:
+        raise GitHubSnapshotError("github snapshot: commit response is invalid")
+    sha = response.get("sha")
+    if not isinstance(sha, str) or _OID_PATTERN.fullmatch(sha) is None:
+        raise GitHubSnapshotError("github snapshot: commit response is invalid")
+    if sha != request.commit_oid:
+        raise GitHubSnapshotError("github snapshot: commit OID mismatch")
+    commit_section = response.get("commit")
+    if type(commit_section) is not dict:
+        raise GitHubSnapshotError("github snapshot: commit response is invalid")
+    tree_section = commit_section.get("tree")
+    if type(tree_section) is not dict:
+        raise GitHubSnapshotError("github snapshot: commit response is invalid")
+    tree_sha = tree_section.get("sha")
+    if not isinstance(tree_sha, str) or _OID_PATTERN.fullmatch(tree_sha) is None:
+        raise GitHubSnapshotError("github snapshot: commit response is invalid")
+    return GitHubCommitClaim(
+        owner=request.owner,
+        repository=request.repository,
+        commit_oid=request.commit_oid,
+        tree_oid=tree_sha,
+    )
+
+
 def _validate_owner(value: object) -> None:
     if not isinstance(value, str) or _OWNER_PATTERN.fullmatch(value) is None:
         raise GitHubSnapshotError("github snapshot: repository identity is invalid")

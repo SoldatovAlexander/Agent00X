@@ -12,7 +12,10 @@ from app_contracts.github_snapshot import (
     GitHubCommitClaim,
     GitHubSnapshotError,
     GitHubSnapshotRequest,
+    GitHubTreeClaim,
+    GitHubTreeEntry,
     parse_github_commit,
+    parse_github_tree,
 )
 import app_contracts.github_snapshot as snapshot_module
 
@@ -228,6 +231,155 @@ class CommitResponseBindingTests(unittest.TestCase):
             GitHubSnapshotError, "^github snapshot: request shape is invalid$"
         ):
             parse_github_commit({"commit_oid": VALID_COMMIT_OID}, valid_commit_response())
+
+
+def valid_tree_response(**overrides):
+    response = {
+        "sha": VALID_TREE_OID,
+        "truncated": False,
+        "tree": [
+            {
+                "path": "calculator.py",
+                "mode": "100644",
+                "type": "blob",
+                "sha": "c" * 40,
+                "size": 128,
+                "url": "https://api.github.com/placeholder",
+            },
+            {
+                "path": "tests",
+                "mode": "040000",
+                "type": "tree",
+                "sha": "d" * 40,
+                "url": "https://api.github.com/placeholder",
+            },
+            {
+                "path": "tests/test_calculator.py",
+                "mode": "100755",
+                "type": "blob",
+                "sha": "e" * 40,
+            },
+        ],
+        "url": "https://api.github.com/placeholder",
+    }
+    response.update(overrides)
+    return response
+
+
+class TreeResponseBindingTests(unittest.TestCase):
+    def test_complete_response_binds_exact_tree_claim(self):
+        claim = parse_github_tree(valid_claim(), valid_tree_response())
+        self.assertEqual(claim.owner, VALID_OWNER)
+        self.assertEqual(claim.tree_oid, VALID_TREE_OID)
+        self.assertEqual(claim.evidence_origin, "github_rest_api_claim")
+        self.assertEqual(
+            claim.entries,
+            (
+                GitHubTreeEntry(path="calculator.py", mode="100644", entry_type="blob", sha="c" * 40),
+                GitHubTreeEntry(path="tests", mode="040000", entry_type="tree", sha="d" * 40),
+                GitHubTreeEntry(
+                    path="tests/test_calculator.py", mode="100755",
+                    entry_type="blob", sha="e" * 40,
+                ),
+            ),
+        )
+        with self.assertRaises(FrozenInstanceError):
+            claim.entries = ()  # type: ignore[misc]
+
+    def test_truncated_or_sha_mismatched_response_fails_closed(self):
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: tree response is incomplete$"
+        ):
+            parse_github_tree(valid_claim(), valid_tree_response(truncated=True))
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: tree response is incomplete$"
+        ):
+            parse_github_tree(
+                valid_claim(),
+                {key: value for key, value in valid_tree_response().items()
+                 if key != "truncated"},
+            )
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: tree OID mismatch$"
+        ) as raised:
+            parse_github_tree(valid_claim(), valid_tree_response(sha="f" * 40))
+        self.assertNotIn("f" * 40, str(raised.exception))
+
+    def test_malformed_response_shape_fails_closed(self):
+        for response in (None, [], "tree", {}, {"sha": VALID_TREE_OID}):
+            with self.subTest(response=repr(response)[:40]):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: tree response is invalid$",
+                ):
+                    parse_github_tree(valid_claim(), response)
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: commit claim is invalid$"
+        ):
+            parse_github_tree({"tree_oid": VALID_TREE_OID}, valid_tree_response())
+
+    def test_unsafe_or_unsupported_entries_fail_closed_without_echo(self):
+        canary = "TREE-CANARY-SECRET"
+        base_entry = {"path": "ok.py", "mode": "100644", "type": "blob", "sha": "c" * 40}
+        malformed_entries = [
+            None, "entry", {},
+            {**base_entry, "mode": "120000"},
+            {**base_entry, "mode": "160000"},
+            {**base_entry, "mode": "040755"},
+            {**base_entry, "mode": "644"},
+            {**base_entry, "mode": None},
+            {**base_entry, "type": "commit"},
+            {**base_entry, "type": "symlink"},
+            {**base_entry, "mode": "040000", "type": "blob"},
+            {**base_entry, "mode": "100644", "type": "tree"},
+            {**base_entry, "sha": "C" * 40},
+            {**base_entry, "sha": "short"},
+            {**base_entry, "path": ""},
+            {**base_entry, "path": "/absolute.py"},
+            {**base_entry, "path": "../escape.py"},
+            {**base_entry, "path": "a//b.py"},
+            {**base_entry, "path": "a/./b.py"},
+            {**base_entry, "path": "a\\b.py"},
+            {**base_entry, "path": "p" * 238 + ".py"},
+            {**base_entry, "size": -1},
+            {**base_entry, "size": 100_001},
+            {**base_entry, "size": "128"},
+            {**base_entry, "size": True},
+            {**base_entry, "path": f"../{canary}.py"},
+        ]
+        for entry in malformed_entries:
+            with self.subTest(entry=repr(entry)[:50]):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: tree entry is invalid$",
+                ) as raised:
+                    parse_github_tree(valid_claim(), valid_tree_response(tree=[entry]))
+                self.assertNotIn(canary, str(raised.exception))
+
+    def test_duplicate_paths_are_rejected(self):
+        base_entry = {"path": "dup.py", "mode": "100644", "type": "blob", "sha": "c" * 40}
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: tree entry is invalid$"
+        ):
+            parse_github_tree(
+                valid_claim(), valid_tree_response(tree=[base_entry, dict(base_entry)])
+            )
+
+    def test_entry_count_boundary(self):
+        entries = [
+            {"path": f"file-{index:05d}.py", "mode": "100644", "type": "blob",
+             "sha": "c" * 40}
+            for index in range(10_000)
+        ]
+        claim = parse_github_tree(valid_claim(), valid_tree_response(tree=entries))
+        self.assertEqual(len(claim.entries), 10_000)
+        entries.append(
+            {"path": "file-10000.py", "mode": "100644", "type": "blob", "sha": "c" * 40}
+        )
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: tree response is invalid$"
+        ):
+            parse_github_tree(valid_claim(), valid_tree_response(tree=entries))
 
 
 if __name__ == "__main__":

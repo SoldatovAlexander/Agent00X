@@ -8,8 +8,15 @@ network retrieval and its credibility are out of scope here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import posixpath
 import re
 from typing import Literal
+
+from .pinned_snapshot import (
+    MAX_SNAPSHOT_FILE_BYTES,
+    MAX_SNAPSHOT_FILES,
+    MAX_SNAPSHOT_PATH_BYTES,
+)
 
 
 class GitHubSnapshotError(ValueError):
@@ -19,6 +26,9 @@ class GitHubSnapshotError(ValueError):
 _OWNER_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\Z")
 _REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
 _OID_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
+
+_BLOB_MODES = frozenset({"100644", "100755"})
+_TREE_MODE = "040000"
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,128 @@ def parse_github_commit(request: GitHubSnapshotRequest, response: object) -> Git
         commit_oid=request.commit_oid,
         tree_oid=tree_sha,
     )
+
+
+@dataclass(frozen=True)
+class GitHubTreeEntry:
+    """One validated entry of a complete GitHub tree response."""
+
+    path: str
+    mode: str
+    entry_type: str
+    sha: str
+
+
+@dataclass(frozen=True)
+class GitHubTreeClaim:
+    """Immutable API claim binding one tree OID to its validated entries."""
+
+    owner: str
+    repository: str
+    tree_oid: str
+    entries: tuple[GitHubTreeEntry, ...]
+    evidence_origin: Literal["github_rest_api_claim"] = "github_rest_api_claim"
+
+    def __post_init__(self) -> None:
+        _validate_owner(self.owner)
+        _validate_repository(self.repository)
+        _validate_oid(self.tree_oid, "github snapshot: tree OID is invalid")
+        if type(self.entries) is not tuple or any(
+            type(entry) is not GitHubTreeEntry for entry in self.entries
+        ):
+            raise GitHubSnapshotError("github snapshot: tree entries are invalid")
+        if self.evidence_origin != "github_rest_api_claim":
+            raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
+
+
+def parse_github_tree(claim: GitHubCommitClaim, response: object) -> GitHubTreeClaim:
+    """Bind one tree API response to the tree of a commit claim.
+
+    The response ``sha`` must equal the claimed tree OID and ``truncated``
+    must be an explicit false. Only regular blob modes and structural tree
+    entries with unique safe POSIX paths inside existing snapshot limits are
+    accepted; anything else fails closed before any blob handling.
+    """
+
+    if type(claim) is not GitHubCommitClaim:
+        raise GitHubSnapshotError("github snapshot: commit claim is invalid")
+    if type(response) is not dict:
+        raise GitHubSnapshotError("github snapshot: tree response is invalid")
+    sha = response.get("sha")
+    if not isinstance(sha, str) or _OID_PATTERN.fullmatch(sha) is None:
+        raise GitHubSnapshotError("github snapshot: tree response is invalid")
+    if sha != claim.tree_oid:
+        raise GitHubSnapshotError("github snapshot: tree OID mismatch")
+    raw_entries = response.get("tree")
+    if type(raw_entries) is not list or len(raw_entries) > MAX_SNAPSHOT_FILES:
+        raise GitHubSnapshotError("github snapshot: tree response is invalid")
+    if response.get("truncated") is not False:
+        raise GitHubSnapshotError("github snapshot: tree response is incomplete")
+    entries: list[GitHubTreeEntry] = []
+    seen_paths: set[str] = set()
+    for raw_entry in raw_entries:
+        entries.append(_parse_tree_entry(raw_entry, seen_paths))
+    return GitHubTreeClaim(
+        owner=claim.owner,
+        repository=claim.repository,
+        tree_oid=claim.tree_oid,
+        entries=tuple(entries),
+    )
+
+
+def _parse_tree_entry(raw_entry: object, seen_paths: set[str]) -> GitHubTreeEntry:
+    if type(raw_entry) is not dict:
+        raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    path = raw_entry.get("path")
+    if not _is_safe_tree_path(path):
+        raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    normalized = posixpath.normpath(path)
+    if normalized in seen_paths:
+        raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    seen_paths.add(normalized)
+    mode = raw_entry.get("mode")
+    entry_type = raw_entry.get("type")
+    if not isinstance(mode, str) or not isinstance(entry_type, str):
+        raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    if mode in _BLOB_MODES:
+        if entry_type != "blob":
+            raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    elif mode == _TREE_MODE and entry_type == "tree":
+        pass
+    else:
+        raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    sha = raw_entry.get("sha")
+    if not isinstance(sha, str) or _OID_PATTERN.fullmatch(sha) is None:
+        raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    if "size" in raw_entry:
+        size = raw_entry["size"]
+        if (
+            type(size) is not int
+            or not 0 <= size <= MAX_SNAPSHOT_FILE_BYTES
+        ):
+            raise GitHubSnapshotError("github snapshot: tree entry is invalid")
+    return GitHubTreeEntry(path=normalized, mode=mode, entry_type=entry_type, sha=sha)
+
+
+def _is_safe_tree_path(value: object) -> bool:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or value.startswith("/")
+        or "\\" in value
+        or "//" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        return False
+    parts = tuple(value.split("/"))
+    if any(part in ("", ".", "..") for part in parts):
+        return False
+    try:
+        path_bytes = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return len(path_bytes) <= MAX_SNAPSHOT_PATH_BYTES
 
 
 def _validate_owner(value: object) -> None:

@@ -62,7 +62,7 @@ production isolation/durability, real provider/credentials, LLM Worker,
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Результат сверки 2026-09-30: **632 теста, 631 прошёл, 1 пропущен**. Пропущен
+Результат сверки 2026-10-01: **709 тестов, 708 прошли, 1 пропущен**. Пропущен
 opt-in Docker integration test; его запуск требует `RUN_DOCKER_SANDBOX_TESTS=1`,
 доступный Docker daemon и образ. Этот результат подтверждает только указанные
 тестами свойства кода на текущей машине.
@@ -116,7 +116,7 @@ preparation и последовательный stale-manifest отказ, но 
 |---|---|---|
 | R0: наблюдение и память | Концепция готова | JSON Schema, валидаторы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary |
 | R1: целостность и фиксация действий | Частично проверено | Нарушения 1–2 закрыты локальными regression; composed local harness, gateway-before-broker enforcement и deterministic workspace interleaving приняты, но production orchestration, real concurrent-writer evidence и external proof отсутствуют |
-| R2: сквозной исполнитель | Локальная серия Batch AF–AH завершена: 3/3 батча по 20 карточек; цель этапа остаётся незавершённой | Unit-tested local executor, exact local Git commit/tree pin/replay и controlled mock publication/reconciliation; остаются remote provenance, реальный LLM Worker, independently trusted production verification, production sandbox/isolation, real provider/credentials и production durability |
+| R2: сквозной исполнитель | Локальная серия Batch AF–AH завершена: 3/3 батча по 20 карточек; отдельный Batch AI follow-up: 17/20 принято, EXP-365—367 выполнены локально и ожидают приёмки; цель этапа остаётся незавершённой | Unit-tested local executor, exact local Git commit/tree pin/replay, controlled mock publication/reconciliation и bounded local subprocess verifier handoff; остаются remote provenance, реальный LLM Worker, independently trusted production verification, production sandbox/isolation, real provider/credentials и production durability |
 | R3: исторический Observer | Не начат | Отчёты по сохранённой истории, причинности и пробелам |
 | R4: учебная ветка | Не начат | Simulation branch без переноса старых прав и external writes |
 | R5: эксперимент | Не начат | Сравнение полной и упрощённой организации данных по заранее заданному набору задач |
@@ -188,6 +188,16 @@ digest-only journal → mock endpoint path и SQLite recovery: matching receipt
 по завершении AH: 632 теста, 631 прошёл, 1 opt-in Docker test пропущен.
 Это не remote/external publication, не real credentials/provider и не
 доказательство production durability/isolation или завершения цели R2.
-DOC-001 и другие архитектурные идеи остаются проектными, если для них отдельно
+Batch AI (EXP-348—367, 20 карточек; отдельный локальный R2 follow-up)
+добавил bounded subprocess JSON handoff ограниченного `VerifierInput` в
+дочерний процесс и приём только bound `VerifierResult`: AI-1—AI-4 —
+wire contract, AI-5—AI-12 — процессный адаптер и fail-closed поведение,
+AI-13—AI-19 — интеграция и отказная матрица. На 2026-10-01 принято 17/20
+карточек, EXP-365—367 выполнены локально и ожидают приёмки Control Plane;
+полный локальный suite: 709 тестов, 708 прошли, 1 opt-in Docker test
+пропущен. Это process-boundary prototype на текущем host: process
+separation не представлена как trust independence; independently trusted
+verifier, production sandbox/isolation, remote provenance, LLM Worker и
+external providers остаются открытыми. DOC-001 и другие архитектурные идеи остаются проектными, если для них отдельно
 не указаны существующие код и тестовое evidence. Внешние операции требуют
 отдельных точных task cards и допуска.

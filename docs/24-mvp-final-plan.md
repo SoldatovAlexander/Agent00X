@@ -50,7 +50,12 @@ trust boundaries. Наблюдатель и обучение через конт
    образуют real production chain; process backend остаётся development
    fallback. Реальный LLM Worker, production isolation/durability и real
    provider/credentials остаются открытыми. Локальное закрытие трёх батчей не
-   означает завершение цели этапа R2.
+   означает завершение цели этапа R2. Отдельный локальный follow-up Batch AI
+   (EXP-348—367, 20 карточек): bounded subprocess JSON handoff и приём только
+   bound результата; на 2026-10-01 принято 17/20 карточек, EXP-365—367
+   выполнены локально и ожидают приёмки. Это не independently trusted
+   verification и не production sandbox/isolation: process separation не
+   представлена как trust independence.
 4. **R3 — наблюдатель и исторический отчёт.** Отчёты сейчас/на момент T,
    причинные ссылки, отделение фактов от оснований и интерпретаций; проверки
    неполной истории, поздних ответов и отказов. Детерминированный отчёт допустим

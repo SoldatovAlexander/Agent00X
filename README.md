@@ -38,8 +38,17 @@ sandbox-сессии. Batch AH (R2, локальный батч 3/3, 20 карт
 controlled publication и reconciliation только на локальном mock endpoint,
 in-memory broker и SQLite journal. Это не remote provenance и не independently
 trusted verifier: backend/verifier остаются injected doubles, а process backend
-— development fallback; real provider/credentials, production isolation и
-durability остаются вне подтверждённого scope.
+ — development fallback; real provider/credentials, production isolation и
+durability остаются вне подтверждённого scope. Batch AI — отдельный локальный
+R2 follow-up (20 карточек): bounded subprocess JSON handoff ограниченного
+`VerifierInput` в дочерний процесс и приём только bound `VerifierResult`
+(AI-1—AI-4 — wire contract, AI-5—AI-12 — процессный адаптер и fail-closed
+поведение, AI-13—AI-19 — интеграция и отказная матрица). На 2026-10-01 принято
+17/20 карточек Batch AI, карточки EXP-365—367 выполнены локально и ожидают
+приёмки Control Plane. Это process-boundary prototype на текущем host, а не
+independently trusted verifier: process separation не является security
+isolation, remote provenance, production sandbox, реальная модель и external
+providers остаются открытыми.
 
 Единственный актуальный статус реализации и границ доказательств:
 [документ 27](docs/27-implementation-status.md). Порядок работ R0—R5:
@@ -51,7 +60,7 @@ durability остаются вне подтверждённого scope.
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Обычный прогон на 2026-09-30: 632 теста, 631 прошёл, один opt-in Docker test
+Обычный прогон на 2026-10-01: 709 тестов, 708 прошли, один opt-in Docker test
 пропущен. Это подтверждает только покрытые тестами локальные свойства на
 текущей машине, не безопасность всей цепочки. Подробнее — в документе 27.
 

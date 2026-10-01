@@ -98,7 +98,7 @@ class SnapshotClaimRecordTests(unittest.TestCase):
                     valid_request(owner=owner)
                 self.assertNotIn(canary, str(raised.exception))
         malformed_repositories = (
-            None, 42, "", "has space", "has/slash", "x" * 101,
+            None, 42, "", ".", "..", "has space", "has/slash", "x" * 101,
             f"repo/{canary}",
         )
         for repository in malformed_repositories:
@@ -109,6 +109,24 @@ class SnapshotClaimRecordTests(unittest.TestCase):
                 ) as raised:
                     valid_request(repository=repository)
                 self.assertNotIn(canary, str(raised.exception))
+
+    def test_dot_segment_slugs_are_rejected_without_over_blocking(self):
+        for slug in (".", ".."):
+            with self.subTest(slug=slug):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: repository identity is invalid$",
+                ):
+                    valid_request(repository=slug)
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: repository identity is invalid$",
+                ):
+                    valid_request(owner=slug)
+        dotted = valid_request(repository="...")
+        self.assertEqual(dotted.repository, "...")
+        claim = parse_github_commit(dotted, valid_commit_response())
+        self.assertEqual(claim.repository, "...")
 
     def test_malformed_oids_fail_closed_without_echo(self):
         canary = "OID-CANARY-SECRET"

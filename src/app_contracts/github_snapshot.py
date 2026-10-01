@@ -334,7 +334,11 @@ def _validate_owner(value: object) -> None:
 
 
 def _validate_repository(value: object) -> None:
-    if not isinstance(value, str) or _REPOSITORY_PATTERN.fullmatch(value) is None:
+    if (
+        not isinstance(value, str)
+        or value in (".", "..")
+        or _REPOSITORY_PATTERN.fullmatch(value) is None
+    ):
         raise GitHubSnapshotError("github snapshot: repository identity is invalid")
 
 

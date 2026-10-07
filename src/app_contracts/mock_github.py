@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from .validator import ContractValidationError
+from .publication_seed import publication_idempotency_key, validate_publication_base_branch
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class MockPullRequest:
     branch: str
     staged_change_digest: str
     idempotency_key: str
+    base_branch: str = ""
 
 
 class MockGitHubEndpoint:
@@ -26,7 +28,7 @@ class MockGitHubEndpoint:
 
     def publish_pull_request(self, request: dict[str, Any]) -> MockPullRequest:
         required = {
-            "operation", "repository_id", "branch", "staged_change_digest",
+            "operation", "repository_id", "branch", "base_branch", "staged_change_digest",
             "idempotency_key", "policy_effect", "approval_valid",
         }
         if not isinstance(request, dict) or set(request) != required:
@@ -36,17 +38,20 @@ class MockGitHubEndpoint:
         if request["policy_effect"] != "allow" or request["approval_valid"] is not True:
             raise ContractValidationError("mock github: authority proof is invalid")
 
-        for field in ("repository_id", "branch", "staged_change_digest", "idempotency_key"):
+        for field in ("repository_id", "branch", "base_branch", "staged_change_digest", "idempotency_key"):
             if not isinstance(request[field], str) or not request[field]:
                 raise ContractValidationError("mock github: boundary field is invalid")
         if not request["branch"].startswith("agent/") or len(request["branch"]) <= len("agent/"):
             raise ContractValidationError("mock github: branch is outside the agent namespace")
+        try:
+            validate_publication_base_branch(request["base_branch"])
+        except Exception:
+            raise ContractValidationError("mock github: base branch is invalid") from None
         if re.fullmatch(r"sha256:[0-9a-f]{64}", request["staged_change_digest"]) is None:
             raise ContractValidationError("mock github: digest is malformed")
 
-        expected_key = (
-            f"publish/{request['branch'].removeprefix('agent/')}/"
-            f"{request['staged_change_digest']}"
+        expected_key = publication_idempotency_key(
+            request["branch"], request["base_branch"], request["staged_change_digest"]
         )
         if request["idempotency_key"] != expected_key:
             raise ContractValidationError("mock github: idempotency key mismatch")
@@ -56,6 +61,7 @@ class MockGitHubEndpoint:
             if (
                 existing.repository_id != request["repository_id"]
                 or existing.branch != request["branch"]
+                or existing.base_branch != request["base_branch"]
                 or existing.staged_change_digest != request["staged_change_digest"]
             ):
                 raise ContractValidationError("mock github: idempotency conflict")
@@ -65,6 +71,7 @@ class MockGitHubEndpoint:
             pull_request_id=len(self._by_idempotency_key) + 1,
             repository_id=request["repository_id"],
             branch=request["branch"],
+            base_branch=request["base_branch"],
             staged_change_digest=request["staged_change_digest"],
             idempotency_key=request["idempotency_key"],
         )
@@ -73,6 +80,7 @@ class MockGitHubEndpoint:
 
     def find_by_idempotency_key(
         self, idempotency_key: str, *, repository_id: str | None = None,
+        base_branch: str | None = None,
     ) -> MockPullRequest | None:
         """Reconciliation query; it has no side effect.
 
@@ -89,6 +97,17 @@ class MockGitHubEndpoint:
         ):
             raise ContractValidationError("mock github: lookup repository is invalid")
         found = self._by_idempotency_key.get(idempotency_key)
+        if found is not None and base_branch is not None:
+            try:
+                validate_publication_base_branch(base_branch)
+            except Exception:
+                raise ContractValidationError("mock github: lookup base branch is invalid") from None
+            if publication_idempotency_key(
+                found.branch, base_branch, found.staged_change_digest
+            ) != idempotency_key:
+                return None
+            if found.base_branch != base_branch:
+                return None
         if found is not None and repository_id is not None and found.repository_id != repository_id:
             return None
         return found

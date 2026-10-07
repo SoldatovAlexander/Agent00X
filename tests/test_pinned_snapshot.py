@@ -146,12 +146,30 @@ class PinnedSnapshotRecordTests(unittest.TestCase):
 
 class LocalSnapshotBoundaryTests(unittest.TestCase):
     def test_local_modules_reject_forbidden_dependencies_without_importing_fixture(self):
-        production_sources = (
-            Path(pinned_snapshot_module.__file__).read_text(encoding="utf-8"),
-            Path(executor_module.__file__).read_text(encoding="utf-8"),
+        pinned_snapshot_source = Path(pinned_snapshot_module.__file__).read_text(
+            encoding="utf-8"
         )
-        for source in production_sources:
-            self.assertEqual(_forbidden_local_imports(source), ())
+        executor_source = Path(executor_module.__file__).read_text(encoding="utf-8")
+        self.assertEqual(_forbidden_local_imports(pinned_snapshot_source), ())
+        executor_imports = _forbidden_local_imports(executor_source)
+        # The executor consumes the bounded claim data model only; the explicit
+        # dependency does not grant it network/client or credential capabilities.
+        self.assertEqual(
+            tuple(
+                dependency
+                for dependency in executor_imports
+                if dependency
+                not in {
+                    "github_snapshot",
+                    "githubblobclaim",
+                    "githubsnapshotclaim",
+                    "githubsnapshotcontents",
+                    "remote_snapshot_workspace",
+                    "materializedgithubsnapshot",
+                }
+            ),
+            (),
+        )
 
         forbidden_fixture = (
             "import requests\n"

@@ -42,6 +42,31 @@
 
 ## Кандидаты process runtime
 
+### NeoCognition ApprenticeBench
+
+<https://neocognition.io/blog/apprentice-bench/>
+
+Референс для будущего R5-эксперимента: benchmark проверяет не отдельный вызов
+инструмента, а длительную работу агента в рабочем контуре, включая computer use,
+обучение по обратной связи и последующее выполнение без постоянной подсказки.
+Полезная гипотеза для прототипа — измерять накопленное качество на серии задач и
+различать успешное действие от усвоения локальных правил процесса. Сценарий и
+метрики не принимаются автоматически: требуются собственные task contracts,
+безопасные fixtures и заранее определённые метрики.
+
+### DeepSeek Harness
+
+- Обзор: <https://deepseek.com/harness/en/>
+- Архитектура: <https://deepseek-harness.github.io/deepseek-harness/en/reference/>
+- Extension cookbook: <https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cookbook/extension-cookbook.md>
+
+Референс для композиции runtime: профили собирают упорядоченный набор версий
+плагинов, а плагины объявляют зависимости и обратимые lifecycle-эффекты. Также
+полезна идея durable event stream для траектории запуска. Это не выбор DSH и не
+разрешение на универсальную плагинность: расширение в данной платформе не может
+обходить Authority Plane, Policy Engine, Action Gateway, approval или границы
+секретов.
+
 ### LangGraph
 
 <https://github.com/langchain-ai/langgraph>

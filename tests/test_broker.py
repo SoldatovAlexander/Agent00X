@@ -9,6 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from app_contracts.authority import DeterministicPolicy, PolicyConfig
 from app_contracts.broker import InMemoryCredentialBroker
@@ -16,6 +17,7 @@ from app_contracts.gateway import GatewayDecision, GatewayPath, classify
 from app_contracts.github_actuator import BrokeredGitHubActuator
 from app_contracts.mock_github import MockGitHubEndpoint
 from app_contracts.validator import ContractValidationError
+from approval_test_support import TEST_APPROVER_PUBLIC_KEYS, sign_test_approval
 
 
 NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
@@ -24,6 +26,7 @@ NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
 class BrokerTests(unittest.TestCase):
     def setUp(self):
         self.chain = json.loads((ROOT / "fixtures" / "valid" / "mvp-chain.json").read_text())
+        self.chain["approval"] = sign_test_approval(self.chain["approval"])
         self.endpoint = MockGitHubEndpoint()
         self.broker = InMemoryCredentialBroker(lambda: self.endpoint)
         self.actuator = BrokeredGitHubActuator(self.broker)
@@ -31,6 +34,8 @@ class BrokerTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         self.decision = policy.decide(
             decision_id="decision-broker-001",
@@ -564,6 +569,8 @@ class BrokerTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         fresh = policy.decide(
             decision_id="decision-evil-051",

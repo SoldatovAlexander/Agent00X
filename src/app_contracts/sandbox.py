@@ -259,15 +259,20 @@ def _make_tree_read_only(root: Path) -> None:
         if path.is_dir():
             path.chmod(0o500)
         else:
-            path.chmod(0o400)
+            # Git snapshot verification binds executable vs regular-file mode.
+            # Remove write permission without erasing that distinction.
+            path.chmod(0o500 if path.stat().st_mode & 0o111 else 0o400)
     root.chmod(0o500)
 
 
 def _make_tree_owner_writable(root: Path) -> None:
-    """Restore deletion rights only for files copied into our temporary root."""
+    """Restore owner write access without erasing Git executable classification."""
 
     if not root.exists():
         return
     root.chmod(0o700)
     for path in root.rglob("*"):
-        path.chmod(0o700 if path.is_dir() else 0o600)
+        if path.is_dir():
+            path.chmod(0o700)
+        else:
+            path.chmod(0o700 if path.stat().st_mode & 0o111 else 0o600)

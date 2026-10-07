@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, asdict, replace
 import ast
 from contextlib import contextmanager
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -30,17 +31,28 @@ from app_contracts.executor import (
     WorkerInput,
     WorkerProposal,
     ExecutorSandboxBackend,
+    _build_verifier_input,
+    _read_pinned_snapshot_files,
     run_local_execution,
     validate_worker_proposal,
 )
 from app_contracts.validator import ContractValidationError
 from app_contracts.repository_process import prepare_change
-from app_contracts.digests import sha256_digest
+from app_contracts.digests import sha256_bytes, sha256_digest
+from app_contracts.github_snapshot import (
+    GitHubBlobClaim,
+    GitHubSnapshotClaim,
+    GitHubSnapshotContents,
+)
 from app_contracts.pinned_snapshot import (
+    SNAPSHOT_DIGEST_CANONICALIZATION,
     PinnedSnapshot,
     compute_snapshot_tree_digest,
     export_local_commit_tree,
     open_local_repository,
+)
+from app_contracts.remote_snapshot_workspace import (
+    materialize_github_snapshot,
 )
 import app_contracts.executor as executor_module
 
@@ -141,7 +153,688 @@ class AcceptingVerifier:
         )
 
 
+class RemoteSnapshotExecutionTests(unittest.TestCase):
+    @staticmethod
+    def make_snapshot(path: Path, content: bytes) -> GitHubSnapshotContents:
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "calculator.py").write_bytes(content)
+        (path / "calculator.py").chmod(0o644)
+        digest = compute_snapshot_tree_digest(path)
+        git_oid = hashlib.sha1(
+            b"blob " + str(len(content)).encode("ascii") + b"\0" + content
+        ).hexdigest()
+        blob = GitHubBlobClaim(
+            path="calculator.py",
+            mode="100644",
+            sha=git_oid,
+            size=len(content),
+            content=content,
+            content_digest=sha256_bytes(content),
+        )
+        claim = GitHubSnapshotClaim(
+            owner="fixture-owner",
+            repository="fixture-repository",
+            commit_oid="a" * 40,
+            tree_oid="b" * 40,
+            content_digest=digest,
+        )
+        return GitHubSnapshotContents(claim=claim, files=(blob,))
+
+    class FakeBackend:
+        def __init__(self, replay_returncode=0):
+            self.temporary_directories = []
+            self.sessions = []
+            self.commands = []
+            self.replay_returncode = replay_returncode
+
+        def create(self, snapshot: Path, allowed_commands: set[str]):
+            from app_contracts.sandbox import CommandResult
+
+            temporary = tempfile.TemporaryDirectory()
+            self.temporary_directories.append(temporary)
+            root = Path(temporary.name)
+            copied_snapshot = root / "snapshot"
+            workspace = root / "workspace"
+            shutil.copytree(snapshot, copied_snapshot)
+            shutil.copytree(snapshot, workspace)
+            for path in (workspace, *workspace.rglob("*")):
+                path.chmod(path.stat().st_mode | 0o200)
+            backend = self
+
+            class Session:
+                def __init__(self):
+                    self.index = len(backend.sessions) + 1
+                    self.snapshot = copied_snapshot
+                    self.workspace = workspace
+                    self.closed = False
+
+                def run(self, argv, timeout_seconds=30):
+                    backend.commands.append((tuple(argv), timeout_seconds, self.index))
+                    if self.index == 2:
+                        backend.replayed_content = (
+                            workspace / "calculator.py"
+                        ).read_text(encoding="utf-8")
+                    return CommandResult(
+                        tuple(argv),
+                        backend.replay_returncode if self.index == 2 else 0,
+                        "REPLAY-OUTPUT-CANARY" if self.index == 2 else "",
+                        "REPLAY-ERROR-CANARY" if self.index == 2 else "",
+                    )
+
+                def close(self):
+                    self.closed = True
+                    temporary.cleanup()
+
+            session = Session()
+            self.sessions.append(session)
+            return session
+
+    def test_remote_claim_is_bound_to_worker_verifier_and_execution_result(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "remote-snapshot"
+            base = b"def add(left, right):\n    return left + right\n"
+            remote_snapshot = self.make_snapshot(snapshot_path, base)
+            request = ExecutionRequest(
+                process_id="process-remote-001",
+                task_id="task-remote-001",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=remote_snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_snapshot=remote_snapshot,
+            )
+
+            class FakeWorker:
+                received = None
+                content = None
+
+                def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                    self.received = worker_input
+                    self.content = base.decode() + "\n# proposed\n"
+                    return WorkerProposal(
+                        (("calculator.py", self.content),)
+                    )
+
+            worker = FakeWorker()
+            verifier = AcceptingVerifier()
+            backend = self.FakeBackend()
+            result = run_local_execution(
+                request, worker, verifier=verifier, sandbox_backend=backend
+            )
+            expected_claim_digest = sha256_digest(
+                {
+                    "canonicalization": "github-rest-snapshot-claim/v1",
+                    "owner": remote_snapshot.claim.owner,
+                    "repository": remote_snapshot.claim.repository,
+                    "commit_oid": remote_snapshot.claim.commit_oid,
+                    "tree_oid": remote_snapshot.claim.tree_oid,
+                    "content_digest": remote_snapshot.claim.content_digest,
+                    "full_snapshot": remote_snapshot.claim.full_snapshot,
+                    "selected_paths": remote_snapshot.claim.selected_paths,
+                    "evidence_origin": "github_rest_api_claim",
+                }
+            )
+
+            self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+            self.assertEqual(result.snapshot_origin, "github_rest_api_claim")
+            self.assertEqual(result.snapshot_tree_digest, remote_snapshot.claim.content_digest)
+            self.assertEqual(result.snapshot_claim_digest, expected_claim_digest)
+            self.assertRegex(result.verifier_result.replay_result_digest, r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(worker.received.snapshot_origin, "github_rest_api_claim")
+            self.assertEqual(worker.received.snapshot_claim_digest, expected_claim_digest)
+            self.assertFalse(hasattr(worker.received, "snapshot_files"))
+            self.assertEqual(verifier.received.snapshot_claim_digest, expected_claim_digest)
+            self.assertEqual(
+                verifier.received.snapshot_files,
+                (("calculator.py", "100644", base),),
+            )
+            self.assertEqual(len(backend.sessions), 2)
+            self.assertIsNot(backend.sessions[0], backend.sessions[1])
+            self.assertNotEqual(backend.sessions[0].workspace, backend.sessions[1].workspace)
+            self.assertTrue(all(session.closed for session in backend.sessions))
+            self.assertEqual(
+                backend.commands,
+                [
+                    (request.test_command, request.test_timeout_seconds, 1),
+                    (request.test_command, request.test_timeout_seconds, 2),
+                ],
+            )
+            self.assertEqual(backend.replayed_content, worker.content)
+            expected_replay_digest = sha256_digest(
+                (
+                    "github-remote-replay-v1",
+                    request.repository_id,
+                    request.base_commit,
+                    remote_snapshot.claim.content_digest,
+                    expected_claim_digest,
+                    request.test_command,
+                    request.test_timeout_seconds,
+                    verifier.received.verified_contents_digest,
+                    0,
+                )
+            )
+            self.assertEqual(
+                verifier.received.replay_result_digest,
+                expected_replay_digest,
+            )
+            from app_contracts.publication_seed import build_publication_seed
+
+            seed = build_publication_seed(request, result)
+            self.assertEqual(seed.snapshot_origin, "github_rest_api_claim")
+            self.assertEqual(seed.snapshot_tree_digest, result.snapshot_tree_digest)
+            self.assertEqual(seed.snapshot_claim_digest, result.snapshot_claim_digest)
+
+    def test_remote_replay_failure_closes_both_sessions_before_verifier(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "remote-snapshot"
+            base = b"def add(left, right):\n    return left + right\n"
+            remote_snapshot = self.make_snapshot(snapshot_path, base)
+            request = ExecutionRequest(
+                process_id="process-remote-replay-fail",
+                task_id="task-remote-replay-fail",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=remote_snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_snapshot=remote_snapshot,
+            )
+
+            class FakeWorker:
+                def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                    return WorkerProposal(
+                        (("calculator.py", base.decode() + "\n# proposed\n"),)
+                    )
+
+            verifier = AcceptingVerifier()
+            backend = self.FakeBackend(replay_returncode=1)
+            result = run_local_execution(
+                request, FakeWorker(), verifier=verifier, sandbox_backend=backend
+            )
+            self.assertEqual(result.status, ExecutionStatus.FAILED)
+            self.assertEqual(result.failure_code, "verification-replay-failed")
+            self.assertEqual(verifier.calls, 0)
+            self.assertEqual(len(backend.sessions), 2)
+            self.assertTrue(all(session.closed for session in backend.sessions))
+            serialized = repr(result)
+            self.assertNotIn("REPLAY-OUTPUT-CANARY", serialized)
+            self.assertNotIn("REPLAY-ERROR-CANARY", serialized)
+
+    def test_remote_claim_mismatch_and_default_backend_fail_before_worker(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            outer = Path(temporary_directory)
+            snapshot_path = outer / "materialized"
+            actual = b"actual bytes\n"
+            claimed = b"different claimed bytes\n"
+            snapshot = self.make_snapshot(outer / "claim-source", claimed)
+            snapshot_path.mkdir()
+            (snapshot_path / "calculator.py").write_bytes(actual)
+            (snapshot_path / "calculator.py").chmod(0o644)
+            request = ExecutionRequest(
+                process_id="process-remote-002",
+                task_id="task-remote-002",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_snapshot=snapshot,
+            )
+
+            class CountingWorker:
+                calls = 0
+
+                def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                    self.calls += 1
+                    return WorkerProposal((("calculator.py", "unused\n"),))
+
+            worker = CountingWorker()
+            backend = self.FakeBackend()
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution sandbox: explicit remote backend is required$"
+            ):
+                run_local_execution(
+                    request, worker, verifier=AcceptingVerifier()
+                )
+            self.assertEqual(worker.calls, 0)
+
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution snapshot: claim mismatch$"
+            ):
+                run_local_execution(
+                    request,
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=backend,
+                )
+            self.assertEqual(worker.calls, 0)
+            self.assertTrue(backend.sessions[0].closed)
+
+            (snapshot_path / "calculator.py").unlink()
+            (snapshot_path / "calculator.py").symlink_to(
+                outer / "claim-source" / "calculator.py"
+            )
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution snapshot: claim mismatch$"
+            ):
+                run_local_execution(
+                    request,
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=self.FakeBackend(),
+                )
+            self.assertEqual(worker.calls, 0)
+
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution request: remote snapshot binding is invalid$"
+            ):
+                run_local_execution(
+                    replace(request, repository_id="different-owner/different-repository"),
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=self.FakeBackend(),
+                )
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution request: remote snapshot binding is invalid$"
+            ):
+                run_local_execution(
+                    replace(
+                        request,
+                        pinned_snapshot=PinnedSnapshot(
+                            repository_id=request.repository_id,
+                            commit_oid=request.base_commit,
+                            tree_digest=snapshot.claim.content_digest,
+                            snapshot_path=snapshot_path,
+                        ),
+                    ),
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=self.FakeBackend(),
+                )
+            self.assertEqual(worker.calls, 0)
+
+    def test_tampered_remote_snapshot_is_scanned_before_backend_or_worker(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "remote-snapshot"
+            original = b"def add(left, right):\n    return left + right\n"
+            snapshot = self.make_snapshot(snapshot_path, original)
+            request = ExecutionRequest(
+                process_id="process-remote-secret-001",
+                task_id="task-remote-secret-001",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_snapshot=snapshot,
+            )
+            suspicious = b'password = "synthetic-password-value"\n'
+            blob = snapshot.files[0]
+            object.__setattr__(blob, "content", suspicious)
+            object.__setattr__(blob, "size", len(suspicious))
+            object.__setattr__(
+                blob,
+                "sha",
+                hashlib.sha1(
+                    b"blob " + str(len(suspicious)).encode("ascii") + b"\0" + suspicious
+                ).hexdigest(),
+            )
+            object.__setattr__(blob, "content_digest", sha256_bytes(suspicious))
+            object.__setattr__(
+                snapshot.claim,
+                "content_digest",
+                sha256_digest(
+                    {
+                        "canonicalization": SNAPSHOT_DIGEST_CANONICALIZATION,
+                        "files": [
+                            {
+                                "path": blob.path,
+                                "content_digest": blob.content_digest,
+                                "mode": blob.mode,
+                            }
+                        ],
+                    }
+                ),
+            )
+
+            class CountingWorker:
+                calls = 0
+
+                def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                    self.calls += 1
+                    return WorkerProposal((("calculator.py", "unused\n"),))
+
+            worker = CountingWorker()
+            backend = self.FakeBackend()
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution request: remote snapshot is invalid$"
+            ) as raised:
+                run_local_execution(
+                    request,
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=backend,
+                )
+            self.assertNotIn(suspicious.decode().strip(), str(raised.exception))
+            self.assertEqual(worker.calls, 0)
+            self.assertEqual(backend.sessions, [])
+
+    def test_remote_worker_failure_preserves_claim_identity(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "remote-snapshot"
+            snapshot = self.make_snapshot(snapshot_path, b"synthetic source\n")
+            request = ExecutionRequest(
+                process_id="process-remote-failed-001",
+                task_id="task-remote-failed-001",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_snapshot=snapshot,
+            )
+
+            class FailingWorker:
+                def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                    raise RuntimeError("synthetic worker failure")
+
+            result = run_local_execution(
+                request,
+                FailingWorker(),
+                verifier=AcceptingVerifier(),
+                sandbox_backend=self.FakeBackend(),
+            )
+
+            expected_claim_digest = sha256_digest(
+                {
+                    "canonicalization": "github-rest-snapshot-claim/v1",
+                    "owner": snapshot.claim.owner,
+                    "repository": snapshot.claim.repository,
+                    "commit_oid": snapshot.claim.commit_oid,
+                    "tree_oid": snapshot.claim.tree_oid,
+                    "content_digest": snapshot.claim.content_digest,
+                    "full_snapshot": snapshot.claim.full_snapshot,
+                    "selected_paths": snapshot.claim.selected_paths,
+                    "evidence_origin": "github_rest_api_claim",
+                }
+            )
+            self.assertEqual(result.status, ExecutionStatus.FAILED)
+            self.assertEqual(result.failure_code, "worker-failed")
+            self.assertEqual(result.snapshot_origin, "github_rest_api_claim")
+            self.assertEqual(result.snapshot_tree_digest, snapshot.claim.content_digest)
+            self.assertEqual(result.snapshot_claim_digest, expected_claim_digest)
+
+    def test_remote_workspace_lease_runs_and_caller_cleanup_covers_all_outcomes(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot = self.make_snapshot(
+                Path(temporary_directory) / "claim-source", b"synthetic source\n"
+            )
+            with materialize_github_snapshot(snapshot) as workspace:
+                root = workspace.path
+                request = ExecutionRequest(
+                    process_id="process-remote-lease-001",
+                    task_id="task-remote-lease-001",
+                    repository_id="fixture-owner/fixture-repository",
+                    base_commit=snapshot.claim.commit_oid,
+                    snapshot_path=workspace.path,
+                    allowed_commands=frozenset({"python3"}),
+                    declared_change_paths=("calculator.py",),
+                    test_command=("python3", "-m", "unittest"),
+                    remote_snapshot=snapshot,
+                    remote_workspace=workspace,
+                )
+
+                class FakeWorker:
+                    def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                        return WorkerProposal(
+                            (("calculator.py", "synthetic proposed change\n"),)
+                        )
+
+                result = run_local_execution(
+                    request,
+                    FakeWorker(),
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=self.FakeBackend(),
+                )
+                self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+            self.assertFalse(root.exists())
+
+            with materialize_github_snapshot(snapshot) as workspace:
+                root = workspace.path
+                request = ExecutionRequest(
+                    process_id="process-remote-lease-002",
+                    task_id="task-remote-lease-002",
+                    repository_id="fixture-owner/fixture-repository",
+                    base_commit=snapshot.claim.commit_oid,
+                    snapshot_path=workspace.path,
+                    allowed_commands=frozenset({"python3"}),
+                    declared_change_paths=("calculator.py",),
+                    test_command=("python3", "-m", "unittest"),
+                    remote_workspace=workspace,
+                )
+
+                class FailingWorker:
+                    def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                        raise RuntimeError("synthetic worker failure")
+
+                result = run_local_execution(
+                    request,
+                    FailingWorker(),
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=self.FakeBackend(),
+                )
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(result.snapshot_origin, "github_rest_api_claim")
+            self.assertFalse(root.exists())
+
+    def test_closed_or_mismatched_remote_workspace_fails_before_backend(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot = self.make_snapshot(
+                Path(temporary_directory) / "claim-source", b"synthetic source\n"
+            )
+            workspace = materialize_github_snapshot(snapshot)
+            request = ExecutionRequest(
+                process_id="process-remote-lease-closed",
+                task_id="task-remote-lease-closed",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=snapshot.claim.commit_oid,
+                snapshot_path=workspace.path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_workspace=workspace,
+            )
+            worker = self.CountingWorker()
+            backend = self.FakeBackend()
+            workspace.close()
+            with self.assertRaisesRegex(
+                ExecutionError,
+                "^execution request: remote snapshot workspace is invalid$",
+            ):
+                run_local_execution(
+                    request,
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=backend,
+                )
+            self.assertEqual(worker.calls, 0)
+            self.assertEqual(backend.sessions, [])
+
+    class CountingWorker:
+        def __init__(self):
+            self.calls = 0
+
+        def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+            self.calls += 1
+            return WorkerProposal((("calculator.py", "unused\n"),))
+
+
+class AuditOnlyVerifierAttestationTests(unittest.TestCase):
+    def test_signed_receipt_fails_before_durable_stage_calls(self):
+        from app_contracts.verifier_attestation import VerifiedVerifierAttestation
+        from app_contracts.verifier_process import VerifierProcessRequest, serialize_verifier_request
+
+        class ReceiptVerifier:
+            def verify(self, prepared: VerifierInput):
+                normal = AcceptingVerifier().verify(prepared)
+                request = VerifierProcessRequest.from_verifier_input(prepared)
+                request_digest = sha256_bytes(serialize_verifier_request(request))
+                return VerifiedVerifierAttestation(
+                    verifier_result=normal,
+                    key_id="fixture-key-1",
+                    invocation_nonce="a" * 64,
+                    request_digest=request_digest,
+                    verifier_profile_digest="sha256:" + "b" * 64,
+                    issued_at="2026-10-08T00:00:00Z",
+                    attestation_digest="sha256:" + "c" * 64,
+                )
+
+        class NoTouchStage:
+            save_calls = 0
+            load_calls = 0
+
+            def save(self, artifact):
+                self.save_calls += 1
+                raise AssertionError("audit-only receipt must not stage")
+
+            def load(self, digest):
+                self.load_calls += 1
+                raise AssertionError("audit-only receipt must not stage")
+
+        class Worker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                source = (ROOT / "fixtures/repository/project/calculator.py").read_text(
+                    encoding="utf-8"
+                )
+                return WorkerProposal((("calculator.py", source + "\n# staged\n"),))
+
+        stage = NoTouchStage()
+        result = run_local_execution(
+            valid_request(), Worker(), verifier=ReceiptVerifier(), stage_sink=stage
+        )
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "verifier-trust-unestablished")
+        self.assertEqual(result.verifier_attestation_digest, "sha256:" + "c" * 64)
+        self.assertEqual(result.verifier_attestation_key_id, "fixture-key-1")
+        self.assertEqual(result.verifier_attestation_profile_digest, "sha256:" + "b" * 64)
+        self.assertIs(result.verifier_signature_valid, True)
+        self.assertIs(result.verifier_independent_host_trust_established, False)
+        self.assertEqual((stage.save_calls, stage.load_calls), (0, 0))
+
+
 class ExecutionRecordTests(unittest.TestCase):
+    def test_executor_import_does_not_require_remote_snapshot_modules(self):
+        script = """
+import importlib.abc
+import sys
+
+blocked = {"app_contracts.github_snapshot", "app_contracts.remote_snapshot_workspace"}
+class BlockRemoteModules(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in blocked:
+            raise RuntimeError("remote module import blocked for local-only check")
+        return None
+
+sys.meta_path.insert(0, BlockRemoteModules())
+from app_contracts.executor import MAX_VERIFIER_SNAPSHOT_FILE_BYTES
+from app_contracts.executor import verifier_snapshot_tree_digest
+assert MAX_VERIFIER_SNAPSHOT_FILE_BYTES == 262144
+assert verifier_snapshot_tree_digest((("a.py", "100644", b"x"),)).startswith("sha256:")
+print("local_executor_import=ok")
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=ROOT,
+            env={
+                "PYTHONPATH": str(ROOT / "src"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, "isolated import failed")
+        self.assertEqual(completed.stdout.strip(), "local_executor_import=ok")
+        self.assertEqual(completed.stderr, "")
+
+    def test_pinned_snapshot_reader_accepts_source_limit_and_enforces_total_limit(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot = Path(temporary_directory) / "snapshot"
+            snapshot.mkdir()
+            (snapshot / "large.bin").write_bytes(b"x" * 220_064)
+            files = (("large.bin", "100644", b"x" * 220_064),)
+            digest = executor_module.verifier_snapshot_tree_digest(files)
+            self.assertEqual(_read_pinned_snapshot_files(snapshot, digest), files)
+
+            oversized = Path(temporary_directory) / "oversized"
+            oversized.mkdir()
+            over_total_files = tuple(
+                (f"file-{index}.bin", "100644", b"x" * 200_000)
+                for index in range(3)
+            )
+            for path, _mode, content in over_total_files:
+                (oversized / path).write_bytes(content)
+            with self.assertRaisesRegex(
+                ExecutionError,
+                "^execution verifier input: pinned snapshot is invalid$",
+            ):
+                _read_pinned_snapshot_files(
+                    oversized,
+                    executor_module.verifier_snapshot_tree_digest(over_total_files),
+                )
+
+    def test_oversized_pinned_snapshot_fails_before_verifier_can_be_called(self):
+        class CountingVerifier:
+            calls = 0
+
+            def verify(self, prepared):
+                self.calls += 1
+                raise AssertionError("oversized snapshot reached verifier")
+
+        verifier = CountingVerifier()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot = Path(temporary_directory) / "snapshot"
+            snapshot.mkdir()
+            for index in range(257):
+                (snapshot / f"file-{index:03}.txt").write_bytes(b"x")
+            commit_oid = "a" * 40
+            pin = PinnedSnapshot(
+                repository_id="fixture-repository",
+                commit_oid=commit_oid,
+                tree_digest=compute_snapshot_tree_digest(snapshot),
+                snapshot_path=snapshot,
+            )
+            request = valid_request(
+                snapshot_path=snapshot,
+                base_commit=commit_oid,
+                pinned_snapshot=pin,
+            )
+            content = "candidate"
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution verifier input: pinned snapshot is invalid$"
+            ):
+                prepared = _build_verifier_input(
+                    request=request,
+                    proposal=WorkerProposal((("calculator.py", content),)),
+                    staged={
+                        "patch_digest": "sha256:" + "1" * 64,
+                        "evidence_digest": "sha256:" + "2" * 64,
+                        "verification_digest": "sha256:" + "3" * 64,
+                    },
+                    verified_contents=(("calculator.py", content),),
+                    verified_contents_digest="sha256:" + "4" * 64,
+                    replay_result_digest="sha256:" + "5" * 64,
+                )
+                verifier.verify(prepared)
+        self.assertEqual(verifier.calls, 0)
+
     def test_complete_pinned_git_export_to_second_pass_flow_is_local_and_bound(self):
         from app_contracts.sandbox import CommandResult
 
@@ -304,6 +997,18 @@ class ExecutionRecordTests(unittest.TestCase):
                 self.assertEqual(success_verifier.received.base_commit, commit_oid)
                 self.assertEqual(
                     success_verifier.received.snapshot_tree_digest, pin.tree_digest
+                )
+                self.assertEqual(
+                    success_verifier.received.snapshot_files,
+                    tuple(
+                        (
+                            path.relative_to(lease.path).as_posix(),
+                            "100755" if path.stat().st_mode & 0o111 else "100644",
+                            path.read_bytes(),
+                        )
+                        for path in sorted(lease.path.rglob("*"))
+                        if path.is_file() and not path.is_symlink()
+                    ),
                 )
                 self.assertEqual(
                     success_verifier.received.verified_contents,
@@ -588,10 +1293,13 @@ class ExecutionRecordTests(unittest.TestCase):
             {
                 "process_id", "task_id", "repository_id", "base_commit",
                 "declared_change_paths", "snapshot_tree_digest", "snapshot_origin",
+                "task_instruction", "context_files", "snapshot_claim_digest",
             },
         )
         self.assertIsNone(task.snapshot_tree_digest)
         self.assertEqual(task.snapshot_origin, "unverified_local_test")
+        self.assertIsNone(task.task_instruction)
+        self.assertEqual(task.context_files, ())
         self.assertEqual(set(WorkerProposal.__dataclass_fields__), {"changes"})
 
     def test_verifier_contract_is_separate_and_explicitly_local(self):
@@ -616,7 +1324,7 @@ class ExecutionRecordTests(unittest.TestCase):
             process_id="process-local-001",
             repository_id="fixture-repository",
             base_commit="a" * 40,
-            snapshot_tree_digest="sha256:" + "d" * 64,
+            snapshot_tree_digest=None,
             declared_change_paths=("calculator.py",),
             verified_contents=(("calculator.py", "safe content"),),
             test_command=("python3", "-m", "unittest"),
@@ -645,7 +1353,7 @@ class ExecutionRecordTests(unittest.TestCase):
                 "declared_change_paths", "verified_contents", "test_command",
                 "test_timeout_seconds", "patch_digest", "evidence_digest",
                 "verification_digest", "verified_contents_digest", "evidence_origin",
-                "replay_result_digest",
+                "replay_result_digest", "snapshot_files", "snapshot_claim_digest",
             },
         )
 
@@ -794,6 +1502,31 @@ class ExecutionRecordTests(unittest.TestCase):
         self.assertNotIn("approval", ExecutionResult.__dataclass_fields__)
         self.assertNotIn("publishable", ExecutionResult.__dataclass_fields__)
 
+    def test_required_durable_stage_without_sink_rejects_before_worker(self):
+        class CountingWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal(())
+
+        for sink, message in (
+            (None, "execution stage: durable sink is required"),
+            (object(), "execution stage: durable sink is invalid"),
+        ):
+            with self.subTest(sink=sink):
+                worker = CountingWorker()
+                with self.assertRaisesRegex(ExecutionError, f"^{message}$"):
+                    run_local_execution(
+                        valid_request(),
+                        worker,
+                        verifier=AcceptingVerifier(),
+                        stage_sink=sink,
+                        require_durable_stage=True,
+                    )
+                self.assertEqual(worker.calls, 0)
+
     def test_snapshot_copy_digest_mismatch_stops_before_worker_and_preparation(self):
         from app_contracts.sandbox import LocalProcessSandbox
 
@@ -920,7 +1653,7 @@ class ExecutionRecordTests(unittest.TestCase):
         request = valid_request(test_command=("python3", "-c", "raise SystemExit(1)"))
         with self.assertRaisesRegex(
             ContractValidationError,
-            "^verification failed; staged change was not created$",
+        "^verification failed; staged change was not created: allowlisted-tests-failed$",
         ):
             run_local_execution(request, FakeWorker(), verifier=AcceptingVerifier())
 
@@ -1780,6 +2513,174 @@ class ExecutionRecordTests(unittest.TestCase):
                             require_pinned_snapshot=True,
                         )
                 self.assertEqual(verifier.calls, 0)
+
+
+class ExplicitWorkerInputTests(unittest.TestCase):
+    def test_missing_instruction_and_empty_context_allowed_for_fake_workers(self):
+        request = valid_request()
+        self.assertIsNone(request.task_instruction)
+        self.assertEqual(request.context_files, ())
+
+        class RecordingWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                self.received = task
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", original + "\n# explicit-input\n"),))
+
+        worker = RecordingWorker()
+        result = run_local_execution(
+            valid_request(test_command=("python3", "-c", "print('ok')")),
+            worker,
+            verifier=AcceptingVerifier(),
+        )
+        self.assertEqual(worker.calls, 1)
+        self.assertIsNone(worker.received.task_instruction)
+        self.assertEqual(worker.received.context_files, ())
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+
+    def test_explicit_instruction_and_context_pass_through_detached(self):
+        instruction = "Summarize change\n\twith printable text"
+        context = (("calculator.py", "selected file content"),)
+        request = valid_request(task_instruction=instruction, context_files=context)
+        self.assertEqual(request.task_instruction, instruction)
+        self.assertEqual(request.context_files, context)
+        self.assertIsNot(request.context_files, context)
+        self.assertIsNot(request.context_files[0], context[0])
+
+        class RecordingWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                self.received = task
+                original = (ROOT / "fixtures/repository/project/calculator.py").read_text()
+                return WorkerProposal((("calculator.py", original + "\n# detached\n"),))
+
+        worker = RecordingWorker()
+        result = run_local_execution(
+            valid_request(
+                task_instruction=instruction,
+                context_files=context,
+                test_command=("python3", "-c", "print('ok')"),
+            ),
+            worker,
+            verifier=AcceptingVerifier(),
+        )
+        self.assertEqual(worker.calls, 1)
+        self.assertEqual(worker.received.task_instruction, instruction)
+        self.assertEqual(worker.received.context_files, context)
+        self.assertIsNot(worker.received.context_files, request.context_files)
+        self.assertIsNot(worker.received.context_files[0], request.context_files[0])
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+
+    def test_invalid_instructions_rejected_at_request_creation(self):
+        class CountingWorker:
+            calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        worker = CountingWorker()
+        invalid_instructions = (
+            "",
+            42,
+            b"bytes-instruction",
+            object(),
+            "x" * 4097,
+            "bad\x00char",
+            "bad\x07bell",
+            "bad\rmiddle",
+            "\ud800",
+        )
+        for value in invalid_instructions:
+            with self.subTest(value=repr(value)[:40]):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: worker input is invalid$"
+                ):
+                    valid_request(task_instruction=value)
+        self.assertEqual(worker.calls, 0)
+        boundary = valid_request(task_instruction="x" * 4096)
+        self.assertEqual(len(boundary.task_instruction.encode("utf-8")), 4096)
+        allowed = valid_request(task_instruction="line one\nline two\tindented")
+        self.assertIn("\n", allowed.task_instruction)
+
+    def test_invalid_context_paths_rejected_before_worker(self):
+        class CountingWorker:
+            calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        worker = CountingWorker()
+        invalid_contexts = (
+            (["calculator.py", "content"],),
+            (("calculator.py", object()),),
+            ((None, "content"),),
+            ((123, "content"),),
+            ((("calculator.py", "content", "extra")),),
+            (("/tmp/calculator.py", "content"),),
+            (("../escape.py", "content"),),
+            (("other.py", "content"),),
+            (("./calculator.py", "content"),),
+            (("calculator.py", "one"), ("calculator.py", "two")),
+        )
+        for context in invalid_contexts:
+            with self.subTest(context=repr(context)[:60]):
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: worker input is invalid$"
+                ):
+                    valid_request(context_files=context)
+                with self.assertRaisesRegex(
+                    ExecutionError, "^execution request: worker input is invalid$"
+                ):
+                    WorkerInput(
+                        process_id="process-local-001",
+                        task_id="task-local-001",
+                        repository_id="fixture-repository",
+                        base_commit="fixture-base-001",
+                        declared_change_paths=("calculator.py",),
+                        task_instruction="do work",
+                        context_files=context,
+                    )
+        self.assertEqual(worker.calls, 0)
+
+    def test_context_limits_rejected_before_worker(self):
+        class CountingWorker:
+            calls = 0
+
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                self.calls += 1
+                return WorkerProposal((("calculator.py", "unused"),))
+
+        worker = CountingWorker()
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution request: worker input is invalid$"
+        ):
+            valid_request(context_files=(("calculator.py", "x" * 12_001),))
+        paths = tuple(f"file-{index}.py" for index in range(9))
+        many = tuple((path, "x") for path in paths)
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution request: worker input is invalid$"
+        ):
+            valid_request(declared_change_paths=paths, context_files=many)
+        total_paths = ("a.py", "b.py")
+        total_context = (("a.py", "x" * 12_000), ("b.py", "x" * 12_000))
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution request: worker input is invalid$"
+        ):
+            valid_request(declared_change_paths=total_paths, context_files=total_context)
+        self.assertEqual(worker.calls, 0)
+        ok_context = (("calculator.py", "x" * 12_000),)
+        ok_request = valid_request(context_files=ok_context)
+        self.assertEqual(ok_request.context_files, ok_context)
+        self.assertIsNot(ok_request.context_files, ok_context)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from typing import Any
 from .authority import check_decision_usable, check_intent_approved
 from .mock_github import MockGitHubEndpoint, MockPullRequest
 from .gateway import GatewayDecision, GatewayPath
+from .publication_seed import publication_idempotency_key, validate_publication_base_branch
 from .validator import ContractValidationError
 
 
@@ -48,7 +49,7 @@ def publish_authorized_request(
         raise ContractValidationError("actuator: request is malformed")
     for field in (
         "actuator_id", "operation", "repository_id",
-        "branch_namespace", "staged_change_digest", "idempotency_key",
+        "branch_namespace", "base_branch", "staged_change_digest", "idempotency_key",
     ):
         value = actuator_request.get(field)
         if not isinstance(value, str) or not value:
@@ -66,18 +67,25 @@ def publish_authorized_request(
     for field in ("operation", "repository_id", "staged_change_digest"):
         if policy_decision[field] != actuator_request[field]:
             raise ContractValidationError(f"actuator: policy decision {field} mismatch")
-    for field in ("branch_namespace", "idempotency_key"):
+    for field in ("branch_namespace", "base_branch", "idempotency_key"):
         if intent[field] != actuator_request[field]:
             raise ContractValidationError(f"actuator: approved intent {field} mismatch")
+    try:
+        validate_publication_base_branch(actuator_request["base_branch"])
+    except Exception:
+        raise ContractValidationError("actuator: base branch is invalid") from None
     branch = actuator_request["branch_namespace"]
-    expected_key = f"publish/{branch.removeprefix('agent/')}/{actuator_request['staged_change_digest']}"
+    expected_key = publication_idempotency_key(
+        branch, actuator_request["base_branch"], actuator_request["staged_change_digest"]
+    )
     if actuator_request["idempotency_key"] != expected_key:
-        raise ContractValidationError("actuator: idempotency key does not match request branch and digest")
+        raise ContractValidationError("actuator: idempotency key does not match publication intent")
 
     return endpoint.publish_pull_request({
         "operation": actuator_request["operation"],
         "repository_id": actuator_request["repository_id"],
         "branch": actuator_request["branch_namespace"],
+        "base_branch": actuator_request["base_branch"],
         "staged_change_digest": actuator_request["staged_change_digest"],
         "idempotency_key": actuator_request["idempotency_key"],
         "policy_effect": policy_decision["effect"],

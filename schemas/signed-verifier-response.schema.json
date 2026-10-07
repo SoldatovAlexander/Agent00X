@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/signed-verifier-response.schema.json",
+  "title": "Signed verifier response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "key_id", "invocation_nonce", "request_digest", "verifier_profile_digest", "issued_at", "response", "signature"],
+  "properties": {
+    "schema": {"const": "signed-verifier-response/v1"},
+    "key_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "invocation_nonce": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "request_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "verifier_profile_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "issued_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_digest", "verifier_result"],
+      "properties": {
+        "schema_version": {"const": 2},
+        "request_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "verifier_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["process_id", "base_commit", "snapshot_tree_digest", "replay_result_digest", "verifier_id", "patch_digest", "evidence_digest", "verification_digest", "verified_contents_digest", "verdict", "blocker_codes", "evidence_origin"],
+          "properties": {
+            "process_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "base_commit": {"type": "string", "minLength": 1, "maxLength": 128},
+            "snapshot_tree_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "replay_result_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "verifier_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "patch_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "evidence_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "verification_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "verified_contents_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "verdict": {"enum": ["pass", "fail", "blocked"]},
+            "blocker_codes": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}},
+            "evidence_origin": {"const": "local_test"}
+          }
+        }
+      }
+    },
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{128}$"}
+  }
+}

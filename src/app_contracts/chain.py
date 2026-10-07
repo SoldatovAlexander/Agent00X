@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .digests import sha256_digest
+from .publication_seed import publication_idempotency_key, validate_publication_base_branch
 from .validator import ContractValidationError
 
 
@@ -97,7 +98,7 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
     intent = chain["intent"]
     request = chain["actuator_request"]
     for field in ("process_id", "repository_id", "base_commit", "staged_change_digest",
-                  "approval_id", "branch_namespace", "title_artifact_ref",
+                  "approval_id", "branch_namespace", "base_branch", "title_artifact_ref",
                   "body_artifact_ref", "idempotency_key"):
         if request[field] != intent[field]:
             raise ContractValidationError(f"chain: actuator request {field} mismatch")
@@ -114,7 +115,17 @@ def validate_chain(chain: dict[str, dict[str, Any]]) -> None:
     if credential_grant["request_digest"] != sha256_digest(request):
         raise ContractValidationError("chain: credential grant request digest mismatch")
 
-    expected_key = f"publish/{intent['process_id']}/{computed_staged_digest}"
+    try:
+        validate_publication_base_branch(intent["base_branch"])
+    except Exception:
+        raise ContractValidationError("chain: intent base branch is invalid") from None
+    if request["base_branch"] != intent["base_branch"]:
+        raise ContractValidationError("chain: actuator request base branch mismatch")
+    if chain["action_receipt"]["base_branch"] != intent["base_branch"]:
+        raise ContractValidationError("chain: receipt base branch mismatch")
+    expected_key = publication_idempotency_key(
+        intent["branch_namespace"], intent["base_branch"], computed_staged_digest
+    )
     if intent["idempotency_key"] != expected_key:
         raise ContractValidationError("chain: intent idempotency key is not content-bound")
     if chain["action_receipt"]["idempotency_key"] != expected_key:
@@ -165,18 +176,20 @@ _REQUIRED_MEMBERS = {
         "process_id", "repository_id", "staged_change_digest", "approval_id",
         "branch_namespace", "title_artifact_ref", "body_artifact_ref",
         "idempotency_key", "base_commit",
+        "base_branch",
     ),
     "policy_decision": ("repository_id", "staged_change_digest", "decision_id", "effect"),
     "actuator_request": (
         "process_id", "repository_id", "base_commit", "staged_change_digest",
         "approval_id", "branch_namespace", "title_artifact_ref",
         "body_artifact_ref", "idempotency_key", "policy_decision_id",
-        "patch_artifact_ref", "actuator_id",
+        "patch_artifact_ref", "actuator_id", "base_branch",
     ),
     "credential_use_grant": ("actuator_id", "repository_id", "request_digest"),
     "action_receipt": (
         "process_id", "repository_id", "staged_change_digest", "approval_id",
         "policy_decision_id", "idempotency_key",
+        "base_branch",
     ),
 }
 

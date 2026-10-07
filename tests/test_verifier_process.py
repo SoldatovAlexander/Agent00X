@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import FrozenInstanceError, asdict, replace
 from pathlib import Path
 import sys
 import unittest
@@ -12,9 +12,13 @@ sys.path.insert(0, str(ROOT / "src"))
 from app_contracts.executor import (
     ExecutionError,
     IndependentVerifier,
+    MAX_VERIFIER_SNAPSHOT_FILES,
+    MAX_VERIFIER_SNAPSHOT_FILE_BYTES,
+    MAX_VERIFIER_SNAPSHOT_TOTAL_BYTES,
     VerifierInput,
     VerifierResult,
     VerifierVerdict,
+    verifier_snapshot_tree_digest,
 )
 from app_contracts.verifier_process import (
     MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS,
@@ -39,11 +43,12 @@ from app_contracts.verifier_process import (
 
 
 def valid_verifier_input() -> VerifierInput:
+    snapshot_files = (("calculator.py", "100644", b"base fixture"),)
     return VerifierInput(
         process_id="process-local-001",
         repository_id="fixture-repository",
         base_commit="a" * 40,
-        snapshot_tree_digest="sha256:" + "1" * 64,
+        snapshot_tree_digest=verifier_snapshot_tree_digest(snapshot_files),
         declared_change_paths=("calculator.py",),
         verified_contents=(("calculator.py", "verified source contents"),),
         test_command=("python3", "-m", "unittest"),
@@ -53,6 +58,7 @@ def valid_verifier_input() -> VerifierInput:
         verification_digest="sha256:" + "4" * 64,
         verified_contents_digest="sha256:" + "5" * 64,
         replay_result_digest="sha256:" + "6" * 64,
+        snapshot_files=snapshot_files,
     )
 
 
@@ -73,7 +79,7 @@ def valid_verifier_result() -> VerifierResult:
 
 
 VALID_REQUEST_DIGEST = (
-    "sha256:612127173a24c53bcb2cb55ce2153db552e62a18ad4cdca36451b43dde396cb6"
+    "sha256:49447667851d266e453f993c7865636c30c18e7a55564ac4e2901216fd9a2641"
 )
 
 
@@ -91,7 +97,7 @@ class VerifierProcessRecordTests(unittest.TestCase):
                 "declared_change_paths", "verified_contents", "test_command",
                 "test_timeout_seconds", "patch_digest", "evidence_digest",
                 "verification_digest", "verified_contents_digest", "evidence_origin",
-                "replay_result_digest",
+                "replay_result_digest", "snapshot_files", "snapshot_claim_digest",
             },
         )
         serialized = repr(payload)
@@ -106,7 +112,7 @@ class VerifierProcessRecordTests(unittest.TestCase):
             valid_verifier_result(), VALID_REQUEST_DIGEST
         )
 
-        self.assertEqual(response.schema_version, VERIFIER_PROCESS_SCHEMA_VERSION)
+        self.assertEqual(response.schema_version, 2)
         payload = asdict(response)
         self.assertEqual(
             set(payload), {"schema_version", "request_digest", "verifier_result"}
@@ -199,6 +205,60 @@ class VerifierProcessRecordTests(unittest.TestCase):
         self.assertEqual(request.verifier_input, original)
         self.assertFalse(first.endswith(b"\n"))
 
+    def test_snapshot_bytes_are_base64_encoded_and_bound_to_request_digest(self):
+        import base64
+        import json as json_module
+
+        request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        encoded = serialize_verifier_request(request)
+        payload = json_module.loads(encoded.decode("utf-8"))
+        self.assertEqual(
+            payload["verifier_input"]["snapshot_files"],
+            [["calculator.py", "100644", base64.b64encode(b"base fixture").decode("ascii")]],
+        )
+        self.assertNotIn(b"base fixture", encoded)
+        changed_files = (("calculator.py", "100644", b"changed base"),)
+        changed_input = VerifierInput(
+            **{
+                **valid_verifier_input().__dict__,
+                "snapshot_files": changed_files,
+                "snapshot_tree_digest": verifier_snapshot_tree_digest(changed_files),
+            }
+        )
+        changed_request = VerifierProcessRequest.from_verifier_input(changed_input)
+        self.assertNotEqual(
+            digest_verifier_request(request), digest_verifier_request(changed_request)
+        )
+        self.assertEqual(parse_verifier_request(encoded), request)
+
+    def test_remote_claim_digest_crosses_request_wire_and_changes_request_digest(self):
+        claim_digest = "sha256:" + "a" * 64
+        local_request = VerifierProcessRequest.from_verifier_input(
+            valid_verifier_input()
+        )
+        remote_input = replace(
+            valid_verifier_input(), snapshot_claim_digest=claim_digest
+        )
+        remote_request = VerifierProcessRequest.from_verifier_input(remote_input)
+        encoded = serialize_verifier_request(remote_request)
+        parsed = parse_verifier_request(encoded)
+
+        self.assertEqual(
+            parsed.verifier_input.snapshot_claim_digest, claim_digest
+        )
+        self.assertNotEqual(
+            digest_verifier_request(local_request),
+            digest_verifier_request(remote_request),
+        )
+        invalid = replace(valid_verifier_input(), snapshot_claim_digest="not-a-digest")
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: request fields are invalid$",
+        ):
+            serialize_verifier_request(
+                VerifierProcessRequest.from_verifier_input(invalid)
+            )
+
     def test_request_serialization_rejects_non_json_values_without_echo(self):
         malformed_input = VerifierInput(
             **{
@@ -240,7 +300,7 @@ class VerifierRequestParsingTests(unittest.TestCase):
     def test_malformed_json_shape_is_rejected(self):
         for data in (
             b"", b"[]", b'"request"', b"123", b"null", b"NaN", b"Infinity",
-            b'{"schema_version": 1, "verifier_input": {},} trailing',
+            b'{"schema_version": 3, "verifier_input": {},} trailing',
         ):
             with self.subTest(data=data[:40]):
                 with self.assertRaisesRegex(
@@ -253,9 +313,9 @@ class VerifierRequestParsingTests(unittest.TestCase):
                 VerifierProcessError,
                 "^verifier process: request fields are invalid$",
             ):
-                parse_verifier_request(b'{"schema_version": 1}')
+                parse_verifier_request(b'{"schema_version": 3}')
         nan_payload = (
-            b'{"schema_version": 1, "verifier_input": '
+            b'{"schema_version": 3, "verifier_input": '
             b'{"test_timeout_seconds": NaN}}'
         )
         with self.assertRaisesRegex(
@@ -267,7 +327,7 @@ class VerifierRequestParsingTests(unittest.TestCase):
         encoded = serialize_verifier_request(
             VerifierProcessRequest.from_verifier_input(valid_verifier_input())
         )
-        for version in (b"0", b"2", b'"1"', b"true"):
+        for version in (b"0", b"1", b'"2"', b"true"):
             tampered = b'{"schema_version": ' + version + b', "verifier_input": {}}'
             with self.subTest(version=version):
                 with self.assertRaisesRegex(
@@ -312,10 +372,10 @@ class VerifierRequestParsingTests(unittest.TestCase):
 
     def test_duplicate_keys_are_rejected_at_every_level(self):
         top_duplicate = (
-            b'{"schema_version": 1, "schema_version": 1, "verifier_input": {}}'
+            b'{"schema_version": 3, "schema_version": 3, "verifier_input": {}}'
         )
         nested_duplicate = (
-            b'{"schema_version": 1, "verifier_input": '
+            b'{"schema_version": 3, "verifier_input": '
             b'{"process_id": "a", "process_id": "b"}}'
         )
         for data in (top_duplicate, nested_duplicate):
@@ -325,6 +385,41 @@ class VerifierRequestParsingTests(unittest.TestCase):
                     "^verifier process: request payload is invalid$",
                 ):
                     parse_verifier_request(data)
+
+    def test_noncanonical_or_invalid_snapshot_base64_is_rejected(self):
+        import json as json_module
+
+        encoded = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        for value in ("!", "YQ", "Zh=="):
+            with self.subTest(value=value):
+                payload = json_module.loads(encoded.decode("utf-8"))
+                payload["verifier_input"]["snapshot_files"][0][2] = value
+                tampered = json_module.dumps(payload).encode("utf-8")
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: snapshot encoding is invalid$",
+                ):
+                    parse_verifier_request(tampered)
+
+    def test_snapshot_paths_and_modes_are_rejected_when_parsing(self):
+        import json as json_module
+
+        encoded = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(valid_verifier_input())
+        )
+        for mutate in (
+            lambda entry: entry.__setitem__(0, "../escape.py"),
+            lambda entry: entry.__setitem__(1, "100600"),
+            lambda entry: entry.__setitem__(0, "x" * 241),
+        ):
+            payload = json_module.loads(encoded.decode("utf-8"))
+            mutate(payload["verifier_input"]["snapshot_files"][0])
+            tampered = json_module.dumps(payload).encode("utf-8")
+            with self.subTest(path=payload["verifier_input"]["snapshot_files"][0][0]):
+                with self.assertRaises(VerifierProcessError):
+                    parse_verifier_request(tampered)
 
     def test_bad_scalar_types_are_rejected(self):
         import json as json_module
@@ -346,26 +441,34 @@ class VerifierRequestParsingTests(unittest.TestCase):
                 "contents", [["only-path"]], [[1, 2]], [["a", "b", "c"]],
                 {"calculator.py": "x"},
             ),
+            "snapshot_files": (
+                "files", [["calculator.py", "100644"]],
+                [["calculator.py", "100644", 7]],
+            ),
         }
         for field, values in bad_values.items():
             for value in values:
                 with self.subTest(field=field, value=repr(value)[:30]):
                     tampered_input = dict(payload["verifier_input"], **{field: value})
                     tampered = json_module.dumps(
-                        {"schema_version": 1, "verifier_input": tampered_input}
+                        {"schema_version": 3, "verifier_input": tampered_input}
                     ).encode("utf-8")
                     with self.assertRaisesRegex(
                         VerifierProcessError,
-                        "^verifier process: request fields are invalid$",
+                        (
+                            "^verifier process: snapshot fields are invalid$"
+                            if field == "snapshot_files"
+                            else "^verifier process: request fields are invalid$"
+                        ),
                     ):
                         parse_verifier_request(tampered)
 
     def test_parsing_errors_never_echo_raw_values(self):
         canary = "PARSE-CANARY-SECRET-VALUE"
         malformed = (
-            b'{"schema_version": 1, "unknown": "' + canary.encode() + b'"}',
-            b'{"schema_version": 1, "verifier_input": {"process_id": "' + canary.encode() + b'"}}',
-            b'{"schema_version": 2, "note": "' + canary.encode() + b'"}',
+            b'{"schema_version": 3, "unknown": "' + canary.encode() + b'"}',
+            b'{"schema_version": 3, "verifier_input": {"process_id": "' + canary.encode() + b'"}}',
+            b'{"schema_version": 3, "note": "' + canary.encode() + b'"}',
             canary.encode(),
         )
         for data in malformed:
@@ -393,7 +496,6 @@ class VerifierRequestDigestTests(unittest.TestCase):
             "process_id": "process-forged-001",
             "repository_id": "repository-forged",
             "base_commit": "b" * 40,
-            "snapshot_tree_digest": "sha256:" + "f" * 64,
             "declared_change_paths": ("other.py",),
             "verified_contents": (("other.py", "other contents"),),
             "test_command": ("python3", "-m", "pytest"),
@@ -410,6 +512,17 @@ class VerifierRequestDigestTests(unittest.TestCase):
                     VerifierInput(**{**valid_verifier_input().__dict__, field: value})
                 )
                 self.assertNotEqual(digest_verifier_request(forged), baseline)
+        changed_files = (("calculator.py", "100644", b"changed base"),)
+        changed_snapshot = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **valid_verifier_input().__dict__,
+                    "snapshot_files": changed_files,
+                    "snapshot_tree_digest": verifier_snapshot_tree_digest(changed_files),
+                }
+            )
+        )
+        self.assertNotEqual(digest_verifier_request(changed_snapshot), baseline)
 
     def test_digest_rejects_non_request_without_echo(self):
         with self.assertRaisesRegex(
@@ -484,6 +597,116 @@ class VerifierRequestBoundsTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(VerifierProcessError, message):
                     serialize_verifier_request(oversized)
+
+    def test_snapshot_path_mode_count_file_and_total_limits(self):
+        base = valid_verifier_input().__dict__
+        invalid_sets = (
+            (("../escape.py", "100644", b"x"),),
+            (("calculator.py", "100600", b"x"),),
+            (("calculator.py", "100644", b"x"), ("calculator.py", "100644", b"y")),
+        )
+        for snapshot_files in invalid_sets:
+            with self.subTest(snapshot_files=snapshot_files):
+                request = VerifierProcessRequest.from_verifier_input(
+                    VerifierInput(
+                        **{
+                            **base,
+                            "snapshot_files": snapshot_files,
+                            "snapshot_tree_digest": verifier_snapshot_tree_digest(snapshot_files),
+                        }
+                    )
+                )
+                with self.assertRaises(VerifierProcessError):
+                    serialize_verifier_request(request)
+
+        long_path = (("é" * 121, "100644", b"x"),)
+        request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **base,
+                    "snapshot_files": long_path,
+                    "snapshot_tree_digest": verifier_snapshot_tree_digest(long_path),
+                }
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: snapshot path exceeds limit$"
+        ):
+            serialize_verifier_request(request)
+
+        too_many = tuple(
+            (f"file-{index:03}.txt", "100644", b"x")
+            for index in range(MAX_VERIFIER_SNAPSHOT_FILES + 1)
+        )
+        request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **base,
+                    "snapshot_files": too_many,
+                    "snapshot_tree_digest": verifier_snapshot_tree_digest(too_many),
+                }
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: snapshot file count exceeds limit$"
+        ):
+            serialize_verifier_request(request)
+
+        too_large_file = (("large.bin", "100644", b"x" * (MAX_VERIFIER_SNAPSHOT_FILE_BYTES + 1)),)
+        request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **base,
+                    "snapshot_files": too_large_file,
+                    "snapshot_tree_digest": verifier_snapshot_tree_digest(too_large_file),
+                }
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: snapshot file exceeds limit$"
+        ):
+            serialize_verifier_request(request)
+
+        bounded_file = (("large.bin", "100644", b"x" * 220_064),)
+        request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **base,
+                    "snapshot_files": bounded_file,
+                    "snapshot_tree_digest": verifier_snapshot_tree_digest(bounded_file),
+                }
+            )
+        )
+        self.assertTrue(serialize_verifier_request(request))
+
+        too_large_total = tuple(
+            (f"file-{index}.bin", "100644", b"x" * 100_000) for index in range(6)
+        )
+        request = VerifierProcessRequest.from_verifier_input(
+            VerifierInput(
+                **{
+                    **base,
+                    "snapshot_files": too_large_total,
+                    "snapshot_tree_digest": verifier_snapshot_tree_digest(too_large_total),
+                }
+            )
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: snapshot exceeds limit$"
+        ):
+            serialize_verifier_request(request)
+
+    def test_snapshot_digest_mismatch_is_rejected(self):
+        malformed = VerifierInput(
+            **{
+                **valid_verifier_input().__dict__,
+                "snapshot_tree_digest": "sha256:" + "f" * 64,
+            }
+        )
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: snapshot binding is invalid$"
+        ):
+            serialize_verifier_request(VerifierProcessRequest.from_verifier_input(malformed))
 
     def test_total_wire_size_limit(self):
         oversized = VerifierProcessRequest.from_verifier_input(
@@ -576,7 +799,7 @@ def valid_response_payload(**overrides):
         "request_digest": VALID_REQUEST_DIGEST,
         "process_id": "process-local-001",
         "base_commit": "a" * 40,
-        "snapshot_tree_digest": "sha256:" + "1" * 64,
+        "snapshot_tree_digest": valid_verifier_input().snapshot_tree_digest,
         "replay_result_digest": "sha256:" + "6" * 64,
         "verifier_id": "local-fixture-verifier",
         "patch_digest": "sha256:" + "2" * 64,
@@ -598,7 +821,7 @@ def encode_response_payload(result_payload):
     request_digest = payload.pop("request_digest", VALID_REQUEST_DIGEST)
     return json_module.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "request_digest": request_digest,
             "verifier_result": payload,
         },
@@ -630,7 +853,7 @@ class VerifierResponseParsingTests(unittest.TestCase):
                 self.assertIs(parsed.verifier_result.verdict, member)
 
     def test_version_and_field_set_are_strict(self):
-        for version in (b"0", b"2", b'"1"', b"true"):
+        for version in (b"0", b"3", b'"2"', b"true"):
             data = b'{"schema_version": ' + version + b', "verifier_result": {}}'
             with self.subTest(version=version):
                 with self.assertRaisesRegex(
@@ -639,12 +862,12 @@ class VerifierResponseParsingTests(unittest.TestCase):
                 ):
                     parse_verifier_response(data)
         for mutate in (
-            lambda payload: {"schema_version": 1},
-            lambda payload: {"schema_version": 1, "verifier_result": payload,
+            lambda payload: {"schema_version": 2},
+            lambda payload: {"schema_version": 2, "verifier_result": payload,
                              "extra": True},
-            lambda payload: {"schema_version": 1, "verifier_result": {
+            lambda payload: {"schema_version": 2, "verifier_result": {
                 key: value for key, value in payload.items() if key != "verdict"}},
-            lambda payload: {"schema_version": 1, "verifier_result": {
+            lambda payload: {"schema_version": 2, "verifier_result": {
                 **payload, "unknown": []}},
         ):
             with self.assertRaisesRegex(
@@ -676,8 +899,8 @@ class VerifierResponseParsingTests(unittest.TestCase):
                 with self.assertRaises(VerifierProcessError):
                     parse_verifier_response(data)
         duplicates = (
-            b'{"schema_version": 1, "schema_version": 1, "verifier_result": {}}',
-            b'{"schema_version": 1, "verifier_result": '
+            b'{"schema_version": 2, "schema_version": 2, "verifier_result": {}}',
+            b'{"schema_version": 2, "verifier_result": '
             b'{"verdict": "pass", "verdict": "fail"}}',
         )
         for data in duplicates:
@@ -724,7 +947,7 @@ class VerifierResponseParsingTests(unittest.TestCase):
             VerifierProcessError, "^verifier process: response fields are invalid$"
         ) as raised:
             parse_verifier_response(
-                b'{"schema_version": 1, "verifier_result": {"verdict": "' + canary.encode() + b'"}}'
+                b'{"schema_version": 2, "verifier_result": {"verdict": "' + canary.encode() + b'"}}'
             )
         self.assertNotIn(canary, str(raised.exception))
 
@@ -749,7 +972,7 @@ class VerifierResponseBindingTests(unittest.TestCase):
     def test_response_digest_must_match_exact_source_request(self):
         request, digest, response = valid_bound_trio()
         forged_response = VerifierProcessResponse(
-            VERIFIER_PROCESS_SCHEMA_VERSION,
+            2,
             "sha256:" + "f" * 64,
             response.verifier_result,
         )
@@ -800,7 +1023,7 @@ class VerifierResponseBindingTests(unittest.TestCase):
                     **{**response.verifier_result.__dict__, field: value}
                 )
                 forged_response = VerifierProcessResponse(
-                    VERIFIER_PROCESS_SCHEMA_VERSION, digest, forged_result
+                    2, digest, forged_result
                 )
                 with self.assertRaisesRegex(
                     ExecutionError, "^execution verifier: result binding mismatch$"
@@ -1189,10 +1412,10 @@ class VerifierOutputBoundsTests(unittest.TestCase):
              None, "^verifier process: child response is malformed$"),
             ("stderr", plain_request,
              f"import sys; sys.stderr.write({canary!r}); sys.exit(3);",
-             None, "^verifier process: child exit failed$"),
+             None, "^verifier process: child exit failed \\(status=3\\)$"),
             ("argv", plain_request,
              "import sys; sys.exit(3);",
-             ("unused", canary), "^verifier process: child exit failed$"),
+             ("unused", canary), "^verifier process: child exit failed \\(status=3\\)$"),
             ("response", plain_request, None,
              None, "^verifier process: child response is malformed$"),
         )
@@ -1264,7 +1487,7 @@ class VerifierOutputBoundsTests(unittest.TestCase):
 
         request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
         record = json_module.dumps(
-            {"schema_version": 1, "verifier_result": "placeholder"},
+            {"schema_version": 2, "verifier_result": "placeholder"},
             separators=(",", ":"),
         )
         script = f"import sys; sys.stdout.write({record!r} + {record!r});"
@@ -1278,6 +1501,51 @@ class VerifierOutputBoundsTests(unittest.TestCase):
 
 
 class VerifierOutcomeClassificationTests(unittest.TestCase):
+    def test_allowlisted_child_rejection_code_is_classified_without_stream_echo(self):
+        marker = b"verifier container: rejection:snapshot-file-limit\n"
+        outcome = VerifierProcessOutcome(2, b"output-canary", marker)
+        with self.assertRaisesRegex(
+            VerifierProcessError,
+            "^verifier process: child rejected \\(snapshot-file-limit\\)$",
+        ) as raised:
+            classify_verifier_outcome(outcome)
+        self.assertNotIn("output-canary", str(raised.exception))
+        self.assertNotIn(marker.decode().strip(), str(raised.exception))
+
+        for stderr in (
+            b"verifier container: rejection:unknown-category\n",
+            b"verifier container: rejection:request-fields\nCANARY",
+        ):
+            with self.subTest(stderr=stderr[:48]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: child exit failed \\(status=2\\)$",
+                ) as generic:
+                    classify_verifier_outcome(VerifierProcessOutcome(2, b"", stderr))
+                self.assertNotIn("CANARY", str(generic.exception))
+
+    def test_fixed_child_rejection_marker_is_classified_without_echoing_streams(self):
+        marker = b"verifier container: request or execution rejected\n"
+        outcome = VerifierProcessOutcome(2, b"stdout-canary", marker)
+        with self.assertRaisesRegex(
+            VerifierProcessError, "^verifier process: child request rejected$"
+        ) as raised:
+            classify_verifier_outcome(outcome)
+        self.assertNotIn("stdout-canary", str(raised.exception))
+        self.assertNotIn(marker.decode().strip(), str(raised.exception))
+
+        canary = b"CHILD-STDERR-CANARY"
+        for stderr in (b"", canary, marker + canary):
+            with self.subTest(stderr=stderr[:30]):
+                with self.assertRaisesRegex(
+                    VerifierProcessError,
+                    "^verifier process: child exit failed \\(status=2\\)$",
+                ) as generic:
+                    classify_verifier_outcome(
+                        VerifierProcessOutcome(2, b"", stderr)
+                    )
+                self.assertNotIn(canary.decode(), str(generic.exception))
+
     def test_nonzero_exit_becomes_stable_failure(self):
         canary = "EXIT-CANARY-SECRET"
         for exit_code in (1, 3):
@@ -1291,10 +1559,18 @@ class VerifierOutcomeClassificationTests(unittest.TestCase):
             )
             request = VerifierProcessRequest.from_verifier_input(valid_verifier_input())
             with self.assertRaisesRegex(
-                VerifierProcessError, "^verifier process: child exit failed$"
+                VerifierProcessError,
+                f"^verifier process: child exit failed \\(status={exit_code}\\)$",
             ) as raised:
                 run_verifier_command(config, request)
             self.assertNotIn(canary, str(raised.exception))
+        for exit_code in (-9, 256):
+            with self.subTest(invalid_exit_code=exit_code), self.assertRaisesRegex(
+                VerifierProcessError, "^verifier process: child exit failed$"
+            ):
+                classify_verifier_outcome(
+                    VerifierProcessOutcome(exit_code, b"", canary.encode())
+                )
 
     def test_empty_response_becomes_stable_failure(self):
         outcome = VerifierProcessOutcome(0, b"", b"")
@@ -1307,8 +1583,8 @@ class VerifierOutcomeClassificationTests(unittest.TestCase):
         canary = "MALFORMED-CANARY-SECRET"
         for stdout in (
             canary.encode("utf-8"),
-            b'{"schema_version": 1}',
-            b'{"schema_version": 1, "verifier_result": {}, "extra": true}',
+            b'{"schema_version": 2}',
+            b'{"schema_version": 2, "verifier_result": {}, "extra": true}',
         ):
             with self.subTest(stdout=stdout[:30]):
                 outcome = VerifierProcessOutcome(0, stdout, b"")
@@ -1371,7 +1647,7 @@ ECHOING_VERIFIER_SCRIPT = (
     "'verification_digest': req['verification_digest'], "
     "'verified_contents_digest': req['verified_contents_digest'], "
     "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
-    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "sys.stdout.write(json.dumps({'schema_version': 2, "
     "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
     "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
 )
@@ -1441,7 +1717,8 @@ class SubprocessVerifierAdapterTests(unittest.TestCase):
             )
         )
         with self.assertRaisesRegex(
-            VerifierProcessError, "^verifier process: child exit failed$"
+            VerifierProcessError,
+            "^verifier process: child exit failed \\(status=3\\)$",
         ) as raised:
             adapter.verify(valid_verifier_input())
         self.assertNotIn(canary, str(raised.exception))
@@ -1459,7 +1736,7 @@ COMPOSITION_CHILD_SCRIPT = (
     "'verification_digest': req['verification_digest'], "
     "'verified_contents_digest': req['verified_contents_digest'], "
     "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
-    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "sys.stdout.write(json.dumps({'schema_version': 2, "
     "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
     "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
 )
@@ -1589,7 +1866,7 @@ TAMPERING_CHILD_SCRIPT = (
     "'verified_contents_digest': req['verified_contents_digest'], "
     "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
     "result[sys.argv[1]] = sys.argv[2]; "
-    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "sys.stdout.write(json.dumps({'schema_version': 2, "
     "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
     "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
 )
@@ -1644,7 +1921,7 @@ VERDICT_CHILD_SCRIPT = (
     "'verification_digest': req['verification_digest'], "
     "'verified_contents_digest': req['verified_contents_digest'], "
     "'verdict': sys.argv[1], 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
-    "sys.stdout.write(json.dumps({'schema_version': 1, "
+    "sys.stdout.write(json.dumps({'schema_version': 2, "
     "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
     "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
 )
@@ -1840,7 +2117,7 @@ class SubprocessTimeoutCrashTests(unittest.TestCase):
                 "'verification_digest': req['verification_digest'], "
                 "'verified_contents_digest': req['verified_contents_digest'], "
                 "'verdict': 'pass', 'blocker_codes': [], 'evidence_origin': 'local_test'}; "
-                "sys.stdout.write(json.dumps({'schema_version': 1, "
+                "sys.stdout.write(json.dumps({'schema_version': 2, "
                 "'request_digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), "
                 "'verifier_result': result}, sort_keys=True, separators=(',', ':')));"
             )
@@ -1898,7 +2175,7 @@ class VerifierPrototypeLimitationTests(unittest.TestCase):
         payload = valid_response_payload()
         foreign = json_module.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "verifier_result": {**payload, "evidence_origin": "remote-attested"},
             },
             sort_keys=True,

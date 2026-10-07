@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import sqlite3
 import tempfile
 import unittest
 
@@ -30,8 +31,9 @@ class PublicationRecoveryTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": "github-installation/42/repository/1001",
             "branch": "agent/process-publication-001",
+            "base_branch": "master",
             "staged_change_digest": "sha256:" + "a" * 64,
-            "idempotency_key": "publish/process-publication-001/sha256:" + "a" * 64,
+            "idempotency_key": "publish/process-publication-001/master/sha256:" + "a" * 64,
             "policy_effect": "allow",
             "approval_valid": True,
         }
@@ -47,18 +49,41 @@ class PublicationRecoveryTests(unittest.TestCase):
             repository_id=self.request["repository_id"],
         )
 
+    def test_existing_journal_mode_never_creates_or_initializes_database(self):
+        missing = self.database
+        with self.assertRaisesRegex(ValueError, "^publication journal is unavailable$"):
+            PublicationJournal(missing, create_if_missing=False)
+        self.assertFalse(missing.exists())
+
+        empty = Path(self.temporary_directory.name) / "empty.sqlite3"
+        empty.write_bytes(b"existing-not-a-publication-journal")
+        original = empty.read_bytes()
+        with self.assertRaisesRegex(
+            ValueError, "^publication journal schema is unavailable$"
+        ):
+            PublicationJournal(empty, create_if_missing=False)
+        self.assertEqual(empty.read_bytes(), original)
+
+    def test_existing_journal_mode_opens_valid_record_without_schema_migration(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+        before = self.database.read_bytes()
+        with PublicationJournal(self.database, create_if_missing=False) as journal:
+            self.assertEqual(journal.get(self.request["process_id"]).status, "prepared")
+        self.assertEqual(self.database.read_bytes(), before)
+
     def test_conflict_errors_carry_no_injected_values(self):
         with PublicationJournal(self.database) as journal:
             journal.prepare(
                 "process-evil-caller-secret-001",
-                idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
+                idempotency_key="publish/evil-caller-secret-002/master/sha256:" + "d" * 64,
                 request_digest="sha256:" + "e" * 64,
                 repository_id="github-installation/42/repository/1001",
             )
             with self.assertRaisesRegex(ValueError, "^publication payload conflict$") as first:
                 journal.prepare(
                     "process-evil-caller-secret-001",
-                    idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
+                    idempotency_key="publish/evil-caller-secret-002/master/sha256:" + "d" * 64,
                     request_digest="sha256:" + "f" * 64,
                     repository_id="github-installation/42/repository/1001",
                 )
@@ -66,7 +91,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "^publication payload conflict$") as second:
                 journal.prepare(
                     "process-other-003",
-                    idempotency_key="publish/evil-caller-secret-002/sha256:" + "d" * 64,
+                    idempotency_key="publish/evil-caller-secret-002/master/sha256:" + "d" * 64,
                     request_digest="sha256:" + "e" * 64,
                     repository_id="github-installation/42/repository/1001",
                 )
@@ -157,7 +182,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                 def __init__(self):
                     self.calls = []
 
-                def find_by_idempotency_key(self, key):
+                def find_by_idempotency_key(self, key, **_kwargs):
                     self.calls.append(key)
                     return None
 
@@ -242,7 +267,12 @@ class PublicationRecoveryTests(unittest.TestCase):
                 self.request["branch"], self.request["staged_change_digest"],
                 self.request["idempotency_key"],
             )
-            for forged in (foreign_key, foreign_repo):
+            foreign_base = MockPullRequest(
+                9, self.request["repository_id"], self.request["branch"],
+                self.request["staged_change_digest"], self.request["idempotency_key"],
+                "main",
+            )
+            for forged in (foreign_key, foreign_repo, foreign_base):
                 with self.subTest(receipt=forged.pull_request_id):
                     with self.assertRaisesRegex(
                         ValueError, "^publication receipt mismatch$"
@@ -317,6 +347,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                 MockPullRequest(
                     1, self.request["repository_id"], self.request["branch"],
                     self.request["staged_change_digest"], self.request["idempotency_key"],
+                    self.request["base_branch"],
                 ),
             )
             completed = journal.get(self.request["process_id"])
@@ -327,6 +358,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             receipt = MockPullRequest(
                 7, self.request["repository_id"], self.request["branch"],
                 self.request["staged_change_digest"], self.request["idempotency_key"],
+                self.request["base_branch"],
             )
             with self.assertRaises(KeyError):
                 journal.mark_completed("process-never-prepared-001", receipt)
@@ -540,7 +572,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                     self.receipt = receipt
                     self.publish_calls = 0
 
-                def find_by_idempotency_key(self, key):
+                def find_by_idempotency_key(self, key, **_kwargs):
                     return self.receipt
 
                 def publish_pull_request(self, request):
@@ -550,6 +582,7 @@ class PublicationRecoveryTests(unittest.TestCase):
             valid = {
                 "repository_id": self.request["repository_id"],
                 "branch": self.request["branch"],
+                "base_branch": self.request["base_branch"],
                 "staged_change_digest": self.request["staged_change_digest"],
                 "idempotency_key": self.request["idempotency_key"],
             }
@@ -580,7 +613,7 @@ class PublicationRecoveryTests(unittest.TestCase):
                 def __init__(self, calls):
                     self._calls = calls
 
-                def find_by_idempotency_key(self, key):
+                def find_by_idempotency_key(self, key, **_kwargs):
                     self._calls.append(key)
                     return None
 
@@ -648,6 +681,166 @@ class PublicationRecoveryTests(unittest.TestCase):
                 recover_publication(journal, self.endpoint, self.request["process_id"])
             self.assertEqual(journal.get(self.request["process_id"]).status, "reconciliation_required")
             self.assertIsNone(self.endpoint.find_by_idempotency_key(self.request["idempotency_key"]))
+
+    def test_old_journal_schema_migrates_without_losing_attempt(self):
+        legacy = sqlite3.connect(self.database)
+        legacy.execute(
+            """CREATE TABLE publication_attempts (
+                process_id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                request_digest TEXT NOT NULL,
+                repository_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                pull_request_id INTEGER
+            )"""
+        )
+        legacy.execute(
+            "INSERT INTO publication_attempts VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                self.request["process_id"], self.request["idempotency_key"],
+                "sha256:" + "b" * 64, self.request["repository_id"], "attempting", None,
+            ),
+        )
+        legacy.commit()
+        legacy.close()
+
+        with PublicationJournal(self.database) as journal:
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertEqual(record.idempotency_key, self.request["idempotency_key"])
+            self.assertIsNone(record.pull_request_id)
+            self.assertIsNone(record.pull_request_url)
+            columns = {row["name"] for row in journal._connection.execute("PRAGMA table_info(publication_attempts)")}
+            self.assertIn("pull_request_url", columns)
+
+    def test_malformed_provider_receipt_urls_do_not_complete_attempt(self):
+        from app_contracts.github_app import GitHubPullRequest
+
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+            journal.mark_attempting(self.request["process_id"])
+            for bad_url in (None, "http://github.com/example/repo/pull/1", "https://user:pass@github.com/x", "https://github.com/x#fragment", "https://["):
+                with self.subTest(url=bad_url):
+                    receipt = GitHubPullRequest(
+                        1,
+                        bad_url,
+                        self.request["repository_id"],
+                        self.request["branch"],
+                        self.request["staged_change_digest"],
+                        self.request["idempotency_key"],
+                        self.request["base_branch"],
+                    )
+                    with self.assertRaisesRegex(ValueError, "^publication receipt is invalid$"):
+                        journal.mark_completed(self.request["process_id"], receipt)
+            record = journal.get(self.request["process_id"])
+            self.assertEqual(record.status, "attempting")
+            self.assertIsNone(record.pull_request_id)
+            self.assertIsNone(record.pull_request_url)
+
+    def _github_channel(self, key_path, get_json, post_json):
+        from app_contracts.github_app import (
+            GitHubAppBrokerConfig, GitHubAppPublicationChannel, _InstallationToken,
+        )
+
+        key_path.write_text("test-only-not-a-key", encoding="utf-8")
+        key_path.chmod(0o600)
+        config = GitHubAppBrokerConfig.from_environment({
+            "AGENT_GITHUB_APP_ID": "123",
+            "AGENT_GITHUB_INSTALLATION_ID": "456",
+            "AGENT_GITHUB_REPOSITORY_ID": "1001",
+            "AGENT_GITHUB_TEST_REPOSITORY": "example/agent00x-sandbox",
+            "AGENT_GITHUB_PRIVATE_KEY_PATH": str(key_path),
+        })
+        return GitHubAppPublicationChannel(
+            config, _InstallationToken("opaque-test-token", "2099-01-01T00:00:00Z"),
+            get_json=get_json, post_json=post_json,
+        )
+
+    def _github_request(self):
+        request = dict(self.request)
+        request["repository_id"] = "github-installation/456/repository/1001"
+        return request
+
+    def test_lost_provider_pr_response_recovers_exact_receipt_after_sqlite_reopen(self):
+        from app_contracts.github_app import GitHubPullRequest
+
+        request = self._github_request()
+        provider_prs = []
+        post_calls = []
+
+        def get_json(_url, _headers):
+            return list(provider_prs)
+
+        def post_json(_url, _headers, payload):
+            post_calls.append(payload)
+            provider_prs.append({
+                "number": 23,
+                "html_url": "https://github.com/example/agent00x-sandbox/pull/23",
+                "body": payload["body"],
+                "head": {"ref": payload["head"]},
+                "base": {"ref": payload["base"]},
+            })
+            raise RuntimeError("response lost after PR creation")
+
+        key_path = Path(self.temporary_directory.name) / "fake-github-app.pem"
+        channel = self._github_channel(key_path, get_json, post_json)
+        with PublicationJournal(self.database) as journal:
+            journal.prepare(
+                request["process_id"], idempotency_key=request["idempotency_key"],
+                request_digest="sha256:" + "b" * 64, repository_id=request["repository_id"],
+            )
+            with self.assertRaisesRegex(RuntimeError, "response lost"):
+                execute_publication(journal, channel, request)
+            self.assertEqual(journal.get(request["process_id"]).status, "attempting")
+
+        retry_channel = self._github_channel(
+            key_path,
+            get_json,
+            lambda *_args: self.fail("recovery must not issue a second PR POST"),
+        )
+        with PublicationJournal(self.database) as reopened:
+            recovered = recover_publication(reopened, retry_channel, request["process_id"])
+            self.assertEqual(recovered.status, "completed")
+            self.assertEqual(recovered.pull_request_id, 23)
+            self.assertEqual(recovered.pull_request_url, provider_prs[0]["html_url"])
+            self.assertEqual(len(post_calls), 1)
+            receipt = retry_channel.find_by_idempotency_key(
+                request["idempotency_key"], repository_id=request["repository_id"],
+            )
+            self.assertIsInstance(receipt, GitHubPullRequest)
+            self.assertEqual(receipt.pull_request_id, recovered.pull_request_id)
+            self.assertEqual(receipt.pull_request_url, recovered.pull_request_url)
+
+    def test_lost_provider_pr_response_with_absent_reconciliation_becomes_terminal(self):
+        request = self._github_request()
+        get_calls, post_calls = [], []
+        key_path = Path(self.temporary_directory.name) / "fake-github-app-absent.pem"
+        channel = self._github_channel(
+            key_path,
+            lambda _url, _headers: get_calls.append("GET") or [],
+            lambda _url, _headers, _payload: post_calls.append("POST") or (_ for _ in ()).throw(RuntimeError("lost response")),
+        )
+        with PublicationJournal(self.database) as journal:
+            journal.prepare(
+                request["process_id"], idempotency_key=request["idempotency_key"],
+                request_digest="sha256:" + "b" * 64, repository_id=request["repository_id"],
+            )
+            with self.assertRaisesRegex(RuntimeError, "lost response"):
+                execute_publication(journal, channel, request)
+
+        retry_channel = self._github_channel(
+            key_path,
+            lambda _url, _headers: get_calls.append("GET") or [],
+            lambda *_args: self.fail("unknown outcome must never be retried"),
+        )
+        with PublicationJournal(self.database) as reopened:
+            with self.assertRaises(PublicationRecoveryRequired):
+                recover_publication(reopened, retry_channel, request["process_id"])
+            self.assertEqual(reopened.get(request["process_id"]).status, "reconciliation_required")
+            with self.assertRaises(PublicationRecoveryRequired):
+                recover_publication(reopened, retry_channel, request["process_id"])
+        self.assertEqual(post_calls, ["POST"])
+        self.assertEqual(get_calls, ["GET", "GET"])
 
 
 if __name__ == "__main__":

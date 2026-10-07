@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, asdict, replace
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -24,8 +25,17 @@ from app_contracts.executor import (
     WorkerProposal,
     run_local_execution,
 )
+from app_contracts.digests import sha256_bytes, sha256_digest
+from app_contracts.github_snapshot import (
+    GitHubBlobClaim,
+    GitHubSnapshotClaim,
+    GitHubSnapshotContents,
+)
+from app_contracts.remote_snapshot_workspace import materialize_github_snapshot
+from app_contracts.sandbox import LocalProcessSandboxBackend
 from app_contracts.pinned_snapshot import (
     PinnedSnapshot,
+    SNAPSHOT_DIGEST_CANONICALIZATION,
     compute_snapshot_tree_digest,
     export_local_commit_tree,
     open_local_repository,
@@ -52,6 +62,8 @@ EXPECTED_SEED_FIELDS = frozenset(
         "replay_result_digest",
         "snapshot_tree_digest",
         "snapshot_origin",
+        "snapshot_claim_digest",
+        "source_repository_id",
     }
 )
 
@@ -68,6 +80,7 @@ def valid_seed(**overrides) -> PublicationSeed:
         "replay_result_digest": None,
         "snapshot_tree_digest": None,
         "snapshot_origin": "unverified_local_test",
+        "snapshot_claim_digest": None,
     }
     fields.update(overrides)
     return PublicationSeed(**fields)
@@ -142,6 +155,14 @@ class PublicationSeedTests(unittest.TestCase):
             self.assertIn(digest, serialized)
         self.assertIn('"pass"', serialized)
         self.assertIn('"local_git_commit"', serialized)
+
+    def test_exact_docker_verifier_identity_is_accepted(self):
+        verifier_id = (
+            "docker-image:sha256:" + "a" * 64 + "/code:sha256:" + "b" * 64
+        )
+        seed = valid_seed(verifier_id=verifier_id)
+        self.assertEqual(seed.verifier_id, verifier_id)
+        self.assertEqual(len(seed.verifier_id), 161)
 
     def test_seed_fields_reproduce_unpinned_execution_request_and_result(self):
         request = valid_request()
@@ -264,8 +285,20 @@ class PublicationSeedTests(unittest.TestCase):
                 for value in ("", "sha256:" + "z" * 64, f"plain-{canary}")
             )
         malformed.extend(
+            ("snapshot_claim_digest", value, "publication seed: digest is invalid")
+            for value in ("", "sha256:" + "z" * 64, f"plain-{canary}")
+        )
+        malformed.extend(
             ("verifier_id", value, "publication seed: verifier identity is invalid")
-            for value in (None, "", "has space", f"bad\n{canary}")
+            for value in (
+                None,
+                "",
+                "has space",
+                f"bad\n{canary}",
+                "docker-image:sha256:" + "A" * 64 + "/code:sha256:" + "b" * 64,
+                "docker-image:sha256:" + "a" * 63 + "/code:sha256:" + "b" * 64,
+                "x" * 161,
+            )
         )
         malformed.extend(
             ("verdict", value, "publication seed: verifier verdict is invalid")
@@ -385,7 +418,96 @@ def pinned_verified_execution(process_id="process-local-001", content_marker="se
             lease.close()
 
 
+@contextmanager
+def remote_verified_execution(*, full_snapshot: bool):
+    source = (ROOT / "fixtures/repository/project/calculator.py").read_bytes()
+    blob = GitHubBlobClaim(
+        path="calculator.py",
+        mode="100644",
+        sha=hashlib.sha1(
+            b"blob " + str(len(source)).encode("ascii") + b"\0" + source
+        ).hexdigest(),
+        size=len(source),
+        content=source,
+        content_digest=sha256_bytes(source),
+    )
+    content_digest = sha256_digest(
+        {
+            "canonicalization": SNAPSHOT_DIGEST_CANONICALIZATION,
+            "files": [
+                {
+                    "path": blob.path,
+                    "content_digest": blob.content_digest,
+                    "mode": blob.mode,
+                }
+            ],
+        }
+    )
+    snapshot = GitHubSnapshotContents(
+        claim=GitHubSnapshotClaim(
+            owner="FixtureOwner",
+            repository="fixture-repository",
+            commit_oid="a" * 40,
+            tree_oid="b" * 40,
+            content_digest=content_digest,
+            selected_paths=None if full_snapshot else ("calculator.py",),
+        ),
+        files=(blob,),
+    )
+    with materialize_github_snapshot(snapshot) as workspace:
+        request = ExecutionRequest(
+            process_id="process-remote-001",
+            task_id="task-remote-001",
+            repository_id="FixtureOwner/fixture-repository",
+            base_commit="a" * 40,
+            snapshot_path=workspace.path,
+            allowed_commands=frozenset({"python3"}),
+            declared_change_paths=("calculator.py",),
+            test_command=(
+                "python3", "-c",
+                "from calculator import add; assert add(1, 2) == 3",
+            ),
+            task_instruction="Add a fixture-only comment",
+            context_files=(("calculator.py", source.decode("utf-8")),),
+            remote_snapshot=snapshot,
+            remote_workspace=workspace,
+        )
+
+        class RemoteWorker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                return WorkerProposal(
+                    (("calculator.py", source.decode("utf-8") + "\n# fixture change\n"),)
+                )
+
+        result = run_local_execution(
+            request,
+            RemoteWorker(),
+            verifier=AcceptingVerifier(),
+            sandbox_backend=LocalProcessSandboxBackend(),
+        )
+        if result.status is not ExecutionStatus.VERIFIED:
+            raise AssertionError("synthetic remote execution did not verify")
+        yield request, result
+
+
 class BuildPublicationSeedTests(unittest.TestCase):
+    def test_audit_only_signed_receipt_cannot_be_promoted_by_relabeling_verified(self):
+        with pinned_verified_execution() as (request, result):
+            forged_verified = replace(
+                result,
+                status=ExecutionStatus.VERIFIED,
+                verifier_attestation_digest="sha256:" + "a" * 64,
+                verifier_attestation_key_id="fixture-key-1",
+                verifier_attestation_profile_digest="sha256:" + "b" * 64,
+                verifier_signature_valid=True,
+                verifier_independent_host_trust_established=False,
+            )
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication seed: signed verifier trust is not established$",
+            ):
+                build_publication_seed(request, forged_verified)
+
     def test_matching_pinned_result_builds_single_correct_seed(self):
         with pinned_verified_execution() as (request, result):
             seed = build_publication_seed(request, result)
@@ -400,6 +522,7 @@ class BuildPublicationSeedTests(unittest.TestCase):
                 replay_result_digest=result.verifier_result.replay_result_digest,
                 snapshot_tree_digest=result.snapshot_tree_digest,
                 snapshot_origin="local_git_commit",
+                snapshot_claim_digest=None,
             )
             self.assertEqual(seed, expected)
             self.assertEqual(seed.snapshot_tree_digest, request.pinned_snapshot.tree_digest)
@@ -511,6 +634,67 @@ class BuildPublicationSeedTests(unittest.TestCase):
                         request,
                         replace(result, snapshot_tree_digest="sha256:" + "f" * 64),
                     )
+
+    def test_full_remote_execution_builds_claim_bound_publication_seed(self):
+        with remote_verified_execution(full_snapshot=True) as (request, result):
+            seed = build_publication_seed(request, result)
+            claim = request.remote_snapshot.claim
+            self.assertEqual(seed.snapshot_origin, "github_rest_api_claim")
+            self.assertEqual(seed.repository_id, f"{claim.owner}/{claim.repository}")
+            self.assertEqual(seed.base_commit, claim.commit_oid)
+            self.assertEqual(seed.snapshot_tree_digest, claim.content_digest)
+            self.assertEqual(seed.snapshot_claim_digest, result.snapshot_claim_digest)
+            self.assertEqual(seed.verdict, "pass")
+            self.assertNotIn(b"return left + right", repr(seed).encode("utf-8"))
+
+    def test_partial_remote_snapshot_cannot_create_publication_seed(self):
+        with remote_verified_execution(full_snapshot=False) as (request, result):
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication seed: remote snapshot is incomplete$",
+            ):
+                build_publication_seed(request, result)
+
+    def test_remote_claim_and_result_bindings_fail_closed(self):
+        with remote_verified_execution(full_snapshot=True) as (request, result):
+            invalid = (
+                replace(result, snapshot_claim_digest="sha256:" + "f" * 64),
+                replace(result, snapshot_tree_digest="sha256:" + "f" * 64),
+                replace(result, snapshot_origin="local_git_commit"),
+                replace(
+                    result,
+                    verifier_result=replace(
+                        result.verifier_result,
+                        snapshot_tree_digest="sha256:" + "f" * 64,
+                    ),
+                ),
+                replace(
+                    result,
+                    verifier_result=replace(
+                        result.verifier_result,
+                        base_commit="c" * 40,
+                    ),
+                ),
+            )
+            for candidate in invalid:
+                with self.subTest(candidate=candidate):
+                    with self.assertRaises(PublicationSeedError):
+                        build_publication_seed(request, candidate)
+
+    def test_remote_claim_digest_is_required_only_for_remote_origin(self):
+        with self.assertRaisesRegex(
+            PublicationSeedError,
+            "^publication seed: snapshot claim binding is invalid$",
+        ):
+            valid_seed(
+                snapshot_origin="github_rest_api_claim",
+                snapshot_tree_digest="sha256:" + "d" * 64,
+            )
+        with self.assertRaisesRegex(
+            PublicationSeedError,
+            "^publication seed: snapshot claim binding is invalid$",
+        ):
+            valid_seed(snapshot_claim_digest="sha256:" + "a" * 64)
 
     def test_cross_pair_request_and_result_are_rejected(self):
         with pinned_verified_execution(
@@ -670,10 +854,10 @@ class HandBuiltEvidenceRemediationTests(unittest.TestCase):
 
 
 @contextmanager
-def seeded_intent(branch="agent/process-demo-001"):
+def seeded_intent(branch="agent/process-demo-001", base_branch="master"):
     with pinned_verified_execution() as (request, result):
         seed = build_publication_seed(request, result)
-        yield seed, derive_publication_intent(seed, branch)
+        yield seed, derive_publication_intent(seed, branch, base_branch)
 
 
 class DerivePublicationIntentTests(unittest.TestCase):
@@ -686,14 +870,14 @@ class DerivePublicationIntentTests(unittest.TestCase):
             self.assertEqual(intent.staged_change_digest, seed.staged_change_digest)
             self.assertEqual(
                 intent.idempotency_key,
-                f"publish/process-demo-001/{seed.staged_change_digest}",
+                f"publish/process-demo-001/master/{seed.staged_change_digest}",
             )
             key_body = intent.idempotency_key[len("publish/"):]
             key_parts = key_body.split("/")
             self.assertTrue(intent.idempotency_key.startswith("publish/"))
             self.assertGreaterEqual(len(key_parts), 2)
             self.assertFalse(any(part == "" for part in key_parts))
-            twin = derive_publication_intent(seed, "agent/process-demo-001")
+            twin = derive_publication_intent(seed, "agent/process-demo-001", "master")
             self.assertEqual(twin, intent)
             self.assertIsNot(twin, intent)
 
@@ -703,8 +887,8 @@ class DerivePublicationIntentTests(unittest.TestCase):
                 frozenset(PublicationIntent.__dataclass_fields__),
                 frozenset(
                     {
-                        "process_id", "repository_id", "base_commit", "branch",
-                        "staged_change_digest", "idempotency_key",
+                        "process_id", "repository_id", "base_commit", "base_branch", "branch",
+                        "staged_change_digest", "idempotency_key", "source_repository_id",
                     }
                 ),
             )
@@ -732,8 +916,28 @@ class DerivePublicationIntentTests(unittest.TestCase):
                         PublicationSeedError,
                         "^publication intent: branch is invalid$",
                     ) as raised:
-                        derive_publication_intent(seed, branch)
+                        derive_publication_intent(seed, branch, "master")
                     self.assertNotIn(canary, str(raised.exception))
+
+    def test_malformed_base_branch_is_rejected_and_valid_base_is_intent_bound(self):
+        with pinned_verified_execution() as (request, result):
+            seed = build_publication_seed(request, result)
+            for base_branch in (None, 42, "", "main ", "../main", "main.lock", "refs//heads/x"):
+                with self.subTest(base_branch=repr(base_branch)):
+                    with self.assertRaisesRegex(
+                        PublicationSeedError,
+                        "^publication intent: base branch is invalid$",
+                    ):
+                        derive_publication_intent(seed, "agent/process-demo-001", base_branch)
+            master = derive_publication_intent(seed, "agent/process-demo-001", "master")
+            main = derive_publication_intent(seed, "agent/process-demo-001", "main")
+            self.assertNotEqual(master.idempotency_key, main.idempotency_key)
+            self.assertNotEqual(master, main)
+            with self.assertRaisesRegex(
+                PublicationSeedError,
+                "^publication intent: idempotency key mismatch$",
+            ):
+                replace(master, base_branch="main")
 
     def test_non_seed_input_is_rejected(self):
         for value in (None, object(), "not-a-seed", {"process_id": "process-local-001"}):
@@ -742,7 +946,7 @@ class DerivePublicationIntentTests(unittest.TestCase):
                     PublicationSeedError,
                     "^publication intent: seed is invalid$",
                 ):
-                    derive_publication_intent(value, "agent/process-demo-001")
+                    derive_publication_intent(value, "agent/process-demo-001", "master")
 
     def test_substituted_branch_key_or_digest_is_rejected(self):
         with seeded_intent() as (seed, intent):

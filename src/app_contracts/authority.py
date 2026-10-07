@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
+from .approval_signature import verify_approval_signature
 from .digests import sha256_digest
 from .validator import ContractValidationError
 
@@ -19,6 +21,8 @@ class PolicyConfig:
     version: str
     allowed_repositories: frozenset[str]
     allowed_actuators: frozenset[str]
+    allowed_approver_ids: frozenset[str]
+    trusted_approver_public_keys: Mapping[str, bytes]
     decision_ttl_seconds: int = 300
 
     def __post_init__(self) -> None:
@@ -35,6 +39,27 @@ class PolicyConfig:
                 or any(not isinstance(member, str) or not member for member in members)
             ):
                 raise ValueError(f"policy: {name} must be a non-empty set of strings")
+        approver_ids = self.allowed_approver_ids
+        if (
+            not isinstance(approver_ids, (set, frozenset))
+            or not approver_ids
+            or any(not isinstance(member, str) or not member for member in approver_ids)
+        ):
+            raise ValueError("policy: allowed_approver_ids must be a non-empty set of strings")
+        approver_ids = frozenset(approver_ids)
+        object.__setattr__(self, "allowed_approver_ids", approver_ids)
+        keys = self.trusted_approver_public_keys
+        if not isinstance(keys, Mapping) or not keys or any(
+            not isinstance(key_id, str)
+            or not key_id
+            or not isinstance(public_key, bytes)
+            or len(public_key) != 32
+            for key_id, public_key in keys.items()
+        ):
+            raise ValueError("policy: trusted approver public keys are invalid")
+        if not approver_ids.issubset(keys):
+            raise ValueError("policy: allowlisted approver has no trusted public key")
+        object.__setattr__(self, "trusted_approver_public_keys", MappingProxyType(dict(keys)))
 
 
 def _require_digest(value: Any, message: str) -> str:
@@ -73,11 +98,18 @@ def validate_approval(
         if not isinstance(mapping, dict):
             raise ContractValidationError("approval: binding root is malformed")
     moment = _require_clock(now)
+    if type(approval.get("schema_version")) is not int or approval["schema_version"] != 1:
+        raise ContractValidationError("approval: schema version is invalid")
     staged_digest = sha256_digest(staged_change)
     for field in ("process_id", "repository_id", "operation", "approval_id"):
         if field not in approval or field not in intent:
             raise ContractValidationError(f"approval: {field} is missing")
-    for mapping, field in ((approval, "policy_version"), (approval, "expires_at"), (intent, "expires_at")):
+    if "approver_id" not in approval:
+        raise ContractValidationError("approval: approver_id is missing")
+    for mapping, field in (
+        (approval, "policy_version"), (approval, "approved_at"),
+        (approval, "expires_at"), (intent, "expires_at"),
+    ):
         if field not in mapping:
             raise ContractValidationError(f"approval: {field} is missing")
     required_matches = ("process_id", "repository_id", "operation", "approval_id")
@@ -92,6 +124,8 @@ def validate_approval(
             raise ContractValidationError(f"approval: {field} is invalid")
         if left != right:
             raise ContractValidationError(f"approval: {field} mismatch")
+    if not isinstance(approval["approver_id"], str) or not approval["approver_id"]:
+        raise ContractValidationError("approval: approver_id is invalid")
     if _require_digest(
         approval.get("staged_change_digest"), "approval: staged change digest is invalid"
     ) != staged_digest:
@@ -103,8 +137,13 @@ def validate_approval(
     check_intent_approved(intent, approval)
     if approval["policy_version"] != policy_version:
         raise ContractValidationError("approval: policy version mismatch")
+    approved_at = _require_expiry(approval, "approval time", field="approved_at")
+    if approved_at > moment:
+        raise ContractValidationError("approval: approval time is in the future")
     if _require_expiry(approval, "expiry") <= moment:
         raise ContractValidationError("approval: expired")
+    if approved_at >= _require_expiry(approval, "expiry"):
+        raise ContractValidationError("approval: approval time is invalid")
     if _require_expiry(intent, "intent expiry") <= moment:
         raise ContractValidationError("approval: intent expired")
 
@@ -154,6 +193,14 @@ class DeterministicPolicy:
             or actuator_request.get("idempotency_key") != intent.get("idempotency_key")
         ):
             effect, reasons = "deny", ["request-intent-mismatch"]
+        elif (
+            not isinstance(approval, dict)
+            or not isinstance(approval.get("approver_id"), str)
+            or not approval["approver_id"]
+            or approval["approver_id"]
+            not in self._config.allowed_approver_ids
+        ):
+            effect, reasons = "deny", ["approver-not-allowlisted"]
         else:
             try:
                 validate_approval(
@@ -163,7 +210,13 @@ class DeterministicPolicy:
             except ContractValidationError as exc:
                 effect, reasons = "deny", [str(exc).replace("approval: ", "approval-").replace(" ", "-")]
             else:
-                reasons = ["repository-allowlisted", "approval-valid", "digest-bound"]
+                if not verify_approval_signature(
+                    approval,
+                    self._config.trusted_approver_public_keys[approval["approver_id"]],
+                ):
+                    effect, reasons = "deny", ["approval-signature-invalid"]
+                else:
+                    reasons = ["repository-allowlisted", "approval-valid", "digest-bound"]
 
         expires_at = moment + timedelta(seconds=self._config.decision_ttl_seconds)
         return {
@@ -204,8 +257,10 @@ def check_decision_usable(decision: dict[str, Any], *, now: datetime) -> None:
         raise ContractValidationError("decision: expired")
 
 
-def _require_expiry(mapping: dict[str, Any], label: str) -> datetime:
-    raw = mapping.get("expires_at")
+def _require_expiry(
+    mapping: dict[str, Any], label: str, *, field: str = "expires_at"
+) -> datetime:
+    raw = mapping.get(field)
     if not isinstance(raw, str):
         raise ContractValidationError(f"approval: {label} is invalid")
     try:

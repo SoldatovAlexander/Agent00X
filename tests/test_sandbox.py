@@ -11,7 +11,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.sandbox import DockerSandboxBackend, LocalProcessSandboxBackend, SandboxError
+from app_contracts.executor import verifier_snapshot_tree_digest
+from app_contracts.sandbox import (
+    DockerSandboxBackend,
+    LocalProcessSandboxBackend,
+    SandboxError,
+)
 
 
 class SandboxTests(unittest.TestCase):
@@ -167,6 +172,49 @@ class SandboxTests(unittest.TestCase):
             finally:
                 source_file.chmod(0o600)
                 snapshot.chmod(0o700)
+
+    def test_docker_read_only_snapshot_copy_preserves_git_executable_mode_digest(self):
+        with tempfile.TemporaryDirectory(prefix="app-docker-executable-mode-") as temporary_directory:
+            snapshot = Path(temporary_directory) / "snapshot"
+            snapshot.mkdir()
+            executable = snapshot / "scripts" / "probe.sh"
+            executable.parent.mkdir()
+            executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+            executable.chmod(0o755)
+            regular = snapshot / "data.txt"
+            regular.write_bytes(b"pinned data\n")
+            regular.chmod(0o644)
+            expected_files = (
+                ("data.txt", "100644", b"pinned data\n"),
+                ("scripts/probe.sh", "100755", b"#!/bin/sh\nexit 0\n"),
+            )
+            expected_digest = verifier_snapshot_tree_digest(expected_files)
+
+            backend = DockerSandboxBackend("local-test-image")
+            backend._assert_image_available = lambda: None
+            with patch(
+                "app_contracts.sandbox.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["docker"], 0, "container-id\n", ""
+                ),
+            ):
+                sandbox = backend.create(snapshot, {"python3"})
+                try:
+                    copied_files = []
+                    for path in sandbox.snapshot.rglob("*"):
+                        if not path.is_file():
+                            continue
+                        mode = "100755" if path.stat().st_mode & 0o111 else "100644"
+                        copied_files.append(
+                            (path.relative_to(sandbox.snapshot).as_posix(), mode, path.read_bytes())
+                        )
+                        self.assertFalse(path.stat().st_mode & 0o222)
+                    copied_files.sort(key=lambda entry: entry[0])
+                    self.assertEqual(tuple(copied_files), expected_files)
+                    self.assertEqual(verifier_snapshot_tree_digest(tuple(copied_files)), expected_digest)
+                    self.assertTrue(sandbox.workspace.joinpath("scripts", "probe.sh").stat().st_mode & 0o200)
+                finally:
+                    sandbox.close()
 
     def test_backend_does_not_claim_network_isolation(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:

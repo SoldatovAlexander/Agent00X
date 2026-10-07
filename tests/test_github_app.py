@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import traceback
 import unittest
 
 
@@ -20,6 +21,7 @@ from app_contracts.github_app import (
     GitHubAppInstallationTokenMinter,
     GitHubAppBrokerError,
     GitHubAppCredentialBroker,
+    _git_blob_sha,
     _InstallationToken,
 )
 from app_contracts.digests import sha256_digest
@@ -27,6 +29,16 @@ from app_contracts.repository_process import PublishableFile
 from app_contracts.gateway import GatewayDecision, GatewayPath
 from app_contracts.github_actuator import BrokeredGitHubActuator
 from app_contracts.validator import ContractValidationError
+
+
+def _with_base_file_metadata(get_json, *, blob_sha="d" * 40):
+    """Route the new pinned Contents preflight while retaining branch fakes."""
+    def routed(url, headers):
+        if "/contents/" in url and "?ref=" in url:
+            return {"type": "file", "sha": blob_sha}
+        return get_json(url, headers)
+
+    return routed
 
 
 # EXP-264: deterministic provider transcript fixtures (data only).
@@ -41,7 +53,8 @@ from app_contracts.validator import ContractValidationError
 
 _FIXTURE_BRANCH = "agent/process-demo-001"
 _FIXTURE_DIGEST = "sha256:" + "c" * 64
-_FIXTURE_IDEMPOTENCY_KEY = f"publish/process-demo-001/{_FIXTURE_DIGEST}"
+_FIXTURE_BASE_BRANCH = "master"
+_FIXTURE_IDEMPOTENCY_KEY = f"publish/process-demo-001/{_FIXTURE_BASE_BRANCH}/{_FIXTURE_DIGEST}"
 _FIXTURE_MARKER = f"<!-- agent-process-idempotency: {_FIXTURE_IDEMPOTENCY_KEY} -->"
 _FIXTURE_PR_URL = "https://github.com/example/agent00x-sandbox/pull/13"
 _FIXTURE_COMMIT_SHA = "e" * 40
@@ -55,8 +68,11 @@ class ProviderTranscriptFixtures:
         return FileNotFoundError("confirmed 404: absent branch")
 
     @staticmethod
-    def matching_branch_payload(branch: str = _FIXTURE_BRANCH) -> dict[str, str]:
-        return {"ref": f"refs/heads/{branch}"}
+    def matching_branch_payload(branch: str = _FIXTURE_BRANCH) -> dict[str, object]:
+        return {
+            "ref": f"refs/heads/{branch}",
+            "object": {"type": "commit", "sha": _FIXTURE_COMMIT_SHA},
+        }
 
     @staticmethod
     def unknown_branch_payloads() -> tuple[object, ...]:
@@ -72,7 +88,8 @@ class ProviderTranscriptFixtures:
         url: str = _FIXTURE_PR_URL,
         marker: str = _FIXTURE_MARKER,
     ) -> list[dict[str, object]]:
-        return [{"number": number, "html_url": url, "body": marker}]
+        return [{"number": number, "html_url": url, "body": marker,
+                 "head": {"ref": _FIXTURE_BRANCH}, "base": {"ref": _FIXTURE_BASE_BRANCH}}]
 
     @staticmethod
     def unknown_pr_payloads(marker: str = _FIXTURE_MARKER) -> tuple[object, ...]:
@@ -99,7 +116,10 @@ class ProviderTranscriptFixtureTests(unittest.TestCase):
         self.assertIsInstance(fixtures.absent_branch_error(), FileNotFoundError)
         self.assertEqual(
             fixtures.matching_branch_payload(),
-            {"ref": f"refs/heads/{_FIXTURE_BRANCH}"},
+            {
+                "ref": f"refs/heads/{_FIXTURE_BRANCH}",
+                "object": {"type": "commit", "sha": _FIXTURE_COMMIT_SHA},
+            },
         )
         self.assertEqual(fixtures.absent_pr_payload(), [])
         self.assertEqual(
@@ -166,6 +186,14 @@ class GitHubAppConfigurationTests(unittest.TestCase):
         self.assertEqual(config.repository_id, 1001)
         self.assertEqual(config.repository, "example/agent00x-sandbox")
         self.assertEqual(config.api_url, "https://api.github.com")
+        self.assertEqual(
+            config.repository_target_binding.source_repository_id,
+            "example/agent00x-sandbox",
+        )
+        self.assertEqual(
+            config.repository_target_binding.provider_repository_id,
+            "github-installation/456/repository/1001",
+        )
 
     def test_preflight_rejects_non_string_configuration_values(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,7 +242,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             key_path.chmod(0o600)
             from app_contracts.github_app import GitHubAppPublicationChannel
             digest = "sha256:" + "a" * 64
-            key = f"publish/process-demo-001/{digest}"
+            key = f"publish/process-demo-001/master/{digest}"
             marker = f"<!-- agent-process-idempotency: {key} -->"
             for bad_number in (True, False, 0, -1, "9", None, 2.5):
                 with self.subTest(number=bad_number):
@@ -230,7 +258,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                     )
                     self.assertIsNone(
                         channel.reconcile_pull_request(
-                            branch="agent/process-demo-001", idempotency_key=key,
+                            branch="agent/process-demo-001", base_branch="master", idempotency_key=key,
                             staged_change_digest=digest,
                         )
                     )
@@ -252,8 +280,9 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "operation": "publish_pull_request",
                 "repository_id": "github-installation/456/repository/1001",
                 "branch": "agent/process-demo-001",
+                "base_branch": "master",
                 "staged_change_digest": "sha256:" + "a" * 64,
-                "idempotency_key": "publish/process-demo-001/sha256:" + "a" * 64,
+                "idempotency_key": "publish/process-demo-001/master/sha256:" + "a" * 64,
                 "policy_effect": "allow",
                 "approval_valid": True,
             }
@@ -337,14 +366,16 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "operation": "publish_pull_request",
                 "repository_id": "github-installation/456/repository/1001",
                 "branch": "agent/process-demo-001",
+                "base_branch": "master",
                 "staged_change_digest": digest,
-                "idempotency_key": f"publish/process-demo-001/{digest}",
+                "idempotency_key": f"publish/process-demo-001/master/{digest}",
                 "policy_effect": "allow",
                 "approval_valid": True,
             }
             mismatched = [
-                dict(base, idempotency_key=f"publish/process-demo-001/{'sha256:' + 'b' * 64}"),
-                dict(base, idempotency_key="publish/process-evil-001/" + digest),
+                dict(base, idempotency_key=f"publish/process-demo-001/master/{'sha256:' + 'b' * 64}"),
+                dict(base, idempotency_key="publish/process-evil-001/master/" + digest),
+                dict(base, base_branch="main"),
                 dict(base, idempotency_key="stale-marker"),
             ]
             for request in mismatched:
@@ -366,8 +397,9 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "operation": "publish_pull_request",
                 "repository_id": "github-installation/456/repository/1001",
                 "branch": "agent/process-demo-001",
+                "base_branch": "master",
                 "staged_change_digest": digest,
-                "idempotency_key": f"publish/process-demo-001/{digest}",
+                "idempotency_key": f"publish/process-demo-001/master/{digest}",
                 "policy_effect": "allow",
                 "approval_valid": True,
             }
@@ -397,22 +429,24 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             from app_contracts.github_app import _InstallationToken, GitHubAppPublicationChannel
             channel = GitHubAppPublicationChannel(
                 config, _InstallationToken("opaque-token", "2026-09-04T12:10:00Z"),
-                post_json=lambda url, headers, payload: calls.append((url, headers, payload)) or {"number": 7, "html_url": "https://github.com/example/agent00x-sandbox/pull/7"},
+            post_json=lambda url, headers, payload: calls.append((url, headers, payload)) or {"number": 7, "html_url": "https://github.com/example/agent00x-sandbox/pull/7", "base": {"ref": "master"}},
                 get_json=lambda _url, _headers: [],
             )
             result = channel.publish_pull_request({
                 "operation": "publish_pull_request",
                 "repository_id": "github-installation/456/repository/1001",
                 "branch": "agent/process-demo-001",
+                "base_branch": "master",
                 "staged_change_digest": "sha256:" + "a" * 64,
-                "idempotency_key": "publish/process-demo-001/sha256:" + "a" * 64,
+                "idempotency_key": "publish/process-demo-001/master/sha256:" + "a" * 64,
                 "policy_effect": "allow",
                 "approval_valid": True,
             })
         self.assertEqual(result.pull_request_id, 7)
+        self.assertEqual(result.base_branch, "master")
         self.assertEqual(calls[0][0], "https://api.github.com/repos/example/agent00x-sandbox/pulls")
         self.assertEqual(calls[0][2]["head"], "agent/process-demo-001")
-        self.assertEqual(calls[0][2]["base"], "main")
+        self.assertEqual(calls[0][2]["base"], "master")
         self.assertIn("agent-process-idempotency", calls[0][2]["body"])
 
     def test_publication_channel_reconciles_existing_pr_without_second_post(self):
@@ -421,12 +455,12 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             key_path.write_text("unused", encoding="utf-8")
             key_path.chmod(0o600)
             from app_contracts.github_app import GitHubAppPublicationChannel
-            request = {"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/1001", "branch": "agent/process-demo-001", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "publish/process-demo-001/sha256:" + "a" * 64, "policy_effect": "allow", "approval_valid": True}
+            request = {"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/1001", "branch": "agent/process-demo-001", "base_branch": "master", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "publish/process-demo-001/master/sha256:" + "a" * 64, "policy_effect": "allow", "approval_valid": True}
             marker = f"<!-- agent-process-idempotency: {request['idempotency_key']} -->"
             channel = GitHubAppPublicationChannel(
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
                 post_json=lambda *_args: self.fail("a reconciled request must not create a second PR"),
-                get_json=lambda _url, _headers: [{"number": 9, "html_url": "https://github.com/example/agent00x-sandbox/pull/9", "body": marker}],
+                get_json=lambda _url, _headers: [{"number": 9, "html_url": "https://github.com/example/agent00x-sandbox/pull/9", "body": marker, "head": {"ref": request["branch"]}, "base": {"ref": "master"}}],
             )
             result = channel.publish_pull_request(request)
         self.assertEqual(result.pull_request_id, 9)
@@ -439,7 +473,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             from app_contracts.github_app import _InstallationToken, GitHubAppPublicationChannel
             channel = GitHubAppPublicationChannel(GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"))
             with self.assertRaisesRegex(ContractValidationError, "not allowlisted"):
-                channel.publish_pull_request({"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/999", "branch": "agent/process-demo-001", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "key", "policy_effect": "allow", "approval_valid": True})
+                channel.publish_pull_request({"operation": "publish_pull_request", "repository_id": "github-installation/456/repository/999", "branch": "agent/process-demo-001", "base_branch": "master", "staged_change_digest": "sha256:" + "a" * 64, "idempotency_key": "publish/process-demo-001/master/sha256:" + "a" * 64, "policy_effect": "allow", "approval_valid": True})
 
     def test_malformed_verified_file_inputs_make_zero_provider_calls(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -531,7 +565,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             channel = GitHubAppPublicationChannel(
                 GitHubAppBrokerConfig.from_environment(self._environment(key_path)), _InstallationToken("opaque", "future"),
                 post_json=lambda url, headers, payload: posts.append((url, payload)) or {"ref": payload["ref"]},
-                get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
+                get_json=_with_base_file_metadata(lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch"))),
                 put_json=lambda url, headers, payload: puts.append((url, payload)) or {"commit": {"sha": "d" * 40}},
             )
             sha = channel.publish_verified_files(
@@ -658,15 +692,15 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 post_json=lambda url, headers, payload: calls.append(("POST", url)),
                 get_json=lambda url, headers: calls.append(("GET", url)),
             )
-            key = "publish/process-demo-001/sha256:" + "c" * 64
+            key = "publish/process-demo-001/master/sha256:" + "c" * 64
             digest = "sha256:" + "c" * 64
             for kwargs in (
-                {"branch": None, "idempotency_key": key},
-                {"branch": 123, "idempotency_key": key},
-                {"branch": "main", "idempotency_key": key},
-                {"branch": "agent/process-demo-001", "idempotency_key": None},
-                {"branch": "agent/process-demo-001", "idempotency_key": ""},
-                {"branch": "agent/process-demo-001", "idempotency_key": key,
+                {"branch": None, "base_branch": "master", "idempotency_key": key},
+                {"branch": 123, "base_branch": "master", "idempotency_key": key},
+                {"branch": "main", "base_branch": "master", "idempotency_key": key},
+                {"branch": "agent/process-demo-001", "base_branch": "master", "idempotency_key": None},
+                {"branch": "agent/process-demo-001", "base_branch": "master", "idempotency_key": ""},
+                {"branch": "agent/process-demo-001", "base_branch": "master", "idempotency_key": key,
                  "staged_change_digest": 123},
             ):
                 with self.subTest(kwargs=kwargs):
@@ -821,7 +855,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
 
             broker = GitHubAppCredentialBroker(
                 config, FakeMinter(),
-                post_json=lambda url, headers, payload: api_calls.append((url, headers, payload)) or {"number": 8, "html_url": "https://github.com/example/agent00x-sandbox/pull/8"},
+                post_json=lambda url, headers, payload: api_calls.append((url, headers, payload)) or {"number": 8, "html_url": "https://github.com/example/agent00x-sandbox/pull/8", "base": {"ref": "master"}},
                 get_json=lambda _url, _headers: [],
             )
             actuator_request = {
@@ -830,7 +864,8 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "repository_id": "github-installation/456/repository/1001",
                 "branch_namespace": "agent/process-demo-001",
                 "staged_change_digest": "sha256:" + "b" * 64,
-                "idempotency_key": "publish/process-demo-001/sha256:" + "b" * 64,
+                "base_branch": "master",
+                "idempotency_key": "publish/process-demo-001/master/sha256:" + "b" * 64,
             }
             grant = {
                 "credential_grant_id": "credential-grant-demo-001",
@@ -846,6 +881,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
             }
             intent = {
                 "branch_namespace": actuator_request["branch_namespace"],
+                "base_branch": actuator_request["base_branch"],
                 "idempotency_key": actuator_request["idempotency_key"],
             }
             approval = {"approved_intent_digest": sha256_digest(intent)}
@@ -897,7 +933,8 @@ class GitHubAppConfigurationTests(unittest.TestCase):
                 "repository_id": "github-installation/456/repository/1001",
                 "branch_namespace": "agent/process-demo-001",
                 "staged_change_digest": "sha256:" + "b" * 64,
-                "idempotency_key": "publish/process-demo-001/sha256:" + "b" * 64,
+                "base_branch": "master",
+                "idempotency_key": "publish/process-demo-001/master/sha256:" + "b" * 64,
             }
             grant = {
                 "credential_grant_id": "credential-grant-demo-002",
@@ -928,7 +965,7 @@ class GitHubAppConfigurationTests(unittest.TestCase):
 
 
 class GitHubReconciliationTests(unittest.TestCase):
-    def _channel(self, config_factory_post_get_put):
+    def _channel(self, config_factory_post_get_put, *, wrap_contents=True):
         from app_contracts.github_app import GitHubAppPublicationChannel
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -946,7 +983,9 @@ class GitHubReconciliationTests(unittest.TestCase):
         return GitHubAppPublicationChannel(
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
-            post_json=post_json, get_json=get_json, put_json=put_json,
+            post_json=post_json,
+            get_json=_with_base_file_metadata(get_json) if wrap_contents else get_json,
+            put_json=put_json,
         )
 
     def _staged_change(self):
@@ -977,7 +1016,7 @@ class GitHubReconciliationTests(unittest.TestCase):
         retry_posts = []
         retry = self._channel((
             lambda _url, _headers, _payload: self.fail("a reconciled retry must not recreate the branch"),
-            lambda _url, _headers: {"ref": "refs/heads/agent/process-demo-001"},
+            lambda _url, _headers: ProviderTranscriptFixtures.matching_branch_payload("agent/process-demo-001"),
             lambda url, headers, payload: {"commit": {"sha": "e" * 40}},
         ))
         sha = retry.publish_verified_files(
@@ -1016,6 +1055,187 @@ class GitHubReconciliationTests(unittest.TestCase):
                 branch=_FIXTURE_BRANCH, staged_change=self._staged_change(), files=self._files(),
             )
         self.assertEqual(len(puts), 1)
+
+    def test_existing_file_update_uses_blob_sha_from_exact_base_commit(self):
+        calls = []
+
+        def get_json(url, _headers):
+            if "/contents/proof.txt?ref=" in url:
+                calls.append(("base-file", url))
+                return {"type": "file", "sha": "e" * 40}
+            calls.append(("branch", url))
+            raise FileNotFoundError("confirmed 404: absent branch")
+
+        channel = self._channel((
+            lambda url, _headers, payload: calls.append(("branch-post", payload)) or {"ref": payload["ref"]},
+            get_json,
+            lambda url, _headers, payload: calls.append(("file-put", payload)) or {"commit": {"sha": "f" * 40}},
+        ), wrap_contents=False)
+        result = channel.publish_verified_files(
+            branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+        )
+
+        self.assertEqual(result, "f" * 40)
+        self.assertEqual([kind for kind, _ in calls], ["base-file", "branch", "branch-post", "file-put"])
+        self.assertIn("?ref=" + "a" * 40, calls[0][1])
+        self.assertEqual(calls[-1][1]["sha"], "e" * 40)
+
+    def test_invalid_base_file_metadata_fails_before_branch_or_content_write(self):
+        invalid_records = (
+            None,
+            [],
+            {"type": "dir", "sha": "e" * 40},
+            {"type": "file", "sha": "not-a-git-blob-sha"},
+            {"type": "file", "sha": "E" * 40},
+        )
+        for metadata in invalid_records:
+            with self.subTest(metadata=repr(metadata)):
+                calls = []
+                channel = self._channel((
+                    lambda *_args: calls.append("POST"),
+                    lambda url, _headers, _metadata=metadata: calls.append(("GET", url)) or _metadata,
+                    lambda *_args: calls.append("PUT"),
+                ), wrap_contents=False)
+                with self.assertRaisesRegex(GitHubAppBrokerError, "base-file metadata is invalid"):
+                    channel.publish_verified_files(
+                        branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+                    )
+                self.assertEqual([call[0] if isinstance(call, tuple) else call for call in calls], ["GET"])
+
+    def test_unknown_base_file_lookup_fails_before_any_write(self):
+        calls = []
+        channel = self._channel((
+            lambda *_args: calls.append("POST"),
+            lambda url, _headers: calls.append(("GET", url)) or (_ for _ in ()).throw(RuntimeError("transport details")),
+            lambda *_args: calls.append("PUT"),
+        ), wrap_contents=False)
+        with self.assertRaisesRegex(GitHubAppBrokerError, "base-file reconciliation failed") as raised:
+            channel.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("transport details", str(raised.exception))
+        self.assertNotIn("transport details", "".join(traceback.format_exception(raised.exception)))
+
+    def test_journal_lookup_rejects_malformed_or_foreign_binding_before_get(self):
+        calls = []
+        channel = self._channel((
+            lambda *_args: calls.append("POST"),
+            lambda *_args: calls.append("GET") or [],
+            None,
+        ))
+        for bad in (None, "", "publish/process-x/not-a-digest", "publish/process-/sha256:" + "a" * 64):
+            with self.subTest(key=type(bad).__name__):
+                with self.assertRaises(ContractValidationError):
+                    channel.find_by_idempotency_key(bad)
+        with self.assertRaisesRegex(ContractValidationError, "lookup repository is not allowlisted"):
+            channel.find_by_idempotency_key(
+                "publish/process-demo-001/master/sha256:" + "a" * 64,
+                repository_id="github-installation/456/repository/other",
+            )
+        self.assertEqual(calls, [])
+
+    def test_lost_put_response_is_reconciled_by_fresh_channel_without_duplicate_put(self):
+        content = self._files()[0].content
+        base_sha = "d" * 40
+        desired_sha = _git_blob_sha(content)
+        current_sha = {"proof.txt": base_sha}
+        writes = []
+
+        def get_json(url, _headers):
+            if "/contents/proof.txt?ref=" in url:
+                if "?ref=" + "a" * 40 in url:
+                    return {"type": "file", "sha": base_sha}
+                return {"type": "file", "sha": current_sha["proof.txt"]}
+            raise FileNotFoundError("confirmed 404: absent branch")
+
+        def lose_response_after_write(_url, _headers, payload):
+            writes.append(payload)
+            current_sha["proof.txt"] = desired_sha
+            raise RuntimeError("response lost after provider effect")
+
+        first = self._channel((
+            lambda _url, _headers, payload: {"ref": payload["ref"]},
+            get_json,
+            lose_response_after_write,
+        ), wrap_contents=False)
+        with self.assertRaisesRegex(GitHubAppBrokerError, "verified-file publication failed"):
+            first.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(len(writes), 1)
+
+        retry = self._channel((
+            lambda *_args: self.fail("existing branch must not be recreated"),
+            lambda url, _headers: (
+                {"type": "file", "sha": current_sha["proof.txt"]}
+                if "/contents/" in url
+                else {"ref": "refs/heads/agent/process-demo-001", "object": {"type": "commit", "sha": "f" * 40}}
+            ),
+            lambda *_args: self.fail("already-applied content must not be PUT again"),
+        ), wrap_contents=False)
+        result = retry.publish_verified_files(
+            branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+        )
+        self.assertEqual(result, "f" * 40)
+        self.assertEqual(len(writes), 1)
+
+    def test_partial_multi_file_recovery_writes_only_files_still_at_base_sha(self):
+        from app_contracts.digests import sha256_bytes
+
+        first_content, second_content = "already published\n", "still pending\n"
+        files = [
+            PublishableFile("first.txt", first_content, sha256_bytes(first_content.encode())),
+            PublishableFile("second.txt", second_content, sha256_bytes(second_content.encode())),
+        ]
+        base_shas = {"first.txt": "1" * 40, "second.txt": "2" * 40}
+        branch_shas = {"first.txt": _git_blob_sha(first_content), "second.txt": base_shas["second.txt"]}
+        calls = []
+
+        def get_json(url, _headers):
+            calls.append(("GET", url))
+            if "/git/ref/heads/" in url:
+                return {"ref": "refs/heads/agent/process-demo-001", "object": {"type": "commit", "sha": "e" * 40}}
+            path = "first.txt" if "/contents/first.txt" in url else "second.txt"
+            if "?ref=" + "a" * 40 in url:
+                return {"type": "file", "sha": base_shas[path]}
+            return {"type": "file", "sha": branch_shas[path]}
+
+        channel = self._channel((
+            lambda *_args: self.fail("existing branch must not be recreated"),
+            get_json,
+            lambda _url, _headers, payload: calls.append(("PUT", payload)) or {"commit": {"sha": "f" * 40}},
+        ), wrap_contents=False)
+        result = channel.publish_verified_files(
+            branch="agent/process-demo-001", staged_change=self._staged_change(), files=files,
+        )
+
+        self.assertEqual(result, "f" * 40)
+        puts = [payload for kind, payload in calls if kind == "PUT"]
+        self.assertEqual(len(puts), 1)
+        self.assertEqual(puts[0]["sha"], base_shas["second.txt"])
+        self.assertTrue(all(kind == "GET" for kind, _ in calls[:5]))
+
+    def test_conflicting_branch_file_blocks_all_file_puts(self):
+        calls = []
+        channel = self._channel((
+            lambda *_args: calls.append("POST"),
+            lambda url, _headers: (
+                {"type": "file", "sha": "d" * 40}
+                if "/contents/" in url and "?ref=" + "a" * 40 in url
+                else (
+                    {"type": "file", "sha": "a" * 40}
+                    if "/contents/" in url
+                    else {"ref": "refs/heads/agent/process-demo-001", "object": {"type": "commit", "sha": "f" * 40}}
+                )
+            ),
+            lambda *_args: calls.append("PUT"),
+        ), wrap_contents=False)
+        with self.assertRaisesRegex(GitHubAppBrokerError, "conflicts with staged base"):
+            channel.publish_verified_files(
+                branch="agent/process-demo-001", staged_change=self._staged_change(), files=self._files(),
+            )
+        self.assertEqual(calls, [])
 
     def test_unknown_branch_fixture_denies_write_without_side_effect(self):
         for payload in ProviderTranscriptFixtures.unknown_branch_payloads():
@@ -1072,16 +1292,68 @@ class GitHubReconciliationTests(unittest.TestCase):
                     )
                 self.assertEqual(calls, [])
 
+    def test_read_only_file_reconciliation_requires_every_exact_blob(self):
+        from app_contracts.digests import sha256_bytes
+
+        first_content, second_content = "verified one\n", "verified two\n"
+        files = (
+            PublishableFile("first.txt", first_content, sha256_bytes(first_content.encode())),
+            PublishableFile("second.txt", second_content, sha256_bytes(second_content.encode())),
+        )
+        expected = {
+            "first.txt": _git_blob_sha(first_content),
+            "second.txt": _git_blob_sha(second_content),
+        }
+        for label, branch_payload, observed, expected_result in (
+            (
+                "exact",
+                ProviderTranscriptFixtures.matching_branch_payload(),
+                expected,
+                _FIXTURE_COMMIT_SHA,
+            ),
+            (
+                "partial",
+                ProviderTranscriptFixtures.matching_branch_payload(),
+                {"first.txt": expected["first.txt"], "second.txt": "d" * 40},
+                None,
+            ),
+            ("unknown-branch", None, expected, None),
+        ):
+            with self.subTest(outcome=label):
+                calls = []
+
+                def get_json(url, _headers):
+                    calls.append(url)
+                    if "/git/ref/heads/" in url:
+                        if branch_payload is None:
+                            raise RuntimeError("synthetic unknown branch response")
+                        return dict(branch_payload)
+                    path = "first.txt" if "/contents/first.txt" in url else "second.txt"
+                    return {"type": "file", "sha": observed[path]}
+
+                channel = self._channel((
+                    lambda *_args: self.fail("read-only reconciliation must not POST"),
+                    get_json,
+                    lambda *_args: self.fail("read-only reconciliation must not PUT"),
+                ), wrap_contents=False)
+                result = channel.reconcile_verified_files(
+                    branch="agent/process-demo-001", files=files,
+                )
+                self.assertEqual(result, expected_result)
+                self.assertTrue(calls)
+                self.assertTrue(all("/git/ref/" in url or "/contents/" in url for url in calls))
+
     def test_lost_pr_response_reconciles_to_existing_receipt(self):
         from app_contracts.github_app import GitHubAppPublicationChannel
         branch = "agent/process-demo-001"
         digest = "sha256:" + "c" * 64
-        key = f"publish/process-demo-001/{digest}"
+        key = f"publish/process-demo-001/master/{digest}"
         marker = f"<!-- agent-process-idempotency: {key} -->"
         request = {
             "operation": "publish_pull_request",
             "repository_id": "github-installation/456/repository/1001",
             "branch": branch,
+            "base_branch": "master",
             "staged_change_digest": digest,
             "idempotency_key": key,
             "policy_effect": "allow",
@@ -1089,13 +1361,13 @@ class GitHubReconciliationTests(unittest.TestCase):
         }
         channel = self._channel((
             lambda *_args: self.fail("a reconciled retry must not create a second PR"),
-            lambda _url, _headers: [{"number": 13, "html_url": "https://github.com/example/agent00x-sandbox/pull/13", "body": marker}],
+            lambda _url, _headers: [{"number": 13, "html_url": "https://github.com/example/agent00x-sandbox/pull/13", "body": marker, "head": {"ref": branch}, "base": {"ref": "master"}}],
             None,
         ))
         result = channel.publish_pull_request(request)
         self.assertEqual(result.pull_request_id, 13)
         self.assertIsInstance(channel, GitHubAppPublicationChannel)
-        receipt = channel.reconcile_pull_request(branch=branch, idempotency_key=key, staged_change_digest=digest)
+        receipt = channel.reconcile_pull_request(branch=branch, base_branch="master", idempotency_key=key, staged_change_digest=digest)
         self.assertIsNotNone(receipt)
         assert receipt is not None
         self.assertEqual(receipt.pull_request_id, 13)
@@ -1106,6 +1378,7 @@ class GitHubReconciliationTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": "github-installation/456/repository/1001",
             "branch": _FIXTURE_BRANCH,
+            "base_branch": _FIXTURE_BASE_BRANCH,
             "staged_change_digest": _FIXTURE_DIGEST,
             "idempotency_key": _FIXTURE_IDEMPOTENCY_KEY,
             "policy_effect": "allow",
@@ -1138,6 +1411,7 @@ class GitHubReconciliationTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": "github-installation/456/repository/1001",
             "branch": _FIXTURE_BRANCH,
+            "base_branch": _FIXTURE_BASE_BRANCH,
             "staged_change_digest": _FIXTURE_DIGEST,
             "idempotency_key": _FIXTURE_IDEMPOTENCY_KEY,
             "policy_effect": "allow",
@@ -1165,6 +1439,7 @@ class GitHubReconciliationTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": "github-installation/456/repository/1001",
             "branch": _FIXTURE_BRANCH,
+            "base_branch": _FIXTURE_BASE_BRANCH,
             "staged_change_digest": _FIXTURE_DIGEST,
             "idempotency_key": _FIXTURE_IDEMPOTENCY_KEY,
             "policy_effect": "allow",
@@ -1184,7 +1459,9 @@ class GitHubReconciliationTests(unittest.TestCase):
         ))
         self.assertIsNone(channel.reconcile_pull_request(
             branch="agent/process-demo-001",
-            idempotency_key="publish/process-demo-001/sha256:" + "c" * 64,
+            base_branch="master",
+            idempotency_key="publish/process-demo-001/master/sha256:" + "c" * 64,
+            staged_change_digest="sha256:" + "c" * 64,
         ))
         self.assertIsNone(channel.reconcile_branch("agent/process-demo-001"))
 
@@ -1208,7 +1485,7 @@ class ManifestDigestTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
+            get_json=_with_base_file_metadata(lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch"))),
             put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
         )
 
@@ -1290,7 +1567,7 @@ class MalformedReconciliationTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: branch_payload,
+            get_json=_with_base_file_metadata(lambda _url, _headers: branch_payload),
             put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
         )
 
@@ -1339,7 +1616,7 @@ class MalformedReconciliationTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
+            get_json=_with_base_file_metadata(lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch"))),
             put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
         )
 
@@ -1375,7 +1652,7 @@ class MalformedReconciliationTests(unittest.TestCase):
                 GitHubAppBrokerConfig.from_environment(environment),
                 _InstallationToken("opaque", "future"),
                 post_json=lambda url, headers, payload: calls.append(("POST", url)) or {"ref": payload["ref"]},
-                get_json=get_json,
+                get_json=_with_base_file_metadata(get_json),
                 put_json=lambda url, headers, payload: calls.append(("PUT", url)) or {"commit": {"sha": "f" * 40}},
             )
 
@@ -1428,12 +1705,13 @@ class MalformedReconciliationTests(unittest.TestCase):
     def test_malformed_pr_entry_blocks_post(self):
         from app_contracts.github_app import GitHubAppBrokerError, GitHubAppPublicationChannel
         digest = "sha256:" + "d" * 64
-        key = f"publish/process-demo-001/{digest}"
+        key = f"publish/process-demo-001/master/{digest}"
         marker = f"<!-- agent-process-idempotency: {key} -->"
         request = {
             "operation": "publish_pull_request",
             "repository_id": "github-installation/456/repository/1001",
             "branch": "agent/process-demo-001",
+            "base_branch": "master",
             "staged_change_digest": digest,
             "idempotency_key": key,
             "policy_effect": "allow",
@@ -1456,12 +1734,15 @@ class MalformedReconciliationTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda *_args: calls.append("POST"),
-            get_json=lambda _url, _headers: [{"number": "NaN", "html_url": "https://github.com/example/x/pull/1", "body": marker}],
+            get_json=lambda _url, _headers: [{"number": "NaN", "html_url": "https://github.com/example/x/pull/1", "body": marker, "head": {"ref": request["branch"]}, "base": {"ref": "master"}}],
         )
         with self.assertRaisesRegex(GitHubAppBrokerError, "malformed"):
             channel.publish_pull_request(request)
         self.assertEqual(calls, [])
-        self.assertIsNone(channel.reconcile_pull_request(branch=request["branch"], idempotency_key=key))
+        self.assertIsNone(channel.reconcile_pull_request(
+            branch=request["branch"], base_branch="master", idempotency_key=key,
+            staged_change_digest=digest,
+        ))
 
 
 class ContentPathEncodingTests(unittest.TestCase):
@@ -1483,7 +1764,7 @@ class ContentPathEncodingTests(unittest.TestCase):
             GitHubAppBrokerConfig.from_environment(environment),
             _InstallationToken("opaque", "future"),
             post_json=lambda url, headers, payload: calls.append(("POST", url, payload)) or {"ref": payload["ref"]},
-            get_json=lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch")),
+            get_json=_with_base_file_metadata(lambda _url, _headers: (_ for _ in ()).throw(FileNotFoundError("confirmed 404: absent branch"))),
             put_json=lambda url, headers, payload: calls.append(("PUT", url, payload)) or {"commit": {"sha": "f" * 40}},
         )
 
@@ -1566,12 +1847,13 @@ class BareProcessBranchTests(unittest.TestCase):
             "patch_digest": "sha256:" + "b" * 64,
         }
         digest = "sha256:" + "c" * 64
-        key = f"publish/process-demo-001/{digest}"
+        key = f"publish/process-demo-001/master/{digest}"
         files = [PublishableFile("proof.txt", content, sha256_bytes(content.encode()))]
         request = {
             "operation": "publish_pull_request",
             "repository_id": "github-installation/456/repository/1001",
             "branch": "agent/process-",
+            "base_branch": "master",
             "staged_change_digest": digest,
             "idempotency_key": key,
             "policy_effect": "allow",
@@ -1582,7 +1864,7 @@ class BareProcessBranchTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
             channel.reconcile_branch("agent/process-")
         with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
-            channel.reconcile_pull_request(branch="agent/process-", idempotency_key=key, staged_change_digest=digest)
+            channel.reconcile_pull_request(branch="agent/process-", base_branch="master", idempotency_key=key, staged_change_digest=digest)
         with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):
             channel.publish_verified_files(branch="agent/process-", staged_change=staged_change, files=files)
         with self.assertRaisesRegex(ContractValidationError, "branch is outside the agent namespace"):

@@ -16,9 +16,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from app_contracts.digests import sha256_digest
 from app_contracts.validator import validate
+from approval_test_support import TEST_APPROVER_PUBLIC_KEYS, sign_test_approval
 
 
 NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
@@ -59,19 +61,20 @@ def build_intent(staged_change: dict) -> dict:
         "process_id": PROCESS_ID,
         "repository_id": REPOSITORY_ID,
         "base_commit": BASE_COMMIT,
+        "base_branch": "master",
         "staged_change_digest": digest,
         "approval_id": APPROVAL_ID,
         "branch_namespace": BRANCH,
         "title_artifact_ref": "artifact://pr/chain-001/title",
         "body_artifact_ref": "artifact://pr/chain-001/body",
-        "idempotency_key": f"publish/{PROCESS_ID}/{digest}",
+        "idempotency_key": f"publish/{PROCESS_ID}/master/{digest}",
         "audience": "github-installation-42",
         "expires_at": "2026-09-05T12:00:00Z",
     }
 
 
 def build_approval(staged_change: dict, intent: dict) -> dict:
-    return {
+    return sign_test_approval({
         "schema_version": 1,
         "approval_id": APPROVAL_ID,
         "approver_id": "user-alice",
@@ -83,7 +86,7 @@ def build_approval(staged_change: dict, intent: dict) -> dict:
         "policy_version": "policy-1",
         "approved_at": "2026-09-04T12:05:00Z",
         "expires_at": "2026-09-05T12:00:00Z",
-    }
+    })
 
 
 def build_actuator_request(staged_change: dict, intent: dict) -> dict:
@@ -96,6 +99,7 @@ def build_actuator_request(staged_change: dict, intent: dict) -> dict:
         "process_id": PROCESS_ID,
         "repository_id": REPOSITORY_ID,
         "base_commit": BASE_COMMIT,
+        "base_branch": "master",
         "staged_change_digest": digest,
         "patch_artifact_ref": "artifact://patches/chain-001",
         "approval_id": APPROVAL_ID,
@@ -103,7 +107,7 @@ def build_actuator_request(staged_change: dict, intent: dict) -> dict:
         "branch_namespace": BRANCH,
         "title_artifact_ref": "artifact://pr/chain-001/title",
         "body_artifact_ref": "artifact://pr/chain-001/body",
-        "idempotency_key": f"publish/{PROCESS_ID}/{digest}",
+        "idempotency_key": f"publish/{PROCESS_ID}/master/{digest}",
         "expires_at": "2026-09-04T12:11:00Z",
     }
 
@@ -178,7 +182,7 @@ class ComposedFixtureTests(unittest.TestCase):
 
     def test_idempotency_key_binding_is_consistent(self):
         chain = build_chain()
-        expected = f"publish/{PROCESS_ID}/{sha256_digest(chain['staged_change'])}"
+        expected = f"publish/{PROCESS_ID}/master/{sha256_digest(chain['staged_change'])}"
         self.assertEqual(chain["intent"]["idempotency_key"], expected)
         self.assertEqual(chain["actuator_request"]["idempotency_key"], expected)
         self.assertEqual(chain["journal_inputs"]["idempotency_key"], expected)
@@ -248,6 +252,8 @@ def _decide_adapter(actuator_request: dict, approval: dict, staged_change: dict,
         version="policy-1",
         allowed_repositories=frozenset({REPOSITORY_ID}),
         allowed_actuators=frozenset({"actuator-github-001"}),
+        allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+        trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
     ))
     return policy.decide(
         decision_id="decision-chain-001",
@@ -332,6 +338,7 @@ class ComposedPositivePathTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": REPOSITORY_ID,
             "branch": intent["branch_namespace"],
+            "base_branch": intent["base_branch"],
             "staged_change_digest": intent["staged_change_digest"],
             "idempotency_key": intent["idempotency_key"],
             "policy_effect": "allow",
@@ -394,6 +401,8 @@ class ComposedSwapDenialTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         gateway = GatewayDecision(GatewayPath.SLOW, True, ("write-or-unknown-operation",))
         for kind in ("intent-branch", "approval-digest", "request-branch", "request-key"):
@@ -441,6 +450,8 @@ class ComposedSwapDenialTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id="decision-chain-002",
@@ -497,6 +508,8 @@ class ComposedExpiryDenialTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id="decision-chain-expiry",
@@ -657,6 +670,8 @@ class ComposedGatewayDenialTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id=decision_id,
@@ -839,6 +854,7 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": REPOSITORY_ID,
             "branch": chain["intent"]["branch_namespace"],
+            "base_branch": chain["intent"]["base_branch"],
             "staged_change_digest": chain["intent"]["staged_change_digest"],
             "idempotency_key": chain["intent"]["idempotency_key"],
             "request_digest": sha256_digest(chain["actuator_request"]),
@@ -912,6 +928,8 @@ class ComposedReplayIdempotencyTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         digest = chain["actuator_request"]["staged_change_digest"]
         variants = {
@@ -962,6 +980,7 @@ class ComposedRecoveryMatrixTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": REPOSITORY_ID,
             "branch": chain["intent"]["branch_namespace"],
+            "base_branch": chain["intent"]["base_branch"],
             "staged_change_digest": chain["intent"]["staged_change_digest"],
             "idempotency_key": chain["intent"]["idempotency_key"],
             "request_digest": sha256_digest(chain["actuator_request"]),
@@ -1101,6 +1120,8 @@ class ComposedEvidenceRedactionTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id="decision-chain-evidence",
@@ -1138,6 +1159,7 @@ class ComposedEvidenceRedactionTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": REPOSITORY_ID,
             "branch": chain["intent"]["branch_namespace"],
+            "base_branch": chain["intent"]["base_branch"],
             "staged_change_digest": chain["intent"]["staged_change_digest"],
             "idempotency_key": chain["intent"]["idempotency_key"],
             "request_digest": sha256_digest(chain["actuator_request"]),
@@ -1182,6 +1204,8 @@ class ComposedEvidenceRedactionTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         evil_intent = copy.deepcopy(chain["intent"])
         evil_intent["branch_namespace"] = "agent/process-evil-001"
@@ -1227,6 +1251,8 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id=f"decision-catalog-{suffix}",
@@ -1303,6 +1329,8 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
                     version="policy-1",
                     allowed_repositories=frozenset({REPOSITORY_ID}),
                     allowed_actuators=frozenset({"actuator-github-001"}),
+                    allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                    trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
                 ))
                 decision = policy.decide(
                     decision_id=f"decision-catalog-{label}",
@@ -1373,6 +1401,8 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({REPOSITORY_ID}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id="decision-catalog-gateway",
@@ -1448,6 +1478,7 @@ class AdversarialRegressionCatalogTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": REPOSITORY_ID,
             "branch": chain["intent"]["branch_namespace"],
+            "base_branch": chain["intent"]["base_branch"],
             "staged_change_digest": chain["intent"]["staged_change_digest"],
             "idempotency_key": chain["intent"]["idempotency_key"],
             "request_digest": env["journal"].get(PROCESS_ID).request_digest,

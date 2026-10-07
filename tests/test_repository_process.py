@@ -725,7 +725,10 @@ class RepositoryProcessTests(unittest.TestCase):
     def test_failed_tests_do_not_create_staged_change(self):
         broken = self.new_calculator.replace("return left + right", "return left - right")
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
-            with self.assertRaisesRegex(ContractValidationError, "verification failed"):
+            with self.assertRaisesRegex(
+                ContractValidationError,
+                "verification failed; staged change was not created: allowlisted-tests-failed",
+            ):
                 prepare_change(
                     sandbox,
                     process_id="process-m1-demo",
@@ -735,6 +738,77 @@ class RepositoryProcessTests(unittest.TestCase):
                     changes={"calculator.py": broken},
                     test_command=["python3", "-m", "unittest", "-v"],
                 )
+
+    def test_failed_test_exposes_only_allowlisted_stdout_marker(self):
+        from types import SimpleNamespace
+
+        for category in (
+            "readiness-exit",
+            "readiness-timeout",
+            "malformed-status",
+            "malformed-no-write",
+            "overflow-status",
+            "overflow-no-write",
+            "valid-status",
+            "valid-body",
+            "valid-row",
+        ):
+            with self.subTest(category=category):
+                with self.backend.create(self.fixture, {"python3"}) as sandbox:
+                    sandbox.run = lambda *args, **kwargs: SimpleNamespace(
+                        returncode=1,
+                        stdout=(
+                            "PRIVATE-STDOUT-CANARY\n"
+                            f"agent00x:test-failure:{category}\n"
+                        ),
+                        stderr="PRIVATE-STDERR-CANARY",
+                    )
+                    with self.assertRaises(ContractValidationError) as raised:
+                        prepare_change(
+                            sandbox,
+                            process_id="process-m1-diagnostic",
+                            task_id="task-m1-diagnostic",
+                            repository_id="github-installation/42/repository/1001",
+                            base_commit="a" * 40,
+                            changes={"calculator.py": self.new_calculator},
+                            test_command=["python3", "-m", "unittest", "-v"],
+                        )
+                message = str(raised.exception)
+                self.assertIn(f": {category}", message)
+                self.assertNotIn("PRIVATE-STDOUT-CANARY", message)
+                self.assertNotIn("PRIVATE-STDERR-CANARY", message)
+
+    def test_failed_test_ignores_unknown_or_embedded_markers(self):
+        from types import SimpleNamespace
+
+        outputs = (
+            "agent00x:test-failure:private-canary",
+            "prefix agent00x:test-failure:valid-row",
+            "agent00x:test-failure:valid-row trailing-canary",
+            "PRIVATE-CANARY",
+        )
+        for stdout in outputs:
+            with self.subTest(stdout=stdout):
+                with self.backend.create(self.fixture, {"python3"}) as sandbox:
+                    sandbox.run = lambda *args, **kwargs: SimpleNamespace(
+                        returncode=1,
+                        stdout=stdout,
+                        stderr="PRIVATE-STDERR-CANARY",
+                    )
+                    with self.assertRaises(ContractValidationError) as raised:
+                        prepare_change(
+                            sandbox,
+                            process_id="process-m1-diagnostic",
+                            task_id="task-m1-diagnostic",
+                            repository_id="github-installation/42/repository/1001",
+                            base_commit="a" * 40,
+                            changes={"calculator.py": self.new_calculator},
+                            test_command=["python3", "-m", "unittest", "-v"],
+                        )
+                message = str(raised.exception)
+                self.assertTrue(message.endswith("allowlisted-tests-failed"))
+                self.assertNotIn("PRIVATE-CANARY", message)
+                self.assertNotIn("PRIVATE-STDERR-CANARY", message)
 
 
 if __name__ == "__main__":

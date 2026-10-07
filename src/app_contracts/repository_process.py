@@ -13,6 +13,33 @@ from .sandbox import LocalProcessSandbox
 from .validator import ContractValidationError
 
 
+_TEST_FAILURE_MARKER_PREFIX = "agent00x:test-failure:"
+_SAFE_TEST_FAILURE_CATEGORIES = frozenset({
+    "readiness-exit",
+    "readiness-timeout",
+    "malformed-status",
+    "malformed-no-write",
+    "overflow-status",
+    "overflow-no-write",
+    "valid-status",
+    "valid-body",
+    "valid-row",
+})
+
+
+def _safe_test_failure_category(stdout: str) -> str:
+    """Return one fixed diagnostic marker, never arbitrary child output."""
+
+    category = "allowlisted-tests-failed"
+    for line in stdout.splitlines():
+        if not line.startswith(_TEST_FAILURE_MARKER_PREFIX):
+            continue
+        candidate = line.removeprefix(_TEST_FAILURE_MARKER_PREFIX)
+        if candidate in _SAFE_TEST_FAILURE_CATEGORIES:
+            category = candidate
+    return category
+
+
 @dataclass(frozen=True)
 class PreparedChange:
     patch: str
@@ -185,7 +212,11 @@ def prepare_change(
         "created_at": _format_time(timestamp),
     }
     if verification["verdict"] != "pass":
-        raise ContractValidationError("verification failed; staged change was not created")
+        failure_category = _safe_test_failure_category(test_result.stdout)
+        raise ContractValidationError(
+            "verification failed; staged change was not created: "
+            f"{failure_category}"
+        )
 
     verification_digest = sha256_digest(verification)
     staged = {

@@ -7,8 +7,10 @@ process isolation, verifier identity, or independent trust by themselves.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import base64
 import json
 import os
+import posixpath
 import re
 import selectors
 import subprocess
@@ -17,14 +19,20 @@ import time
 from .digests import sha256_bytes
 from .executor import (
     MAX_VERIFIER_BLOCKER_CODES,
+    MAX_VERIFIER_SNAPSHOT_FILES,
+    MAX_VERIFIER_SNAPSHOT_FILE_BYTES,
+    MAX_VERIFIER_SNAPSHOT_PATH_BYTES,
+    MAX_VERIFIER_SNAPSHOT_TOTAL_BYTES,
     VerifierInput,
     VerifierResult,
     VerifierVerdict,
     validate_verifier_result,
+    verifier_snapshot_tree_digest,
 )
 
 
-VERIFIER_PROCESS_SCHEMA_VERSION = 1
+VERIFIER_PROCESS_SCHEMA_VERSION = 3
+VERIFIER_PROCESS_RESPONSE_SCHEMA_VERSION = 2
 
 MAX_VERIFIER_REQUEST_FILES = 20
 MAX_VERIFIER_REQUEST_PATH_BYTES = 240
@@ -34,6 +42,21 @@ MAX_VERIFIER_REQUEST_BYTES = 2_000_000
 MAX_VERIFIER_REQUEST_COMMAND_ARGS = 64
 MAX_VERIFIER_COMMAND_TIMEOUT_SECONDS = 86_400
 MAX_VERIFIER_RESPONSE_BYTES = 2_000_000
+_FIXED_CHILD_REJECTION_MARKER = b"verifier container: request or execution rejected\n"
+_SAFE_CHILD_REJECTION_CODES = frozenset({
+    "request-encoding",
+    "request-payload",
+    "request-version",
+    "request-fields",
+    "request-size",
+    "snapshot-file-limit",
+    "snapshot-total-limit",
+    "snapshot-binding",
+    "input-binding",
+    "candidate-scope",
+    "test-command",
+    "snapshot-path",
+})
 
 VERIFIER_PROCESS_LIMITATIONS = (
     "local_test_evidence_only",
@@ -99,6 +122,8 @@ _VERIFIER_INPUT_FIELDS = frozenset(
         "verified_contents_digest",
         "evidence_origin",
         "replay_result_digest",
+        "snapshot_files",
+        "snapshot_claim_digest",
     }
 )
 
@@ -115,7 +140,9 @@ _STR_FIELDS = frozenset(
     }
 )
 
-_OPTIONAL_STR_FIELDS = frozenset({"snapshot_tree_digest", "replay_result_digest"})
+_OPTIONAL_STR_FIELDS = frozenset(
+    {"snapshot_tree_digest", "replay_result_digest", "snapshot_claim_digest"}
+)
 
 _STR_LIST_FIELDS = frozenset({"declared_change_paths", "test_command"})
 
@@ -255,6 +282,18 @@ def classify_verifier_outcome(outcome: object) -> VerifierProcessResponse:
     if type(outcome) is not VerifierProcessOutcome:
         raise VerifierProcessError("verifier process: child outcome is invalid")
     if outcome.exit_code != 0:
+        if outcome.stderr == _FIXED_CHILD_REJECTION_MARKER:
+            raise VerifierProcessError("verifier process: child request rejected")
+        for code in _SAFE_CHILD_REJECTION_CODES:
+            marker = f"verifier container: rejection:{code}\n".encode("ascii")
+            if outcome.stderr == marker:
+                raise VerifierProcessError(
+                    f"verifier process: child rejected ({code})"
+                )
+        if 0 <= outcome.exit_code <= 255:
+            raise VerifierProcessError(
+                f"verifier process: child exit failed (status={outcome.exit_code})"
+            )
         raise VerifierProcessError("verifier process: child exit failed")
     if outcome.stdout == b"":
         raise VerifierProcessError("verifier process: child response is empty")
@@ -452,7 +491,10 @@ class VerifierProcessResponse:
     verifier_result: VerifierResult
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != VERIFIER_PROCESS_SCHEMA_VERSION:
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != VERIFIER_PROCESS_RESPONSE_SCHEMA_VERSION
+        ):
             raise VerifierProcessError("verifier process: response version is invalid")
         if (
             type(self.request_digest) is not str
@@ -473,7 +515,7 @@ class VerifierProcessResponse:
             or _REQUEST_DIGEST_PATTERN.fullmatch(request_digest) is None
         ):
             raise VerifierProcessError("verifier process: response fields are invalid")
-        return cls(VERIFIER_PROCESS_SCHEMA_VERSION, request_digest, value)
+        return cls(VERIFIER_PROCESS_RESPONSE_SCHEMA_VERSION, request_digest, value)
 
 
 def serialize_verifier_request(value: object) -> bytes:
@@ -493,8 +535,14 @@ def serialize_verifier_request(value: object) -> bytes:
     except Exception:
         raise VerifierProcessError("verifier process: request serialization failed") from None
     try:
+        payload = asdict(value)
+        raw_input = payload["verifier_input"]
+        raw_input["snapshot_files"] = [
+            [path, mode, base64.b64encode(content).decode("ascii")]
+            for path, mode, content in value.verifier_input.snapshot_files
+        ]
         encoded = json.dumps(
-            asdict(value),
+            payload,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -531,6 +579,16 @@ def _check_verifier_request_bounds(verifier_input: VerifierInput) -> None:
         if value is not None:
             bounded_text(value)
     if verifier_input.evidence_origin != "local_test":
+        raise VerifierProcessError("verifier process: request fields are invalid")
+    if (
+        verifier_input.snapshot_claim_digest is not None
+        and (
+            verifier_input.snapshot_tree_digest is None
+            or _REQUEST_DIGEST_PATTERN.fullmatch(
+                verifier_input.snapshot_claim_digest
+            ) is None
+        )
+    ):
         raise VerifierProcessError("verifier process: request fields are invalid")
     if (
         type(verifier_input.test_timeout_seconds) is not int
@@ -577,6 +635,53 @@ def _check_verifier_request_bounds(verifier_input: VerifierInput) -> None:
         if total_content_bytes > MAX_VERIFIER_REQUEST_CONTENTS_BYTES:
             raise VerifierProcessError("verifier process: request contents exceed limit")
 
+    snapshot_files = verifier_input.snapshot_files
+    if type(snapshot_files) is not tuple or len(snapshot_files) > MAX_VERIFIER_SNAPSHOT_FILES:
+        raise VerifierProcessError("verifier process: snapshot file count exceeds limit")
+    snapshot_total_bytes = 0
+    previous_path = None
+    for entry in snapshot_files:
+        if type(entry) is not tuple or len(entry) != 3:
+            raise VerifierProcessError("verifier process: snapshot fields are invalid")
+        path, mode, content = entry
+        if (
+            type(path) is not str
+            or len(path) > MAX_VERIFIER_SNAPSHOT_PATH_BYTES
+            or not _is_safe_snapshot_path(path)
+            or type(mode) is not str
+            or mode not in {"100644", "100755"}
+            or type(content) is not bytes
+        ):
+            raise VerifierProcessError("verifier process: snapshot fields are invalid")
+        path_bytes = bounded_text(path)
+        if path_bytes > MAX_VERIFIER_SNAPSHOT_PATH_BYTES:
+            raise VerifierProcessError("verifier process: snapshot path exceeds limit")
+        if previous_path is not None and path <= previous_path:
+            raise VerifierProcessError("verifier process: snapshot paths are invalid")
+        previous_path = path
+        if len(content) > MAX_VERIFIER_SNAPSHOT_FILE_BYTES:
+            raise VerifierProcessError("verifier process: snapshot file exceeds limit")
+        snapshot_total_bytes += len(content)
+        if snapshot_total_bytes > MAX_VERIFIER_SNAPSHOT_TOTAL_BYTES:
+            raise VerifierProcessError("verifier process: snapshot exceeds limit")
+    if verifier_input.snapshot_tree_digest is None:
+        if snapshot_files:
+            raise VerifierProcessError("verifier process: snapshot binding is invalid")
+    elif verifier_snapshot_tree_digest(snapshot_files) != verifier_input.snapshot_tree_digest:
+        raise VerifierProcessError("verifier process: snapshot binding is invalid")
+
+
+def _is_safe_snapshot_path(value: str) -> bool:
+    if (
+        not value
+        or value.startswith("/")
+        or "\\" in value
+        or "\x00" in value
+        or posixpath.normpath(value) != value
+    ):
+        return False
+    return all(part not in {"", ".", ".."} for part in value.split("/"))
+
 
 def parse_verifier_request(data: object) -> VerifierProcessRequest:
     """Parse canonical request bytes back into a bounded request record.
@@ -622,6 +727,10 @@ def parse_verifier_request(data: object) -> VerifierProcessRequest:
         verified_contents=tuple(
             (entry[0], entry[1]) for entry in raw_input["verified_contents"]
         ),
+        snapshot_files=tuple(
+            (entry[0], entry[1], _decode_snapshot_base64(entry[2]))
+            for entry in raw_input["snapshot_files"]
+        ),
         test_command=tuple(raw_input["test_command"]),
         test_timeout_seconds=raw_input["test_timeout_seconds"],
         patch_digest=raw_input["patch_digest"],
@@ -630,6 +739,7 @@ def parse_verifier_request(data: object) -> VerifierProcessRequest:
         verified_contents_digest=raw_input["verified_contents_digest"],
         evidence_origin=raw_input["evidence_origin"],
         replay_result_digest=raw_input["replay_result_digest"],
+        snapshot_claim_digest=raw_input["snapshot_claim_digest"],
     )
     _check_verifier_request_bounds(verifier_input)
     return VerifierProcessRequest(version, verifier_input)
@@ -674,7 +784,7 @@ def parse_verifier_response(data: object) -> VerifierProcessResponse:
     if type(payload) is not dict:
         raise VerifierProcessError("verifier process: response payload is invalid")
     version = payload.get("schema_version")
-    if type(version) is not int or version != VERIFIER_PROCESS_SCHEMA_VERSION:
+    if type(version) is not int or version != VERIFIER_PROCESS_RESPONSE_SCHEMA_VERSION:
         raise VerifierProcessError("verifier process: response version is invalid")
     if set(payload) != _RESPONSE_FIELDS:
         raise VerifierProcessError("verifier process: response fields are invalid")
@@ -795,3 +905,26 @@ def _validate_verifier_input_shape(raw_input: dict[str, object]) -> None:
             or type(entry[1]) is not str
         ):
             raise VerifierProcessError("verifier process: request fields are invalid")
+    snapshot_files = raw_input["snapshot_files"]
+    if type(snapshot_files) is not list:
+        raise VerifierProcessError("verifier process: snapshot fields are invalid")
+    for entry in snapshot_files:
+        if (
+            type(entry) is not list
+            or len(entry) != 3
+            or type(entry[0]) is not str
+            or type(entry[1]) is not str
+            or type(entry[2]) is not str
+        ):
+            raise VerifierProcessError("verifier process: snapshot fields are invalid")
+
+
+def _decode_snapshot_base64(value: str) -> bytes:
+    try:
+        encoded = value.encode("ascii", "strict")
+        decoded = base64.b64decode(encoded, validate=True)
+        if base64.b64encode(decoded) != encoded:
+            raise ValueError()
+        return decoded
+    except Exception:
+        raise VerifierProcessError("verifier process: snapshot encoding is invalid") from None

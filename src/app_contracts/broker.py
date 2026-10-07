@@ -36,7 +36,80 @@ _REQUIRED_GRANT_FIELDS = (
 )
 
 
-_REQUIRED_REQUEST_FIELDS = ("actuator_id", "repository_id", "operation")
+_REQUIRED_REQUEST_FIELDS = ("actuator_id", "repository_id", "operation", "base_branch")
+
+_TRUSTED_GITHUB_APP_TYPES: dict[str, type] = {}
+
+
+def _register_github_app_types(
+    broker_type: type,
+    channel_type: type,
+    receipt_type: type,
+    read_only_channel_type: type | None = None,
+) -> None:
+    """Register the exact provider adapter classes without importing them here."""
+    expected = {
+        "broker": (broker_type, "GitHubAppCredentialBroker"),
+        "channel": (channel_type, "GitHubAppPublicationChannel"),
+        "receipt": (receipt_type, "GitHubPullRequest"),
+    }
+    if read_only_channel_type is not None:
+        expected["read_only_channel"] = (
+            read_only_channel_type,
+            "GitHubAppReadOnlyReconciliationChannel",
+        )
+    for candidate, expected_name in expected.values():
+        if (
+            not isinstance(candidate, type)
+            or candidate.__module__ != "app_contracts.github_app"
+            or candidate.__name__ != expected_name
+        ):
+            raise ContractValidationError("broker: trusted adapter types are invalid")
+    if any(
+        role in _TRUSTED_GITHUB_APP_TYPES
+        and _TRUSTED_GITHUB_APP_TYPES[role] is not candidate
+        for role, (candidate, _name) in expected.items()
+    ):
+        raise ContractValidationError("broker: trusted adapter types are already registered")
+    _TRUSTED_GITHUB_APP_TYPES.update(
+        {role: candidate for role, (candidate, _name) in expected.items()}
+    )
+
+
+def is_registered_provider_adapter_type(candidate: object, role: str) -> bool:
+    """Match a registered adapter type by identity, never by a caller-set name."""
+    if type(role) is not str or role not in {
+        "broker", "channel", "receipt", "read_only_channel"
+    }:
+        return False
+    return _TRUSTED_GITHUB_APP_TYPES.get(role) is candidate
+
+
+def publish_verified_manifest(
+    channel: object,
+    *,
+    branch: str,
+    staged_change: dict[str, object],
+    files: tuple[object, ...],
+) -> object:
+    """Route a checked manifest through the private provider-channel contract."""
+    publish = getattr(channel, "publish_verified_files", None)
+    if not callable(publish):
+        raise ContractValidationError("broker: verified-file channel is unavailable")
+    return publish(branch=branch, staged_change=staged_change, files=files)
+
+
+def reconcile_verified_manifest(
+    channel: object,
+    *,
+    branch: str,
+    files: tuple[object, ...],
+) -> object:
+    """Route a bounded read-only reconciliation through the private channel."""
+    reconcile = getattr(channel, "reconcile_verified_files", None)
+    if not callable(reconcile):
+        raise ContractValidationError("broker: verified-file reconciliation is unavailable")
+    return reconcile(branch=branch, files=files)
 
 
 def validate_credential_use_grant(
@@ -66,6 +139,8 @@ def validate_credential_use_grant(
             value = mapping[field]
             if not isinstance(value, str) or not value:
                 raise ContractValidationError("broker: binding value is invalid")
+    if type(actuator_request["base_branch"]) is not str or not actuator_request["base_branch"]:
+        raise ContractValidationError("broker: binding value is invalid")
     grant_id = credential_grant["credential_grant_id"]
     if not isinstance(grant_id, str) or not grant_id:
         raise ContractValidationError("broker: binding value is invalid")

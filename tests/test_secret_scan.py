@@ -9,7 +9,14 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.secret_scan import CredentialLeakDetected, assert_canary_absent, find_canary_surfaces
+from app_contracts.secret_scan import (
+    CredentialLeakDetected,
+    assert_canary_absent,
+    assert_no_credential_pattern_content,
+    find_canary_surfaces,
+    find_credential_pattern_content,
+)
+from app_contracts.pinned_snapshot import MAX_SNAPSHOT_FILE_BYTES
 
 
 class CanaryCredentialTests(unittest.TestCase):
@@ -202,6 +209,68 @@ class CanaryCredentialTests(unittest.TestCase):
         surfaces["evidence"] = {"report": f"failure output: {self.canary}"}
         with self.assertRaises(CredentialLeakDetected):
             assert_canary_absent(self.canary, surfaces)
+
+    def test_common_credential_patterns_are_reported_without_values(self):
+        samples = (
+            ("backend/github.py", b'GH_TOKEN = "ghp_' + b"A" * 24 + b'"\n', "github-token"),
+            ("backend/aws.py", b'KEY = "AKIA1234567890ABCDEF"\n', "aws-access-key"),
+            (
+                "backend/key.py",
+                b"-----BEGIN PRIVATE KEY-----\nsynthetic\n",
+                "private-key-pem",
+            ),
+            (
+                "backend/config.py",
+                b'password = "synthetic-password-value"\n',
+                "credential-assignment",
+            ),
+        )
+        for path, content, expected_rule in samples:
+            with self.subTest(rule=expected_rule):
+                findings = find_credential_pattern_content(((path, content),))
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0].path, path)
+                self.assertEqual(findings[0].rule_id, expected_rule)
+                self.assertNotIn(content.decode("utf-8").strip(), repr(findings))
+                with self.assertRaises(CredentialLeakDetected) as raised:
+                    assert_no_credential_pattern_content(((path, content),))
+                self.assertEqual(str(raised.exception), "credential-shaped content detected")
+                self.assertNotIn(content.decode("utf-8").strip(), str(raised.exception))
+
+    def test_binary_content_is_scanned_as_bytes_without_utf8_requirement(self):
+        clean_binary = ("static/logo.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        self.assertEqual(find_credential_pattern_content((clean_binary,)), ())
+
+        canary = b"ghp_" + b"A" * 24
+        binary_with_token = ("static/logo.png", b"\x89PNG\x00" + canary + b"\xff")
+        findings = find_credential_pattern_content((binary_with_token,))
+        self.assertEqual([(item.path, item.rule_id) for item in findings], [("static/logo.png", "github-token")])
+        self.assertNotIn(canary.decode("ascii"), repr(findings))
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_no_credential_pattern_content((binary_with_token,))
+        self.assertEqual(str(raised.exception), "credential-shaped content detected")
+        self.assertNotIn(canary.decode("ascii"), str(raised.exception))
+
+    def test_credential_pattern_scan_is_bounded_and_rejects_malformed_records(self):
+        self.assertEqual(
+            find_credential_pattern_content(
+                (("backend/app.py", b"def main():\n    return 'safe'\n"),)
+            ),
+            (),
+        )
+        for files in (
+            (("../outside.py", b"safe"),),
+            (("backend/app.py", "not-bytes"),),
+            (("backend/app.py", b"one"), ("backend/app.py", b"two")),
+            (("backend/large.txt", b"x" * (MAX_SNAPSHOT_FILE_BYTES + 1)),),
+            ([("backend/app.py", b"safe")],),
+        ):
+            with self.subTest(input_type=type(files[0]).__name__):
+                with self.assertRaisesRegex(
+                    ValueError, "^credential content input is invalid$"
+                ) as raised:
+                    find_credential_pattern_content(files)
+                self.assertNotIn("safe", str(raised.exception))
 
 
 if __name__ == "__main__":

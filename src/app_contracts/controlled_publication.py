@@ -15,11 +15,17 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+import re
 from typing import Any, Callable, TypeVar
 
 from .authority import DeterministicPolicy, check_decision_usable, check_intent_approved
-from .broker import InMemoryCredentialBroker
-from .digests import sha256_digest
+from .broker import (
+    InMemoryCredentialBroker,
+    is_registered_provider_adapter_type,
+    publish_verified_manifest,
+    reconcile_verified_manifest,
+)
+from .digests import sha256_bytes, sha256_digest
 from .gateway import GatewayDecision, GatewayPath
 from .mock_github import MockGitHubEndpoint, MockPullRequest
 from .publication import (
@@ -30,6 +36,8 @@ from .publication import (
     recover_publication,
 )
 from .publication_seed import PublicationIntent, PublicationSeed
+from .repository_binding import RepositoryTargetBinding
+from .repository_process import PublishableFile
 
 
 class ControlledPublicationError(ValueError):
@@ -126,6 +134,8 @@ def run_policy_gate(
     ):
         if engine_intent.get(field) != getattr(intent, field):
             raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if engine_intent.get("source_repository_id") != intent.source_repository_id:
+        raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
     if engine_intent.get("operation") != "publish_pull_request":
         raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
     if engine_intent.get("branch_namespace") != intent.branch.split("/", 1)[0]:
@@ -246,7 +256,9 @@ def _require_bound_envelope(intent: PublicationIntent, envelope: Any) -> None:
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
     if not isinstance(envelope.get("destination"), dict) or envelope[
         "destination"
-    ].get("repository_id") != intent.repository_id:
+    ].get("repository_id") != intent.repository_id or envelope["destination"].get(
+        "base_branch"
+    ) != intent.base_branch:
         raise ControlledPublicationError("controlled publication: gateway envelope mismatch")
     if not isinstance(envelope.get("source"), dict) or envelope["source"].get(
         "principal_id"
@@ -332,6 +344,7 @@ def run_broker_gate(
         "operation": "publish_pull_request",
         "repository_id": intent.repository_id,
         "actuator_id": actuator_id,
+        "base_branch": intent.base_branch,
         "staged_change_digest": intent.staged_change_digest,
         "branch_namespace": intent.branch.split("/", 1)[0],
         "idempotency_key": intent.idempotency_key,
@@ -410,17 +423,17 @@ def run_controlled_local_publication(
     journal: Any,
     endpoint: Any,
     *,
+    verified_files: Any = None,
     actuator_id: Any,
     now: datetime,
-) -> MockPullRequest:
-    """Run the narrow local approval-to-mock publication path.
+) -> Any:
+    """Run approval-to-publication through one explicitly typed channel.
 
     File contents are supplied only by a bounded injected loader for the
     policy digest check; callers do not pass raw content or a provider channel
-    into this coordinator. The only endpoint accepted here is the existing
-    in-memory ``MockGitHubEndpoint``, returned as the private channel by the
-    test-only in-memory broker. No real provider, credential value, or network
-    capability is accepted.
+    into this coordinator. The mock path accepts only the in-memory broker
+    and endpoint. The GitHub App path accepts only its typed broker/channel;
+    this function does not itself enable or authorize live provider access.
     """
 
     if type(seed) is not PublicationSeed:
@@ -431,15 +444,25 @@ def run_controlled_local_publication(
         raise ControlledPublicationError("controlled publication: policy engine is invalid")
     if not callable(load_staged_change):
         raise ControlledPublicationError("controlled publication: staged change loader is invalid")
-    if type(broker) is not InMemoryCredentialBroker:
-        raise ControlledPublicationError("controlled publication: in-memory broker is required")
+    github_app_broker = is_registered_provider_adapter_type(type(broker), "broker")
+    if type(broker) is not InMemoryCredentialBroker and not github_app_broker:
+        raise ControlledPublicationError("controlled publication: supported broker is required")
     if type(journal) is not PublicationJournal:
         raise ControlledPublicationError("controlled publication: local journal is required")
-    if type(endpoint) is not MockGitHubEndpoint:
-        raise ControlledPublicationError("controlled publication: mock endpoint is required")
+    if type(broker) is InMemoryCredentialBroker:
+        if type(endpoint) is not MockGitHubEndpoint:
+            raise ControlledPublicationError("controlled publication: mock endpoint is required")
+        if verified_files is not None:
+            raise ControlledPublicationError("controlled publication: mock endpoint cannot publish files")
+    elif not is_registered_provider_adapter_type(endpoint, "channel"):
+        raise ControlledPublicationError("controlled publication: GitHub channel type is required")
+    else:
+        verified_files = _validate_verified_files(seed, verified_files)
     _require_seed_intent_binding(seed, intent)
+    if github_app_broker and seed.source_repository_id is not None:
+        _require_broker_target_binding(seed, broker)
 
-    def after_approval(approved_intent: PublicationIntent) -> MockPullRequest:
+    def after_approval(approved_intent: PublicationIntent) -> Any:
         try:
             staged_change = load_staged_change(seed)
         except Exception:
@@ -448,6 +471,9 @@ def run_controlled_local_publication(
             ) from None
         if not isinstance(staged_change, dict):
             raise ControlledPublicationError("controlled publication: staged change is invalid")
+        provider_staged_change = _bind_stage_repository_identity(
+            seed, intent, staged_change
+        )
 
         def publish_after_broker(
             gate_intent: PublicationIntent,
@@ -455,23 +481,63 @@ def run_controlled_local_publication(
             decision: dict,
             _gateway_decision: GatewayDecision,
             channel: Any,
-        ) -> MockPullRequest:
-            if type(channel) is not MockGitHubEndpoint or channel is not endpoint:
+        ) -> Any:
+            channel_matches = (
+                type(channel) is MockGitHubEndpoint and channel is endpoint
+                if type(broker) is InMemoryCredentialBroker
+                else is_registered_provider_adapter_type(type(channel), "channel")
+            )
+            if not channel_matches:
                 raise ControlledPublicationError(
-                    "controlled publication: mock broker channel is invalid"
+                    "controlled publication: broker channel is invalid"
                 )
             request = {
                 "process_id": gate_intent.process_id,
                 "operation": "publish_pull_request",
                 "repository_id": gate_intent.repository_id,
                 "branch": gate_intent.branch,
+                "base_branch": gate_intent.base_branch,
                 "staged_change_digest": gate_intent.staged_change_digest,
                 "idempotency_key": gate_intent.idempotency_key,
                 "policy_effect": decision["effect"],
                 "approval_valid": True,
             }
             try:
-                return execute_publication(journal, channel, request)
+                before_publish = None
+                if github_app_broker:
+                    def publish_verified_files() -> None:
+                        try:
+                            commit_sha = publish_verified_manifest(
+                                channel,
+                                branch=gate_intent.branch,
+                                staged_change=provider_staged_change,
+                                files=verified_files,
+                            )
+                        except Exception:
+                            # A lost PUT response may still have applied. One
+                            # GET-only check can prove the complete manifest;
+                            # incomplete/unknown state remains fail-closed.
+                            try:
+                                commit_sha = reconcile_verified_manifest(
+                                    channel,
+                                    branch=gate_intent.branch,
+                                    files=verified_files,
+                                )
+                            except Exception:
+                                commit_sha = None
+                        if not isinstance(commit_sha, str) or re.fullmatch(
+                            r"[0-9a-f]{40}", commit_sha
+                        ) is None:
+                            raise ControlledPublicationError(
+                                "controlled publication: verified-file receipt is invalid"
+                            )
+
+                    before_publish = publish_verified_files
+                if before_publish is None:
+                    return execute_publication(journal, channel, request)
+                return execute_publication(
+                    journal, channel, request, before_publish=before_publish
+                )
             except SimulatedCrash:
                 # Keep crash injection observable; the caller owns recovery.
                 raise
@@ -492,7 +558,9 @@ def run_controlled_local_publication(
                         receipt = channel.find_by_idempotency_key(
                             gate_intent.idempotency_key
                         )
-                        if isinstance(receipt, MockPullRequest):
+                        if isinstance(receipt, MockPullRequest) or is_registered_provider_adapter_type(
+                            type(receipt), "receipt"
+                        ):
                             return receipt
                 except Exception:
                     pass
@@ -537,10 +605,171 @@ def _require_seed_intent_binding(seed: PublicationSeed, intent: PublicationInten
     if (
         seed.process_id != intent.process_id
         or seed.repository_id != intent.repository_id
+        or seed.source_repository_id != intent.source_repository_id
         or seed.base_commit != intent.base_commit
         or seed.staged_change_digest != intent.staged_change_digest
     ):
         raise ControlledPublicationError("controlled publication: seed binding mismatch")
+
+
+def _require_broker_target_binding(seed: PublicationSeed, broker: Any) -> None:
+    binding = getattr(broker, "repository_target_binding", None)
+    if (
+        type(binding) is not RepositoryTargetBinding
+        or binding.source_repository_id != seed.source_repository_id
+        or binding.provider_repository_id != seed.repository_id
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: broker repository target mismatch"
+        )
+
+
+def _bind_stage_repository_identity(
+    seed: PublicationSeed, intent: PublicationIntent, staged_change: dict
+) -> dict:
+    if seed.source_repository_id is None:
+        return staged_change
+    if (
+        intent.source_repository_id != seed.source_repository_id
+        or staged_change.get("repository_id") != seed.source_repository_id
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: source repository binding mismatch"
+        )
+    provider_staged_change = dict(staged_change)
+    provider_staged_change["repository_id"] = seed.repository_id
+    return provider_staged_change
+
+
+def _validate_verified_files(seed: PublicationSeed, files: Any) -> tuple[PublishableFile, ...]:
+    if type(files) is not tuple or not files:
+        raise ControlledPublicationError("controlled publication: verified file manifest is invalid")
+    paths: list[str] = []
+    contents: list[tuple[str, str]] = []
+    for item in files:
+        if type(item) is not PublishableFile:
+            raise ControlledPublicationError("controlled publication: verified file manifest is invalid")
+        path, content = item.path, item.content
+        if (
+            type(path) is not str
+            or not path
+            or path != path.strip()
+            or path.startswith("/")
+            or ".." in path.split("/")
+            or type(content) is not str
+            or item.content_digest != sha256_bytes(content.encode("utf-8"))
+        ):
+            raise ControlledPublicationError("controlled publication: verified file manifest is invalid")
+        paths.append(path)
+        contents.append((path, content))
+    if (
+        paths != sorted(set(paths))
+        or sha256_digest(tuple(contents)) != seed.verified_contents_digest
+    ):
+        raise ControlledPublicationError("controlled publication: verified file digest mismatch")
+    return files
+
+
+def reconcile_controlled_attempt_after_restart(
+    seed: Any,
+    intent: Any,
+    verified_files: Any,
+    journal: Any,
+    channel: Any,
+    *,
+    now: datetime,
+) -> Any:
+    """Persist read-only PR/file reconciliation evidence without resuming writes."""
+    if type(seed) is not PublicationSeed or type(intent) is not PublicationIntent:
+        raise ControlledPublicationError("controlled publication: recovery binding is invalid")
+    if type(journal) is not PublicationJournal:
+        raise ControlledPublicationError("controlled publication: local journal is required")
+    if not (
+        is_registered_provider_adapter_type(type(channel), "channel")
+        or is_registered_provider_adapter_type(type(channel), "read_only_channel")
+    ):
+        raise ControlledPublicationError("controlled publication: GitHub channel type is required")
+    moment = _require_clock(now)
+    manifest = _validate_verified_files(seed, verified_files)
+    _require_seed_intent_binding(seed, intent)
+    try:
+        record = journal.get(intent.process_id)
+    except Exception:
+        raise ControlledPublicationError("controlled publication: recovery record is unavailable") from None
+    if (
+        record.idempotency_key != intent.idempotency_key
+        or record.repository_id != intent.repository_id
+        or record.verified_files_digest != seed.verified_contents_digest
+    ):
+        raise ControlledPublicationError("controlled publication: recovery binding mismatch")
+    if record.status == "completed":
+        return record
+    if record.status not in {"attempting", "reconciliation_required"}:
+        raise PublicationRecoveryRequired("publication recovery required")
+
+    pr_lookup_completed = False
+    if record.status == "attempting":
+        try:
+            record = recover_publication(journal, channel, intent.process_id)
+            pr_lookup_completed = True
+        except Exception:
+            pr_lookup_completed = True
+            try:
+                record = journal.get(intent.process_id)
+                if record.status == "attempting":
+                    journal.mark_reconciliation_required(intent.process_id)
+                    record = journal.get(intent.process_id)
+            except Exception:
+                raise PublicationRecoveryRequired("publication recovery required") from None
+        if record.status == "completed":
+            return record
+    if record.status != "reconciliation_required":
+        raise PublicationRecoveryRequired("publication recovery required")
+
+    if not pr_lookup_completed:
+        try:
+            receipt = channel.find_by_idempotency_key(
+                record.idempotency_key,
+                repository_id=record.repository_id,
+                base_branch=record.base_branch,
+            )
+            if is_registered_provider_adapter_type(type(receipt), "receipt"):
+                journal.mark_completed_from_reconciliation(
+                    intent.process_id, receipt
+                )
+                return journal.get(intent.process_id)
+        except Exception:
+            # Unknown or mismatched reads remain reconciliation-required; this
+            # path is diagnostic only and never replays publication effects.
+            pass
+
+    try:
+        branch_commit_sha = reconcile_verified_manifest(
+            channel,
+            branch=intent.branch,
+            files=manifest,
+        )
+    except Exception:
+        branch_commit_sha = None
+    outcome = (
+        "verified"
+        if isinstance(branch_commit_sha, str)
+        and re.fullmatch(r"[0-9a-f]{40}", branch_commit_sha) is not None
+        else "unverified"
+    )
+    try:
+        journal.record_verified_file_reconciliation(
+            intent.process_id,
+            manifest_digest=seed.verified_contents_digest,
+            outcome=outcome,
+            branch_commit_sha=branch_commit_sha if outcome == "verified" else None,
+            observed_at=moment,
+        )
+        return journal.get(intent.process_id)
+    except Exception:
+        raise ControlledPublicationError(
+            "controlled publication: recovery evidence could not be persisted"
+        ) from None
 
 
 def _require_engine_intent_binding(intent: PublicationIntent, engine_intent: Any) -> None:
@@ -552,6 +781,8 @@ def _require_engine_intent_binding(intent: PublicationIntent, engine_intent: Any
     ):
         if engine_intent.get(field) != getattr(intent, field):
             raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if engine_intent.get("source_repository_id") != intent.source_repository_id:
+        raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
     if engine_intent.get("operation") != "publish_pull_request":
         raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
     if engine_intent.get("branch_namespace") != intent.branch.split("/", 1)[0]:
@@ -601,6 +832,7 @@ def _prepare_publication_journal(
     if (
         seed.process_id != intent.process_id
         or seed.repository_id != intent.repository_id
+        or seed.source_repository_id != intent.source_repository_id
         or seed.base_commit != intent.base_commit
         or seed.staged_change_digest != intent.staged_change_digest
     ):
@@ -611,6 +843,8 @@ def _prepare_publication_journal(
     ):
         if engine_intent.get(field) != getattr(intent, field):
             raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
+    if engine_intent.get("source_repository_id") != intent.source_repository_id:
+        raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
     if engine_intent.get("operation") != "publish_pull_request":
         raise ControlledPublicationError("controlled publication: engine intent binding mismatch")
     try:
@@ -667,6 +901,7 @@ def _prepare_publication_journal(
         idempotency_key=intent.idempotency_key,
         request_digest=request_digest,
         repository_id=intent.repository_id,
+        verified_files_digest=seed.verified_contents_digest,
     )
 
 

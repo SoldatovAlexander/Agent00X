@@ -9,6 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from app_contracts.authority import (
     DeterministicPolicy,
@@ -17,15 +18,25 @@ from app_contracts.authority import (
     check_decision_usable,
     validate_approval,
 )
+from app_contracts.approval_signature import verify_approval_signature
 from app_contracts.digests import sha256_digest
 from app_contracts.validator import ContractValidationError, validate
+from approval_test_support import (
+    TEST_APPROVER_PUBLIC_KEY,
+    TEST_APPROVER_PUBLIC_KEYS,
+    sign_approval,
+    sign_test_approval,
+)
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 NOW = datetime(2026, 9, 4, 12, 7, tzinfo=timezone.utc)
 
 
 def load_chain() -> dict:
-    return json.loads((ROOT / "fixtures" / "valid" / "mvp-chain.json").read_text())
+    chain = json.loads((ROOT / "fixtures" / "valid" / "mvp-chain.json").read_text())
+    chain["approval"] = sign_test_approval(chain["approval"])
+    return chain
 
 
 class AuthorityTests(unittest.TestCase):
@@ -35,6 +46,8 @@ class AuthorityTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         )
         self.policy = DeterministicPolicy(self.config)
 
@@ -43,6 +56,97 @@ class AuthorityTests(unittest.TestCase):
             self.chain["approval"], self.chain["staged_change"], self.chain["intent"],
             policy_version="policy-1", now=NOW,
         )
+
+    def test_policy_denies_missing_malformed_and_untrusted_approver_claims(self):
+        for label, value in (
+            ("missing", None),
+            ("malformed", 42),
+            ("untrusted", "user-mallory"),
+        ):
+            approval = dict(self.chain["approval"])
+            if label == "missing":
+                approval.pop("approver_id")
+            else:
+                approval["approver_id"] = value
+            decision = self.policy.decide(
+                decision_id=f"decision-approver-{label}",
+                actuator_request=self.chain["actuator_request"],
+                approval=approval,
+                staged_change=self.chain["staged_change"],
+                intent=self.chain["intent"],
+                now=NOW,
+            )
+            with self.subTest(approver=label):
+                self.assertEqual(decision["effect"], "deny")
+                self.assertEqual(decision["reason_codes"], ["approver-not-allowlisted"])
+
+    def test_configured_key_is_not_authorized_without_explicit_approver_allowlist(self):
+        keys = {**TEST_APPROVER_PUBLIC_KEYS, "user-bob": b"b" * 32}
+        policy = DeterministicPolicy(
+            PolicyConfig(
+                version="policy-1",
+                allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
+                allowed_actuators=frozenset({"actuator-github-001"}),
+                allowed_approver_ids=frozenset({"user-bob"}),
+                trusted_approver_public_keys=keys,
+            )
+        )
+        decision = policy.decide(
+            decision_id="decision-unlisted-but-configured-approver",
+            actuator_request=self.chain["actuator_request"],
+            approval=self.chain["approval"],
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"],
+            now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        self.assertEqual(decision["reason_codes"], ["approver-not-allowlisted"])
+
+    def test_signature_binds_every_approval_claim_and_validity_field(self):
+        original = self.chain["approval"]
+        self.assertTrue(verify_approval_signature(original, TEST_APPROVER_PUBLIC_KEY))
+        changed_values = {
+            "schema_version": 2,
+            "approval_id": "approval-substituted",
+            "approver_id": "user-mallory",
+            "process_id": "process-substituted",
+            "operation": "delete_repository",
+            "repository_id": "github-installation/42/repository/9999",
+            "staged_change_digest": "sha256:" + "1" * 64,
+            "approved_intent_digest": "sha256:" + "2" * 64,
+            "policy_version": "policy-substituted",
+            "approved_at": "2026-09-04T12:04:00Z",
+            "expires_at": "2026-09-05T12:01:00Z",
+        }
+        for field, value in changed_values.items():
+            with self.subTest(field=field):
+                mutated = dict(original, **{field: value})
+                self.assertFalse(
+                    verify_approval_signature(mutated, TEST_APPROVER_PUBLIC_KEY)
+                )
+        with self.subTest(field="unsigned-extra-field"):
+            self.assertFalse(
+                verify_approval_signature(
+                    dict(original, unapproved_metadata="not-signed"),
+                    TEST_APPROVER_PUBLIC_KEY,
+                )
+            )
+
+    def test_policy_rejects_signature_from_untrusted_key_for_allowlisted_id(self):
+        forged = sign_approval(
+            self.chain["approval"],
+            Ed25519PrivateKey.from_private_bytes(bytes.fromhex("22" * 32)),
+        )
+        decision = self.policy.decide(
+            decision_id="decision-approver-forged-signature",
+            actuator_request=self.chain["actuator_request"],
+            approval=forged,
+            staged_change=self.chain["staged_change"],
+            intent=self.chain["intent"],
+            now=NOW,
+        )
+        self.assertEqual(decision["effect"], "deny")
+        self.assertEqual(decision["reason_codes"], ["approval-signature-invalid"])
 
     def test_changed_destination_invalidates_approval(self):
         self.chain["intent"]["repository_id"] = "github-installation/42/repository/9999"
@@ -273,12 +377,16 @@ class AuthorityTests(unittest.TestCase):
                         version="policy-1",
                         allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
                         allowed_actuators=frozenset({"actuator-github-001"}),
+                        allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                        trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
                         decision_ttl_seconds=bad,
                     )
         config = PolicyConfig(
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
             decision_ttl_seconds=300,
         )
         decision = DeterministicPolicy(config).decide(
@@ -389,6 +497,8 @@ class AuthorityTests(unittest.TestCase):
             "version": "policy-1",
             "allowed_repositories": frozenset({"github-installation/42/repository/1001"}),
             "allowed_actuators": frozenset({"actuator-github-001"}),
+            "allowed_approver_ids": frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            "trusted_approver_public_keys": TEST_APPROVER_PUBLIC_KEYS,
         }
         kwargs.update(overrides)
         return kwargs
@@ -401,6 +511,12 @@ class AuthorityTests(unittest.TestCase):
             {"allowed_repositories": frozenset({123})},
             {"allowed_actuators": set()}, {"allowed_actuators": "actuator-github-001"},
             {"allowed_actuators": frozenset({""})},
+            {"allowed_approver_ids": set()},
+            {"allowed_approver_ids": frozenset({"unknown-user"})},
+            {"allowed_approver_ids": frozenset({123})},
+            {"trusted_approver_public_keys": {}},
+            {"trusted_approver_public_keys": {"user-alice": "not-a-key"}},
+            {"trusted_approver_public_keys": {"": b"x" * 32}},
         ):
             with self.subTest(overrides=overrides):
                 with self.assertRaises(ValueError):
@@ -519,6 +635,8 @@ class RealActuatorExpiryTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id="decision-use-010",
@@ -596,6 +714,8 @@ class DecisionUseBoundaryTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         decision = policy.decide(
             decision_id="decision-use-001",
@@ -632,6 +752,8 @@ class DecisionUseBoundaryTests(unittest.TestCase):
             version="policy-1",
             allowed_repositories=frozenset({"github-installation/42/repository/1001"}),
             allowed_actuators=frozenset({"actuator-github-001"}),
+            allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+            trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
         ))
         chain["actuator_request"]["repository_id"] = "github-installation/42/repository/9999"
         decision = policy.decide(

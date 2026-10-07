@@ -35,6 +35,8 @@
 | ADR-029 | Каждое решение и вызов имеют checkpoint до действия | Принято как требование следующего инкремента |
 | ADR-030 | Обучение создаёт новую ветку, а не переписывает историю | Принято как требование следующего инкремента |
 | ADR-031 | Память слоистая, ограничена сроками и суммаризируется | Принято как требование следующего инкремента |
+| ADR-032 | Расширения runtime не обходят trust boundaries | Принято как целевое правило |
+| ADR-033 | Локальный verifier prototype запускается в отдельном ограниченном container | Принято только для эксперимента |
 
 Принятое ADR описывает целевое правило, а не факт его реализации. Текущая
 реализация и доказательства зафиксированы только в документе 27.
@@ -290,3 +292,52 @@ policy, а не по решению LLM.
 redaction и ссылками на критичные факты; она не переписывает историю. Минимальный
 доказательный след критичных действий хранится по policy. Субагент получает лишь
 минимальный scope памяти. Полная модель — документ 30.
+
+## ADR-032: Управляемая композиция расширений runtime
+
+Дата: 2026-09-29. Решение: runtime допускает версионированные расширения только
+через документированные typed точки, декларацию зависимостей и профиль с
+проверяемым digest. Регистрации и фоновые ресурсы расширения имеют lifecycle и
+снимаются при его выгрузке. Этим решением учитывается композиционный подход
+DeepSeek Harness, но не принимается его реализация или модель доверия.
+
+Следствие: расширение может добавлять адаптер, tool, наблюдаемость или UI, но не
+может выдать себе capability, ослабить policy, заменить проверенный approval или
+открыть внешний путь в обход Action Gateway. Эффективный профиль, его порядок и
+lock расширений входят в проверяемую конфигурацию Agent Instance. Реализация
+плагинного runtime отсутствует; фактический статус всегда определяется документом
+27.
+
+## ADR-033: Ограниченный local container для verifier prototype
+
+Дата: 2026-10-03. Решение Control Plane: следующий verifier experiment будет
+запускать отдельный per-invocation container на локальном macOS host через его
+Docker Engine. Worker и содержимое его proposal/evidence считаются недоверенными;
+доверие для этого эксперимента ограничено Control Plane launcher/config, Docker
+Engine, host kernel и exact pinned official base image
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78`.
+Pinned multi-platform index and linux/amd64 manifest are listed in [Docker Official Image metadata](https://hub.docker.com/layers/library/python/3.12.15-alpine3.24/images/sha256-2055081c860db8c842b663415b795b026e7e5cc63b59c5193fcc9997713ea5b8).
+
+Предполагаемая граница запуска: numeric UID/GID `65532:65532`; bounded canonical
+JSON только через stdin; нет network, bind mounts, Docker socket или наследуемых
+host environment/credentials; read-only root filesystem, ограниченный tmpfs,
+resource limits, dropped capabilities и `no-new-privileges`. Точные команды и
+лимиты обязаны быть закреплены в READY-карточке; до их выполнения это проектное
+решение, не реализованная защита.
+
+Следствие: эксперимент может проверять ограничение отдельного verifier runtime
+от Worker и его входных данных, но не является trust boundary против
+привилегированного host administrator, kernel/daemon compromise или container
+escape. Он не доказывает истинность произвольных тестов, автора кода, remote
+provenance или production-grade independent verification. Image digest pin и
+отдельный процесс не заменяют review launcher, request/result binding и
+failure/cleanup evidence. Docker isolation flags здесь следуют [официальной
+документации Docker](https://docs.docker.com/reference/cli/docker/container/run).
+
+EXP-400 обновил входной контракт до schema v2: `VerifierInput` переносит полный
+pinned base snapshot как ограниченные `(relative_path, mode, bytes)` записи,
+которые сверяются с tree digest; wire передаёт байты как canonical base64.
+Это позволяет спроектировать локальную материализацию и replay, но пока не
+подтверждает работу контейнера, изоляцию или independent verification. Локальный
+Docker store проверен read-only после EXP-400: выбранный base image в нём сейчас
+отсутствует; ранний успешный pull из EXP-398 относится только к моменту проверки.

@@ -1615,7 +1615,7 @@ Commit: ALLOWED
 - ACCEPTED 2026-09-13: independent review commits `4cb7b41`—`a1b9132`; full suite: 420 tests passed, 1 opt-in Docker test skipped.
 
 ## EXP-231 — validate audit sink callability
-Статус: READY
+Статус: ACCEPTED
 Цель: gateway rejects malformed audit sink before audit invocation.
 Гипотеза: absent/non-callable sink cannot yield raw errors or an allow outcome.
 Зависит от: none
@@ -1636,7 +1636,7 @@ Commit: ALLOWED
 - no external calls.
 
 ## EXP-232 — validate credential grant expiry time zone
-Статус: READY
+Статус: ACCEPTED
 Цель: broker rejects expiry strings with invalid offsets deterministically.
 Гипотеза: non-UTC-comparable grant expiry cannot open a channel.
 Зависит от: none
@@ -1657,7 +1657,7 @@ Commit: ALLOWED
 - no token material.
 
 ## EXP-233 — validate local sandbox snapshot shape
-Статус: READY
+Статус: ACCEPTED
 Цель: local sandbox rejects malformed snapshot paths before copy.
 Гипотеза: arbitrary objects cannot cross filesystem boundary.
 Зависит от: none
@@ -1678,7 +1678,7 @@ Commit: ALLOWED
 - no Docker.
 
 ## EXP-234 — validate local sandbox close idempotence
-Статус: READY
+Статус: ACCEPTED
 Цель: repeated local sandbox close is harmless.
 Гипотеза: cleanup retries cannot raise raw filesystem errors.
 Зависит от: none
@@ -1699,7 +1699,7 @@ Commit: ALLOWED
 - no isolation claim.
 
 ## EXP-235 — validate memory summary source-reference uniqueness types
-Статус: READY
+Статус: ACCEPTED
 Цель: source-reference duplicate checking rejects unhashable members safely.
 Гипотеза: malformed values cannot trigger raw set errors.
 Зависит от: none
@@ -1720,7 +1720,7 @@ Commit: ALLOWED
 - no storage change.
 
 ## EXP-236 — validate correction root required identity
-Статус: READY
+Статус: ACCEPTED
 Цель: correction validation rejects malformed identity whenever supersession is present.
 Гипотеза: no arbitrary root can bypass self-reference validation.
 Зависит от: none
@@ -1741,7 +1741,7 @@ Commit: ALLOWED
 - no learning workflow.
 
 ## EXP-237 — validate publication receipt branch and digest scalars
-Статус: READY
+Статус: ACCEPTED
 Цель: journal receipt completion rejects empty/malformed branch and digest before transition.
 Гипотеза: malformed receipts cannot bind an attempted action.
 Зависит от: none
@@ -1762,7 +1762,7 @@ Commit: ALLOWED
 - no provider call.
 
 ## EXP-238 — validate process-record SQLite enum boundary
-Статус: READY
+Статус: ACCEPTED
 Цель: corrupted persisted state values yield stable runtime errors.
 Гипотеза: invalid database enum cannot leak raw ValueError.
 Зависит от: none
@@ -1783,7 +1783,7 @@ Commit: ALLOWED
 - no schema migration.
 
 ## EXP-239 — validate validator numeric constraint declarations
-Статус: READY
+Статус: ACCEPTED
 Цель: malformed minimum/minLength/minItems schema declarations fail before instance validation.
 Гипотеза: malformed schema cannot cause raw comparison errors.
 Зависит от: none
@@ -1804,7 +1804,7 @@ Commit: ALLOWED
 - no new schema types.
 
 ## EXP-240 — validate secret scanner surface-name emptiness
-Статус: READY
+Статус: ACCEPTED
 Цель: scanner rejects empty surface names before diagnostics.
 Гипотеза: empty labels cannot create ambiguous leak findings.
 Зависит от: none
@@ -3203,7 +3203,10 @@ Commit: ALLOWED
 
 ## Этап R2 — реальный сквозной исполнитель — 3 батча по 20 карточек
 
-Статус этапа: в работе; Batch AF принят — 1/3 батчей (20/20); Batch AG — 20/20 принято.
+Статус этапа: локальная серия Batch AF–AH завершена — 3/3 батчей по 20/20;
+цель этапа R2 остаётся открытой для remote provenance, реального LLM Worker,
+independently trusted production verification, production isolation и реального
+provider/credentials.
 Плановые батчи: AF — local executor spine; AG — pinned snapshot и отдельная
 проверка исполнителя; AH — controlled publication и reconciliation. Даже после
 этих локальных батчей внешняя интеграция остаётся gated и не считается принятой
@@ -4740,7 +4743,7 @@ Commit: DENIED
 
 ## EXP-017 — Docker sandbox negative resource evidence
 
-Статус: BLOCKED
+Статус: ACCEPTED
 Цель: воспроизводимо выполнить существующую adversarial Docker проверку ресурсов.
 Гипотеза: Docker profile ограничивает процесс в пределах тестируемого сценария.
 Зависит от: EXP-016
@@ -4795,7 +4798,7 @@ Commit: DENIED
 
 ## EXP-019 — testdev broker preflight observation
 
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: read-only проверить статус broker preflight на testdev.
 Зависит от: EXP-018
 Среда исполнения: testdev
@@ -4815,7 +4818,7 @@ Commit: DENIED
 
 ## EXP-020 — Agent00X-sandbox snapshot read-only spike
 
-Статус: DRAFT
+Статус: ACCEPTED
 Цель: подтвердить base commit и allowlist sandbox repository без side effects.
 Зависит от: EXP-015
 Среда исполнения: local
@@ -4832,6 +4835,10906 @@ Commit: DENIED
 Commit: DENIED
 Ограничения и риски:
 - historical spike не доказывает безопасную publication chain.
+
+## Batch AH — controlled publication и reconciliation (20 карточек)
+
+Цель batch: локально связать pinned execution и независимую проверку с уже
+существующими approval/policy/gateway/broker/journal границами и mock provider.
+Это только контролируемый mock/local путь: ни одна карточка не разрешает реальную
+публикацию, сеть, GitHub, credentials, branch/PR, deployment, testdev,
+Agent00X-sandbox или Docker. Старые approvals, capabilities и credentials при
+replay/reconciliation не переиспользуются. Реальную интеграцию можно планировать
+только отдельной task card с точной целью и командами.
+
+Порядок и параллельность: все карточки EXP-328—347 приняты по зависимостям;
+каждая выполнена локально с отдельным evidence и разрешённым локальным commit.
+Реальные provider/network операции этим batch не разрешались.
+Полный suite для каждой карточки:
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`.
+Размер Batch AH остаётся 20 карточек (этап R2 — 3 батча по 20). Для OpenCode
+планировать подбатчи примерно по 5 последовательных карточек: AH-1 EXP-328—332,
+AH-2 EXP-333—337, AH-3 EXP-338—342, AH-4 EXP-343—347. Передавать следующий
+подбатч после приёмки предыдущих результатов и перевода его задач из DRAFT в
+READY; не делать все карточки пакета READY заранее, если их зависимости ещё не
+приняты.
+
+## EXP-328 — bind staged digest to pinned execution result
+Статус: ACCEPTED
+Цель: bounded `ExecutionResult` включает digest ровно того staged change, который прошёл preparation и verifier.
+Гипотеза: digest-поле позволяет следующему локальному шагу связать публикационный intent с результатом pinned execution без передачи raw contents.
+Зависит от: EXP-327 (ACCEPTED)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: publication calls, approvals, credentials, сеть, GitHub, schemas и внешняя интеграция.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- tests/test_executor.py
+Критерии приёмки:
+- для результата после подготовки staged digest вычисляется канонически из проверенного `staged_change` и присутствует как digest-only metadata;
+- digest сохраняется и при verifier/replay failure после подготовки, но отсутствует до preparation и при worker failure;
+- тесты подтверждают соответствие digest и отсутствие raw contents/output в сериализованном result; существующие статусы и ограничения не ослаблены.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: ExecutionResult now carries the canonical digest of
+  the prepared staged change for verifier/replay failures and verified results;
+  pre-preparation worker failure retains no digest. Added content/output
+  non-disclosure and lifecycle tests. Commit 3224a5d; full suite: 549 passed,
+  1 skipped.
+
+## EXP-329 — reject a mismatched recovery receipt
+Статус: ACCEPTED
+Цель: regression coverage гарантирует, что recovery не отмечает публикацию completed по mock receipt с чужими binding fields.
+Гипотеза: несовпадающие repository/branch/staged digest receipt остаются fail-closed и не вызывают повторную публикацию.
+Зависит от: EXP-327 (ACCEPTED)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: изменение executor, живой provider/API, сеть, credentials, retry semantics и schema changes.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- tests/test_publication.py
+Критерии приёмки:
+- локальный endpoint double возвращает receipt с несовпадающим repository, branch, staged digest или собственным idempotency key;
+- journal проверяет все receipt bindings и recovery не переводит запись в `completed` при mismatch;
+- попытка recovery не запускает повторный publish side effect и не теряет исходный journal record;
+- ошибка не раскрывает caller-controlled identifiers или receipt contents; текущая запись не теряется.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: journal receipt validation now checks its own
+  idempotency key as well as repository/branch/digest bindings. Four mismatch
+  cases stay non-completed with no republish. Commit `947b351`; full suite:
+  547 passed, 1 skipped.
+
+## EXP-330 — define an immutable verified publication seed
+Статус: ACCEPTED
+Цель: добавить digest-only record, связывающий process/repository/base, staged digest и verifier provenance.
+Гипотеза: explicit seed не даст downstream строить intent из несвязанных caller fields.
+Зависит от: EXP-328, EXP-329 (ACCEPTED)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: approval issuance, credentials, raw file contents, provider calls и сеть.
+Разрешённые пути:
+- src/app_contracts/publication_seed.py
+- tests/test_publication_seed.py
+Критерии приёмки:
+- frozen seed несёт только bounded identifiers/digests, verifier verdict и snapshot origin;
+- поля однозначно воспроизводимы из execution request/result; raw prompt, content, stdout, credentials и capabilities отсутствуют;
+- локальные тесты фиксируют immutable shape и корректные digest bindings.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: added the frozen digest-only PublicationSeed with a
+  fixed bounded field set, validation and local pinned/unpinned provenance
+  tests. Raw content/output and publication capabilities are excluded.
+  Commit 584970e; full suite: 555 passed, 1 skipped.
+
+## EXP-331 — fail closed when constructing a seed
+Статус: ACCEPTED
+Цель: принимать seed только из согласованных pinned request и VERIFIED execution result.
+Гипотеза: неподходящий статус или несовпадение process/repository/base/tree/verifier evidence не образуют публикационный вход.
+Зависит от: EXP-330
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: дополнительные источники trust, approvals и remote provenance.
+Разрешённые пути:
+- src/app_contracts/publication_seed.py
+- tests/test_publication_seed.py
+Критерии приёмки:
+- PREPARED/FAILED, fail verdict, missing digest, unverified snapshot origin и любой binding mismatch отвергаются до downstream collaborator;
+- matching local pinned result строит ровно один корректный seed;
+- исключения не включают raw contents или входные значения.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-29: commit `5b77215` проверен; полный suite
+  проходит (555 passed, 1 skipped), но fail-closed критерий нарушен. Воспроизведён
+  seed из вручную собранных `VERIFIED` ExecutionResult и `PASS` VerifierResult,
+  где patch/evidence/verification digests равны None и verifier evidence_origin
+  подменён; функция вернула seed с pass. Требуется независимо перепроверить
+  commit и укрепить проверки обязательных canonical digests и local evidence
+  provenance в разрешённых путях; добавить regression на точный сценарий и
+  смежные missing/forged fields. Статус карточки не менять до решения Control
+  Plane.
+- ACCEPTED after remediation 2026-09-29: commit `23a2f98` rejects missing or
+  malformed result digests and non-local verifier/result evidence origins;
+  added regressions for the reproduced hand-built result, each missing digest,
+  forged origins and replay digest, while retaining the matching pinned path.
+  Target module: 22 tests OK; full suite: 571 passed, 1 skipped.
+
+## EXP-332 — derive a publication intent from the seed
+Статус: ACCEPTED
+Цель: вывести минимальный intent и idempotency key только из принятого seed и явного allowlisted branch.
+Гипотеза: производные поля не могут расходиться с verified digest и repository.
+Зависит от: EXP-331
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: решение policy, выпуск approval, сетевой вызов или выбор произвольного repository.
+Разрешённые пути:
+- src/app_contracts/publication_seed.py
+- tests/test_publication_seed.py
+Критерии приёмки:
+- repository/base/process/staged digest остаются seed-bound;
+- branch и idempotency key проходят существующие локальные канонические ограничения;
+- подмена branch/key/digest выявляется до policy/gateway/broker.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `38b3871` derives an immutable, bounded
+  publication intent from the seed and explicit `agent/` branch; the canonical
+  idempotency key remains bound to branch suffix and staged digest. Substitution
+  and malformed-branch regressions pass. Target module: 28 tests OK; full suite:
+  577 passed, 1 skipped.
+
+## EXP-333 — require a fresh matching approval input
+Статус: ACCEPTED
+Цель: проверить предоставленный Control Plane approval без его создания или автоматического восстановления.
+Гипотеза: intent проходит дальше лишь с явным, свежим approval, связанным с тем же seed.
+Зависит от: EXP-332
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: approval service, stored secrets, replay reuse и автоматическое согласование.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- src/app_contracts/publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- отсутствующий, просроченный или несовпадающий approval прекращает путь до policy/gateway/broker/provider;
+- matching approval проверяется существующим authority contract и не меняет trust semantics;
+- approval и его значения не попадают в логи/evidence.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-29: commit `0802c17` добавляет fail-closed gate для
+  caller-provided approval, связанного с точным intent и не истёкшего на
+  переданном времени; approval не создаётся и downstream вызывается ровно один
+  раз только после проверок. Target module: 9 tests OK; full suite: 586 passed,
+  1 skipped. Предупреждения ResourceWarning об unclosed SQLite connections
+  присутствуют в AST-проверках; тесты завершились успешно.
+
+## EXP-334 — bind a fresh policy decision to the same intent
+Статус: ACCEPTED
+Цель: вычислять локальное policy decision для точного seed-bound intent и свежего approval.
+Гипотеза: downstream не принимает старое или digest-mismatched решение.
+Зависит от: EXP-333
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: policy relaxation, cached allow, timestamp override и live services.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- decision effect/operation/repository/digest/expiry сверяются до gateway;
+- stale/mismatched/deny decision даёт ноль gateway/broker/provider вызовов;
+- существующий Policy Engine остаётся единственным источником решения.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-29: commit `e861e66` проверен; полный suite
+  проходит (593 passed, 1 skipped), но `run_policy_gate` проверяет только, что
+  approval — dict, и не подтверждает его свежесть или binding к intent до
+  downstream. Воспроизведение: взять decision из `decided_gate_fixture`,
+  заменить `approval.expires_at` на время до `FIXED_NOW`, затем вызвать
+  `run_policy_gate` — downstream вызван один раз. Требуется fail-closed проверка
+  актуального approval/его binding к intent до downstream и regression для
+  expired и mismatched approval; не ослаблять существующий Policy Engine.
+  Карточку и её scope не расширять.
+- CHANGES REQUESTED 2026-09-29: remediation commit `93c4224` блокирует
+  expired approvals и несовпадение process/repository/staged digest; добавлены
+  regressions. Однако approval binding всё ещё неполный: при decision из
+  `decided_gate_fixture` заменены `approval_id` и `approved_intent_digest`, а
+  сохранены process/repository/staged digest и свежий expiry. `run_policy_gate`
+  пропускает это approval и вызывает downstream один раз. Требуется обеспечить
+  binding всего caller-provided approval к тому approval, на основании которого
+  получено policy decision, или строго сверить доступные неизменяемые binding
+  поля до downstream; добавить regression на подмену approval id/digest. Target:
+  21 tests OK; full suite: 598 passed, 1 skipped. Статус остаётся REVIEW.
+- CHANGES REQUESTED 2026-09-29: commit `0925d3c` сверяет approval с переданным
+  engine intent, но само решение не связано с этим engine intent/approval. Repro:
+  из `decided_gate_fixture` заменить `engine_intent.approval_id`, заменить в
+  approval тот же `approval_id` и пересчитать `approved_intent_digest`; передать
+  исходное allow decision. Gate принимает подменённый approval и вызывает
+  downstream один раз. Следовательно, caller может подставить approval, которое
+  policy engine не проверял. Нужен fail-closed контракт, связывающий decision
+  именно с approval/engine intent, без обхода или подмены существующего Policy
+  Engine; добавить regression на сохранённое старое decision при замене approval.
+  Target: 25 tests OK; full suite: 602 passed, 1 skipped. Статус остаётся REVIEW.
+- ACCEPTED 2026-09-29: commit `a46a4f2` меняет policy gate на непосредственную
+  оценку в точности существующим `DeterministicPolicy` по тому же caller-provided
+  approval, engine intent и staged change. Предварительно сверяются intent/base/
+  idempotency bindings; возвращённые operation/repository/digest/policy-version,
+  effect и expiry валидируются до downstream. API больше не принимает cached
+  decision от caller; добавлены regressions для старого allow, deny, stale и
+  malformed engine results и binding mismatches. Target: 19 tests OK; full suite:
+  596 passed, 1 skipped. `git diff --check` прошёл.
+
+## EXP-335 — enforce gateway-before-broker ordering
+Статус: ACCEPTED
+Цель: связать локальный gateway slow-allow с тем же verified publication request.
+Гипотеза: никакое broker действие не достижимо до точного allow от Action Gateway.
+Зависит от: EXP-334
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: gateway bypass, fast-allow path, credentials или provider access.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- только matching slow-allow допускает переход к broker;
+- deny/degraded/malformed/mismatched gateway output останавливает последовательность;
+- тестовый trace доказывает gateway call precedes broker call.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-29: commit `86aed73` реализует gateway call до
+  downstream, и тесты проходят (25 target tests OK; full suite: 602 passed,
+  1 skipped), но envelope проверяется не на полное соответствие intent. Repro:
+  в `gateway_envelope(intent)` заменить только `correlation_id` на
+  `foreign-correlation`; `run_gateway_gate` принимает slow-allow и вызывает
+  broker один раз. Требуется fail-closed binding envelope к тому же request до
+  вызова gateway, как минимум по operation, repository/process, staged digest и
+  idempotency/correlation fields, плюс регрессия на mismatched correlation. Не
+  расширять внешние действия и сохранить trace gateway-before-broker.
+- ACCEPTED 2026-09-29: remediation commit `878e9f0` сверяет operation,
+  destination repository, source principal, staged digest и correlation key с
+  тем же `PublicationIntent` до вызова gateway. Foreign/missing correlation,
+  process или repository не достигают gateway или broker; trace сохраняет
+  gateway-before-broker порядок. Target: 25 tests OK; full suite: 602 passed,
+  1 skipped. Repro mismatched correlation: 0 gateway / 0 broker calls.
+
+## EXP-336 — consume only a matching local broker grant
+Статус: ACCEPTED
+Цель: ограничить controlled path одноразовым grant для того же verified request.
+Гипотеза: scope/expiry/replay mismatch блокирует mock provider и не раскрывает credential material.
+Зависит от: EXP-335
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: реальные tokens, token mint/revoke, credentials в evidence и GitHub provider.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- broker вызывается после gateway; grant/request bindings проверены до mock endpoint;
+- grant нельзя использовать повторно или для другого repository/operation/digest;
+- тесты используют только sentinel-free fake и фиксируют ноль side effects при отказе.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- CHANGES REQUESTED 2026-09-30: commit `ede20b6` проверен; целевые тесты
+  проходят (33 OK; full suite: 610 passed, 1 skipped), но broker gate проверяет
+  у policy decision только allow/expiry и не сверяет operation/repository/
+  staged digest с тем же PublicationIntent. Воспроизведение: изменить эти поля
+  в свежем allow decision, сохранив matching grant и slow gateway decision;
+  `run_broker_gate` открывает broker channel и вызывает downstream один раз.
+  Требуется fail-closed проверка decision binding до broker, regressions с нулём
+  broker/provider side effects и сохранение single-use grant behavior.
+- CHANGES REQUESTED 2026-09-30: commit `e49e9d3` закрывает binding policy
+  decision, добавляя operation/repository/staged-digest checks до broker; новые
+  regressions подтверждают нулевые broker calls при mismatch. Но `run_broker_gate`
+  принимает caller-constructed `GatewayDecision(SLOW, allowed=True)` и сам не
+  требует gateway invocation или привязанного к envelope результата. Repro:
+  вызвать `invoke_broker_gate` с `slow_allow_decision()` без gateway — broker
+  открывает channel и downstream вызывается один раз. Требуется устранить прямой
+  путь мимо gateway: broker должен достижим только из проверенного gateway
+  перехода по тому же envelope, а fabricated/foreign/unbound slow-allow должен
+  давать ноль broker/provider calls. Target: 34 tests OK; full suite: 611 passed,
+  1 skipped. Статус остаётся REVIEW.
+- CHANGES REQUESTED 2026-09-30: commit `d2b6c4f` закрывает прямой gateway
+  bypass: broker gate сам валидирует envelope и вызывает gateway. Но он всё ещё
+  принимает caller-created dict как policy decision. Repro: передать decision с
+  `effect=allow`, свежим `expires_at` и совпадающими operation/repository/digest,
+  matching grant и gateway; `run_broker_gate` открывает broker без вызова
+  `run_policy_gate`. Требуется fail-closed связь с решением, выданным существующим
+  Policy Engine по текущим approval/intent, либо непосредственная свежая оценка
+  тем же engine до broker. Regression: forged allow даёт 0 broker/provider calls.
+  Target: 36 tests OK; full suite: 613 passed, 1 skipped. Статус остаётся REVIEW.
+- ACCEPTED after remediation commit `48c3553`: broker gate API no longer
+  accepts a caller-supplied policy decision; it reruns `run_policy_gate` against
+  the supplied approved intent and staged change before invoking gateway/broker.
+  Regression confirms a forged allow passed in place of the Policy Engine yields
+  zero gateway, broker, and downstream calls, and matching flow invokes the
+  Policy Engine inside the broker gate. Target: 37 tests OK; full suite:
+  614 passed, 1 skipped. `git diff --check` passed. Local-only evidence; no
+  publication or external service access.
+
+## EXP-337 — prepare the journal from the approved request
+Статус: ACCEPTED
+Цель: journal request digest связывает seed, intent, approval и policy/gateway result без секретов.
+Гипотеза: повторное или конфликтующее journal prepare остаётся идемпотентным/fail-closed.
+Зависит от: EXP-336
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: новая схема хранилища, migration, production durability и multi-process claims.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- journal запись создаётся только после всех pre-publication gates;
+- request digest канонический и не содержит approval/token values;
+- конфликтующие повторные поля не переиспользуют существующую запись.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: `run_broker_gate` prepares a canonical digest-only
+  journal row only after fresh policy evaluation, live slow-allow and broker
+  channel opening; raw approval/token/channel values are not persisted. Added
+  idempotent replay, conflicting request, deny-before-journal and canary
+  regressions. Commit `1fcfa66`; target: 40 tests OK; full suite: 617 passed,
+  1 skipped; `git diff --check` passed.
+
+## EXP-338 — compose the controlled local publication coordinator
+Статус: ACCEPTED
+Цель: добавить узкий orchestration вызов для seed → approval → policy → gateway → broker → journal → mock endpoint.
+Гипотеза: единый контролируемый путь можно проверить без добавления capability в executor.
+Зависит от: EXP-337
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: реальный provider, network, token handling outside existing in-memory broker contract, executor imports и auto-approval.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- collaborators injected and narrow; endpoint must be the existing local mock contract;
+- coordinator accepts no raw content or credentials and cannot bypass authority/gateway;
+- each rejected boundary stops before the next effectful collaborator.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: added `run_controlled_local_publication`, composing
+  engine-intent-bound approval, fresh deterministic policy, live gateway,
+  in-memory credential broker, digest-only journal and the exact mock endpoint.
+  Raw staged contents enter only through a loader and are not returned or
+  persisted; no provider/channel or external credentials are accepted. Added
+  fail-closed boundary regressions. Commit `ba8459c`; target: 45 tests OK; full
+  suite: 622 passed, 1 skipped; `git diff --check` passed.
+
+## EXP-339 — prove one pinned-to-mock happy path
+Статус: ACCEPTED
+Цель: интеграционный тест связывает pinned VERIFIED execution с ровно одним mock receipt и completed journal.
+Гипотеза: digest/process/repository/base остаются одинаковыми на всём локальном пути.
+Зависит от: EXP-338
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: live GitHub, remote repository, real approval UI и production claims.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- positive path проходит каждую authority/policy/gateway/broker/journal границу в порядке;
+- получен один receipt, journal completed, второй publish effect отсутствует;
+- evidence называет путь mock-only и не содержит approval values/credentials/raw content.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: a real pinned `VERIFIED` seed traverses approval, fresh
+  policy, gateway, in-memory broker, SQLite journal and `MockGitHubEndpoint` in
+  order. Exactly one receipt is produced and the journal completes; replaying
+  the consumed grant produces no second endpoint effect. Evidence serialization
+  excludes approval ID, grant ID and staged contents. Commit `7f5b25f`; target:
+  46 tests OK; full suite: 623 passed, 1 skipped; `git diff --check` passed.
+
+## EXP-340 — stop before publication on invalid execution evidence
+Статус: ACCEPTED
+Цель: интеграционно доказать отказ при failed verifier, replay mismatch и устаревшем pin.
+Гипотеза: недостоверный seed не вызывает approval/policy/gateway/broker/journal/provider.
+Зависит от: EXP-339
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: изменения verifier semantics и внешняя проверка.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- каждый негативный case останавливается до первого downstream collaborator;
+- код причины bounded, исходные payloads и file contents не выводятся;
+- matching verified case из EXP-339 остаётся успешным.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: failed verifier, verifier replay-result mismatch and
+  stale pinned-tree evidence all stop during execution/seed construction before
+  approval, policy, gateway, broker, journal or mock endpoint is called. The
+  matching verified integration path from EXP-339 remains green. Commit
+  `a4169ec`; target: 47 tests OK; full suite: 624 passed, 1 skipped;
+  `git diff --check` passed.
+
+## EXP-341 — deny stale or mismatched approval and policy
+Статус: ACCEPTED
+Цель: regression matrix покрывает старый approval и решение для другого intent/digest.
+Гипотеза: никакое подменённое authority evidence не достигает gateway/broker/provider.
+Зависит от: EXP-340
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: approval persistence, cache invalidation services и policy relaxation.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- expiry, repository, operation и staged digest mismatch дают deny;
+- gateway/broker/journal/provider counters остаются нулевыми для pre-gateway отказов;
+- ошибки не раскрывают forged values.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: regressions cover expired approval, approval repository/
+  operation/digest mismatch, and stale/mismatched fresh Policy Engine results.
+  All pre-gateway failures leave gateway, broker, journal and mock endpoint
+  untouched. Commit `0632c98`; target: 49 tests OK; full suite: 626 passed,
+  1 skipped; `git diff --check` passed.
+
+## EXP-342 — prove gateway denial and degraded ordering
+Статус: ACCEPTED
+Цель: доказать остановку при gateway deny/degraded/malformed response до broker и provider.
+Гипотеза: slow-allow является обязательным последовательным gate.
+Зависит от: EXP-341
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: fast allow, gateway bypass и gateway production availability claims.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- у каждого отказа broker/provider/journal effects равны нулю;
+- event trace содержит только bounded event names и подтверждает порядок;
+- positive slow-allow regression сохраняется.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: composed-path regressions cover slow deny, degraded deny,
+  degraded allow, fast allow, malformed output and malformed reason codes.
+  Every trace contains only `gateway.call`; broker, journal and mock endpoint
+  remain untouched. The positive slow-allow path from EXP-339 remains green.
+  Commit `7a8faba`; target: 50 tests OK; full suite: 627 passed, 1 skipped;
+  `git diff --check` passed.
+
+## EXP-343 — reject invalid, expired, or replayed broker grants
+Статус: ACCEPTED
+Цель: негативные broker cases не достигают mock endpoint и не оставляют publish attempt.
+Гипотеза: grant одноразов и digest/scope-bound в controlled path.
+Зависит от: EXP-342
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: реальные credentials, token lifecycle и provider integration.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- malformed/expired/replayed/wrong-scope grants отклоняются до provider;
+- при отказе нет receipt и нет attempting/completed journal record;
+- serialized evidence не содержит token-like fixture values.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: regressions cover missing grant identity, expiry, wrong
+  repository/operation/actuator/request digest/class, non-single-use and replay.
+  Invalid scope has zero gateway/broker/journal/mock effects; replay reaches the
+  live gateway but is refused by the single-use broker before journal/provider.
+  Sentinel-safe values do not appear in errors. Commit `ac6de67`; target:
+  52 tests OK; full suite: 629 passed, 1 skipped; `git diff --check` passed.
+
+## EXP-344 — bind journal idempotency to one intent
+Статус: ACCEPTED
+Цель: интеграционные регрессии фиксируют повторный matching request и конфликтующую замену intent.
+Гипотеза: idempotency не превращает другую публикацию в retry исходной.
+Зависит от: EXP-343
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: schema migration, concurrent multi-process behavior и real provider retries.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- matching повтор сохраняет исходный journal binding и не создаёт второй эффект;
+- новый digest/repository/branch/key для того же process даёт stable conflict до provider;
+- receipts остаются связанными с исходным staged digest.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: integration regressions verify a matching repeat keeps
+  the original completed journal binding and cannot emit another mock effect;
+  branch, repository and staged-digest conflicts for the same process are
+  rejected without overwriting the original receipt. Commit `bf9ee93`; target:
+  53 tests OK; full suite: 630 passed, 1 skipped; `git diff --check` passed.
+
+## EXP-345 — recover one matching mock effect without republishing
+Статус: ACCEPTED
+Цель: crash-after-effect и повторное recovery завершают journal по исходному mock receipt без повторного publish.
+Гипотеза: локальная reconciliation безопасно продолжает только точный idempotency match.
+Зависит от: EXP-344
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: настоящая crash durability, remote lookup и production recovery guarantee.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- journal reopen + matching receipt приводит к completed и тому же receipt ID;
+- счётчик публикации остаётся равен одному после повторного recovery;
+- журнальные и тестовые утверждения ограничены локальным SQLite/mock evidence.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: reopened the local SQLite journal after a simulated
+  crash-after-effect; reconciliation adopted the matching mock receipt and
+  repeated recovery kept exactly one publication. Commit `b9b038e`; target:
+  54 tests OK; full suite: 631 passed, 1 skipped.
+
+## EXP-346 — require reconciliation for unknown publication outcome
+Статус: ACCEPTED
+Цель: неизвестный или конфликтующий результат оставляет явное reconciliation_required состояние без blind retry.
+Гипотеза: неопределённость не переиспользует старый approval, grant или capability.
+Зависит от: EXP-345
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: автоматический retry, credential reuse, внешнее разрешение конфликта и production incident handling.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+Критерии приёмки:
+- endpoint unknown/error/mismatched receipt не создаёт второго publish;
+- состояние становится или остаётся `reconciliation_required` согласно текущему contract;
+- повторный запуск требует нового Control Plane решение/свежих gates и не подхватывает прежние approval/grant.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: unknown endpoint error and mismatched receipt both end
+  in `reconciliation_required`; a fresh approval, decision and grant cannot
+  republish or replace that journal binding. Commit `b3fa02e`; target:
+  55 tests OK; full suite: 631 passed, 1 skipped; `git diff --check` passed.
+
+## EXP-347 — reconcile R2 evidence and retain external gates
+Статус: ACCEPTED
+Цель: обновить статус проекта по завершению Batch AH и зафиксировать оставшиеся доказательные границы.
+Гипотеза: точное описание локальной цепочки отделит mock evidence от внешней интеграции.
+Зависит от: EXP-346
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: implementation changes, remote operations, GitHub, deployment, credentials и утверждение production safety.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+- docs/24-mvp-final-plan.md
+Критерии приёмки:
+- R2 отражён как 3/3 локальных батча по 20 карточек только после приёмки AH;
+- описана mock-only controlled publication/reconciliation цепочка и локальный результат suite;
+- ясно сказано, что внешняя интеграция, real credentials/provider, production durability/isolation остаются ungated;
+- ссылки на DOC-001 идеи не превращены в утверждение их реализации.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: README and status/plan documents record R2's local
+  Batch AF–AH series as 3/3 batches of 20, distinguish that milestone from
+  completion of R2 itself, and retain real-provider, credentials, provenance,
+  production isolation and durability gates. Commit `0bac1af`; full suite:
+  631 passed, 1 skipped (632 total); `git diff --check` passed.
+
+## Batch AI — local verifier-process boundary prototype (R2 follow-up)
+
+Цель batch: проверить, можно ли передавать ограниченный `VerifierInput` локальному
+дочернему процессу через строгий JSON handoff и принимать только bound
+`VerifierResult`. Это process-boundary prototype на текущем host, не independently
+trusted verifier, security isolation, production sandbox или доказательство
+защиты от привилегированного кода. Внешние API, сеть, Docker, credentials и
+provider calls исключены.
+
+План R2 после расширения: 4 основных батча по 20 карточек — AF/AG/AH приняты
+(3/4); Batch AI — отдельный локальный follow-up из 20 карточек, обычно
+исполняемый подбатчами OpenCode до 5 карточек. На 2026-10-01 принято 20/20
+карточек Batch AI: EXP-348—367 приняты после remediation/review. R2 остаётся
+незавершённым из-за открытых production и remote evidence gates.
+Карточки AI-1—AI-4
+формируют bounded wire contract, AI-5—AI-12 добавляют процессный адаптер и
+fail-closed поведение, AI-13—AI-19 проверяют интеграцию и отказную матрицу,
+AI-20 сводит локальные evidence и оставшиеся границы. Для OpenCode контрольный
+подбатч — пять последовательных карточек: после принятия предыдущего подбатча
+Control Plane может выставить эти пять в READY одновременно. Executor выполняет
+их строго сверху вниз, по одной карточке с отдельной проверкой/evidence/commit;
+при первой ошибке останавливает остаток. Не выставлять в READY карточки за
+границами текущего пятизадачного подбатча. Все проверки — полный suite.
+
+## EXP-348 — define bounded verifier process request and response records
+Статус: ACCEPTED
+Цель: зафиксировать versioned JSON wire records для дочернего verifier, отделённые от Python object identity.
+Гипотеза: точные записи исключат передачу caller capability и неоднозначное восстановление `VerifierInput`/`VerifierResult`.
+Зависит от: EXP-347 (ACCEPTED)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: запуск процесса, production isolation, реальные provider/credentials и изменение текущего executor flow.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- request/response records имеют явную версию и ограниченный фиксированный набор полей, достаточный для `VerifierInput`/`VerifierResult`;
+- сериализуемая форма не включает snapshot path, workspace, environment, stdout/stderr или credential/capability fields;
+- records immutable; malformed shapes отклоняются стабильными ошибками без echo значений.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: added immutable versioned request/response records
+  wrapping only the existing bounded `VerifierInput` and `VerifierResult`;
+  tests verify exact serialized field sets and reject invalid types/versions.
+  Commit `549df1b`; target: 3 tests OK; full suite: 634 passed, 1 skipped
+  (635 total); `git diff --check` passed.
+
+## EXP-349 — canonicalize verifier request JSON
+Статус: ACCEPTED
+Цель: добавить детерминированную UTF-8 JSON сериализацию bounded verifier request.
+Гипотеза: эквивалентное содержимое запроса даёт один digest и wire representation.
+Зависит от: EXP-348
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: запуск verifier процесса.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- serializer фиксирует encoding, separators, key order и запрет NaN/нестандартных типов;
+- повторная сериализация совпадает byte-for-byte и не меняет входные records.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+- ACCEPTED 2026-09-30: request serializer emits deterministic UTF-8 JSON with
+  sorted keys, compact separators, non-ASCII preservation and rejection of
+  non-JSON values; input remains unchanged. Commit `03454bd`; target: 5 tests
+  OK; full suite: 636 passed, 1 skipped (637 total); `git diff --check` passed.
+
+## EXP-350 — strictly parse verifier request records
+Статус: ACCEPTED
+Цель: отклонять malformed, duplicate, missing и unknown fields при чтении verifier request.
+Гипотеза: child boundary не ослабляет contract при JSON round trip.
+Зависит от: EXP-349
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: permissive compatibility aliases и schema migration.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- parser допускает только заявленную версию и точный field set;
+- неверная кодировка, JSON shape, duplicate key и неверные scalar types fail closed;
+- ошибки не включают сырой JSON или значения полей.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30 после remediation commit `4766a18`: `VerifierProcessRequest`
+  и wire parser теперь fail closed на любом `evidence_origin`, кроме `local_test`;
+  добавлены regressions для direct record construction и tampered JSON. Target:
+  30 tests OK; full suite: 661 passed, 1 skipped (662 total); `git diff --check`
+  passed.
+- CHANGES REQUESTED 2026-09-30: commit `d7cb238` проверен; поле
+  `evidence_origin` принимается с любым string value. Воспроизведение:
+  request с `evidence_origin="remote-test"` сериализуется и успешно проходит
+  `parse_verifier_request`. Это нарушает literal contract
+  `VerifierInput.evidence_origin == "local_test"` и путает локальное mock
+  evidence с provenance. Требуется независимо перепроверить commit и добавить
+  fail-closed value validation плюс regression на не-local string. Target
+  module: 28 tests OK; full suite: 659 passed, 1 skipped.
+
+## EXP-351 — bind verifier wire request to canonical digest
+Статус: ACCEPTED
+Цель: связать request record с canonical digest его bounded payload.
+Гипотеза: подмена полей между сериализацией и запуском обнаруживается до verifier invocation.
+Зависит от: EXP-350
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: cryptographic signatures или внешний trust root.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- digest формат канонический `sha256:` и считается только от фиксированной payload;
+- изменение любого bound request field приводит к mismatch;
+- документация и тесты не называют digest подписью или независимым proof.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `b7a4125` перепроверен после remediation EXP-350;
+  canonical `sha256:` digest считается по сериализованному bounded request,
+  mutation regressions и change-detection-only wording проходят. Target: 30
+  tests OK; full suite: 661 passed, 1 skipped (662 total); `git diff --check`
+  passed.
+- BLOCKED 2026-09-30: commit `b7a4125` и digest implementation просмотрены;
+  собственная проверка binding passed, но dependency EXP-350 имеет
+  CHANGES REQUESTED. Не принимать и не продолжать к следующей карточке,
+  пока исправление EXP-350 не принято; после этого повторно проверить binding
+  на исправленном request parser. Полный suite текущего subbatch: 660 tests,
+  659 passed, 1 skipped.
+
+## EXP-352 — validate verifier request resource bounds
+Статус: ACCEPTED
+Цель: ограничить encoded request size и вложенные verified-content поля до запуска child process.
+Гипотеза: caller-controlled payload не вызывает неограниченную сериализацию.
+Зависит от: EXP-351
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: общий лимит ресурсов host или sandbox security claims.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- byte limits включают total payload, paths, individual contents и number of files;
+- границы проверяются до сериализации/процессного запуска;
+- ошибки стабильны и не раскрывают oversized contents.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30 после remediation commit `0da8dd3`: preflight ограничивает
+  scalar strings, metadata, аргументы и коллекции до `json.dumps`; request
+  parser отсекает payload >2 MB до decode/parse. Точные тесты принимают 2 MB
+  boundary и отвергают следующий байт. Target: 33 tests OK; full suite: 664
+  passed, 1 skipped (665 total); `git diff --check` passed.
+- BLOCKED 2026-09-30: commit `3752b7c` добавил bounds для количества
+  и размера contents, но total encoded size проверяется только после
+  `json.dumps`; остальные строки/списки также могут быть arbitrarily large
+  до проверки. Критерий «bounds до serialization» не выполнен. Требуется
+  pre-serialization upper-bound validation для всех строк/collections и
+  parser input-size gate до UTF-8 decode/JSON parse с точными boundary tests.
+  Сначала принять EXP-350 и EXP-351, затем перевести эту карточку в REVIEW с
+  явным CHANGES REQUESTED. Target module: 28 tests OK; full suite: 659 passed,
+  1 skipped.
+
+## EXP-353 — canonicalize and validate verifier response JSON
+Статус: ACCEPTED
+Цель: добавить strict parser для response record и typed `VerifierResult` conversion.
+Гипотеза: child output без точной формы не может быть принят как verifier result.
+Зависит от: EXP-352
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: dynamic module loading и caller-provided Python objects.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- version, fields, verdict enum и blocker codes валидируются строго;
+- response record восстанавливает только bounded `VerifierResult`;
+- неизвестные поля и malformed values fail closed без echo.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `ca3ea8a` повторно проверен после принятия
+  EXP-352; parser строго валидирует version, exact fields, verdict, blocker
+  codes и возвращает typed result, malformed values не echo'ятся. Проверка:
+  full suite 664 passed, 1 skipped (665 total); `git diff --check` passed.
+- BLOCKED 2026-09-30: commit `ca3ea8a` reviewed; strict response parsing tests
+  pass, but dependency EXP-352 has a pending acceptance issue. Не принимать эту карточку
+  до принятия EXP-352; затем повторно проверить response parser и её field
+  contract. Полный suite текущего subbatch: 660 tests, 659 passed, 1 skipped.
+
+## EXP-354 — bind verifier response to its request
+Статус: ACCEPTED
+Цель: связать response с process/base/snapshot/replay/content/evidence digests исходного request.
+Гипотеза: stale или foreign result не может пройти verifier boundary.
+Зависит от: EXP-353
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: identity authentication или подпись verifier binary.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- все существующие `validate_verifier_result` bindings сохраняются;
+- подмена любого binding отклоняется до typed result возврата;
+- response request digest должен совпасть с точным исходным запросом.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30 после remediation commit `397e64e`: canonical request
+  digest стал обязательным полем response wire record; bind сравнивает его с
+  digest заново сериализованного request и сохраняет все
+  `validate_verifier_result` bindings. Regression отвергает stale response при
+  изменении `test_command`. Target: 35 tests OK; full suite: 666 passed,
+  1 skipped (667 total); `git diff --check` passed.
+- BLOCKED 2026-09-30: commit `6f53806` не помещает request digest
+  в response record; digest передаётся отдельным caller argument. Воспроизведение
+  подтвердило, что response с прежним result проходит bind для нового request,
+  если совпадают поля `VerifierResult`, но изменён `test_command`. Требуется
+  включить canonical request digest в response wire record, проверить exact
+  match до возврата typed result и добавить stale/foreign command-response
+  regression. Сначала завершить и принять EXP-350—353, затем перевести эту
+  карточку в REVIEW с явным CHANGES REQUESTED. Target module: 28 tests OK; full
+  suite: 659 passed, 1 skipped.
+
+## EXP-355 — define an explicit allowlisted child command
+Статус: ACCEPTED
+Цель: описать process adapter config с фиксированной executable/argv и положительным timeout.
+Гипотеза: task payload не может выбирать исполняемую команду verifier.
+Зависит от: EXP-354
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: shell invocation, PATH search expansion и произвольный command construction из verifier input.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- config immutable, непустая точная argv tuple; timeout и response limits валидируются;
+- malformed command не запускает subprocess;
+- process args не выводятся в ошибки/evidence.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `2c2a7b7` проверен; immutable config требует
+  absolute executable, exact nonempty argv tuple, bounded positive timeout и
+  response limits; malformed config отклоняется до spawn и не echo'ится.
+  Full suite после подбатча: 690 passed, 1 skipped (691 total); target module:
+  59 tests OK; `git diff --check` passed.
+
+## EXP-356 — run verifier with a minimal explicit environment
+Статус: ACCEPTED
+Цель: исключить неявное наследование environment в локальный child verifier process.
+Гипотеза: credentials и host-specific env не становятся входом verifier по умолчанию.
+Зависит от: EXP-355
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: запуск реального verifier/provider или чтение env secrets.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- child получает только минимально необходимый явно заданный environment;
+- тест с canary env variable доказывает, что она отсутствует у child;
+- tests не читают и не выводят реальные credentials.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `49c4d73` проверен; host environment не
+  наследуется, default child env пустой, canary-переменная parent отсутствует,
+  malformed mapping отвергается без echo. Caller-provided mapping копируется
+  явно и не читается из host env. Full suite: 690 passed, 1 skipped (691 total).
+
+## EXP-357 — implement bounded subprocess invocation and timeout
+Статус: ACCEPTED
+Цель: запускать verifier command без shell, с exact stdin request и конечным timeout.
+Гипотеза: malformed input и timeout не превращаются в unbounded wait или replay.
+Зависит от: EXP-356
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: OS-level sandbox, network isolation и Docker.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- argv передаётся без shell, stdin содержит только canonical request bytes;
+- timeout завершает child и возвращает stable fail-closed error;
+- test child подтверждает получение корректного request без path/credential capabilities.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `c118de7` проверен; запуск использует exact
+  canonical request bytes на stdin, argv без shell, finite timeout и kill/reap
+  без retry; malformed inputs не запускают child. Full suite: 690 passed,
+  1 skipped (691 total); `git diff --check` passed.
+
+## EXP-358 — bound verifier process output
+Статус: ACCEPTED
+Цель: ограничить child response, stdout и stderr на process boundary.
+Гипотеза: child не может заставить parent удерживать неограниченные logs/output.
+Зависит от: EXP-357
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: host-wide memory guarantees и unbounded forensic log storage.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- превышение установленного byte cap fail-closed и child завершается;
+- stdout принимает только один response record; stderr не возвращается в result/error;
+- тесты используют bounded canary output и подтверждают отсутствие echo.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30 после remediation commit `6b39d76`: runner теперь сам
+  классифицирует child outcome и возвращает только строго разобранный
+  `VerifierProcessResponse`; raw stderr/stdout не выходят вызывающему коду.
+  Exact-cap output принят, overflow отклонён; malformed/multiple JSON records
+  fail closed, stderr canary не появляется в result/error. Target module:
+  59 tests OK; full suite: 690 passed, 1 skipped (691 total); commit
+  `git diff --check` passed. Это закрывает ранее зарегистрированный CHANGES
+  REQUESTED.
+- SUPERSEDED CHANGES REQUESTED 2026-09-30: commit `b431329` ограничивает объем потоков и
+  завершает child при overflow, но `run_verifier_command` возвращает raw
+  `stdout` и `stderr` вызывающему коду в `VerifierProcessOutcome`; тест
+  `test_bounded_streams_are_delivered_byte_exact` прямо подтверждает возврат
+  canary stderr. Это не выполняет критерий «stderr не возвращается в
+  result/error» и оставляет непарсенный stdout как результат runner. Требуется
+  не выдавать raw stderr вызывающему коду и связывать process output с ровно
+  одной строго разобранной response record; сохранить bounded overflow
+  termination и отсутствие echo. Full suite: 690 passed, 1 skipped (691 total).
+
+## EXP-359 — classify child exit and malformed process outcomes
+Статус: ACCEPTED
+Цель: нормализовать nonzero exit, empty response и malformed response в стабильный verifier failure.
+Гипотеза: process diagnostics не меняют trust verdict и не раскрывают raw output.
+Зависит от: EXP-358
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: automatic retry, fallback to in-process verifier и raw log persistence.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- каждый outcome получает стабильный bounded error code;
+- ни один неуспешный outcome не возвращает PASS;
+- child stdout/stderr/argv не включаются в сообщения и serialized results.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30 после принятия EXP-358: commit `db679b6` повторно
+  проверен в интеграции runner → classifier; nonzero exit, empty и malformed
+  response дают стабильные fail-closed ошибки, а успешные PASS/FAIL сохраняют
+  verdict. Raw streams и argv не выходят в result/error. Target module:
+  59 tests OK; full suite: 690 passed, 1 skipped (691 total).
+- SUPERSEDED BLOCKED 2026-09-30: commit `db679b6` не принимается до remediation и
+  принятия EXP-358; после этого повторно проверить классификацию exit/empty/
+  malformed outcomes и отсутствие raw process diagnostics в результате.
+
+## EXP-360 — implement the local subprocess verifier adapter
+Статус: ACCEPTED
+Цель: предоставить `IndependentVerifier` adapter, который использует bounded wire protocol и process runner.
+Гипотеза: orchestration может требовать typed verifier result без передачи Python object identity через process boundary.
+Зависит от: EXP-359
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: production verifier, Docker, signature verification и claims об independently trusted verifier.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- adapter реализует имеющийся `IndependentVerifier` protocol;
+- положительный response проходит существующую `validate_verifier_result` binding validation;
+- process failures map only to fail-closed outcome, без изменения semantics in-process verifier.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `54a8e4e` проверен; adapter реализует
+  `IndependentVerifier`, передаёт canonical request через bounded runner и
+  выдаёт только response, прошедший request-digest и существующие
+  `validate_verifier_result` bindings. Failures остаются fail-closed. Target:
+  70 tests OK; full suite: 701 passed, 1 skipped (702 total).
+
+## EXP-361 — verify subprocess adapter composition with local executor
+Статус: ACCEPTED
+Цель: проверить совместимость adapter с текущим `run_local_execution` flow на temporary local child fixture.
+Гипотеза: процессный handoff не размывает pinned replay и digest binding.
+Зависит от: EXP-360
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: external verifier service или изменение publication chain.
+Разрешённые пути:
+- tests/test_verifier_process.py
+- tests/test_executor.py
+Критерии приёмки:
+- matching typed child result может пройти существующий local execution path;
+- exact request bindings и отдельный replay digest остаются проверены;
+- фикстура не использует сеть, credentials или секретные host paths.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `5066048` проверен; временная локальная pinned
+  fixture проходит `run_local_execution` до VERIFIED, сохраняя snapshot и
+  replay digests без сети, credentials или host paths. Target: 70 tests OK;
+  full suite: 701 passed, 1 skipped (702 total).
+
+## EXP-362 — reject stale and foreign subprocess verifier responses
+Статус: ACCEPTED
+Цель: добавить интеграционные регрессии для stale process/base/digest/replay bindings.
+Гипотеза: корректный JSON shape сам по себе не является authority proof.
+Зависит от: EXP-361
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: подписи и сетевой identity provider.
+Разрешённые пути:
+- tests/test_verifier_process.py
+Критерии приёмки:
+- каждый критичный binding подменён в child response по отдельности;
+- mismatch не даёт `ExecutionStatus.VERIFIED` и не выводит подставленное значение;
+- matching path остаётся зелёным.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `33c4e22` проверен; независимые подмены
+  process/base/snapshot/replay/patch/evidence/verification/content bindings
+  не дают VERIFIED и не echo'ят forged values; matching path остаётся зелёным.
+  Target: 70 tests OK; full suite: 701 passed, 1 skipped (702 total).
+
+## EXP-363 — deny failed and blocked subprocess verdicts
+Статус: ACCEPTED
+Цель: закрепить fail-closed mapping для child `FAIL`/`BLOCKED` и malformed verdict.
+Гипотеза: только точный `PASS` переводит execution в `VERIFIED`.
+Зависит от: EXP-362
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: changing verdict semantics или auto-remediation.
+Разрешённые пути:
+- tests/test_verifier_process.py
+- tests/test_executor.py
+Критерии приёмки:
+- fail/blocked/malformed child responses не создают verified result;
+- existing in-process verdict behavior не меняется;
+- error records остаются bounded и digest-only.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `d0017c0` проверен; FAIL и BLOCKED дают
+  `verifier-not-pass`, malformed verdict fail closed, in-process и subprocess
+  mappings совпадают. Target: 70 tests OK; full suite: 701 passed, 1 skipped
+  (702 total).
+
+## EXP-364 — test process timeout and crash cleanup
+Статус: ACCEPTED
+Цель: проверить timeout, child crash и cleanup на временной локальной process fixture.
+Гипотеза: worker failure не оставляет процесс/temporary artifacts и не допускает fallback retry.
+Зависит от: EXP-363
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: power-loss, production process supervisor и host isolation claims.
+Разрешённые пути:
+- tests/test_verifier_process.py
+Критерии приёмки:
+- timeout/crash produce stable failed outcome and no child remains running;
+- временные request/output files отсутствуют после завершения (если используются);
+- второй process invocation не запускается автоматически.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-09-30: commit `481364e` проверен; timeout/crash дают stable
+  failed outcome без retry, runner убивает и reaps child, а временных
+  request/output artifacts не остаётся. Target: 70 tests OK; full suite:
+  701 passed, 1 skipped (702 total).
+
+## EXP-365 — test process output overflow and non-disclosure
+Статус: ACCEPTED
+Цель: закрепить bounded output handling и отсутствие caller/child canary leakage.
+Гипотеза: нарушивший протокол verifier не превращает diagnostics в output channel.
+Зависит от: EXP-364
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: scanner coverage for real host logs or crash dumps.
+Разрешённые пути:
+- tests/test_verifier_process.py
+Критерии приёмки:
+- oversized stdout/stderr не удерживается целиком и завершается fail-closed;
+- canary из request, stderr, argv и response не попадает в errors/results;
+- лимиты проверены точно на границе и за ней.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commit `eb9519e` проверен; slow-trickle и exact-boundary
+  stdout/stderr regressions подтверждают bounded termination, а canary matrix
+  проверяет request/stderr/argv/response non-disclosure. Target module:
+  73 tests OK; full suite: 708 passed, 1 skipped (709 total); commit diff check
+  passed.
+
+## EXP-366 — lock local verifier prototype limitations
+Статус: ACCEPTED
+Цель: проверить, что process adapter явно маркирует local-test evidence и не заявляет независимую доверенность.
+Гипотеза: process separation не будет ошибочно интерпретирована как security isolation.
+Зависит от: EXP-365
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: Docker, kernel/VM isolation, signatures и production attestation.
+Разрешённые пути:
+- src/app_contracts/verifier_process.py
+- tests/test_verifier_process.py
+Критерии приёмки:
+- serialized receipt и adapter metadata сохраняют `local_test` origin;
+- не добавляются поля/claims network isolated, trusted production или signed;
+- тесты подтверждают сохранение ограничивающей маркировки.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commit `26cf5d0` проверен; response parser закрепляет
+  `local_test`, adapter metadata сохраняет явные limitation markers, а тесты
+  отсекают foreign origin и проверяют отсутствие claims об isolation/trust.
+  Target module: 73 tests OK; full suite: 708 passed, 1 skipped (709 total).
+
+## EXP-367 — reconcile Batch AI evidence and R2 follow-up status
+Статус: ACCEPTED
+Цель: обновить статус локального verifier-process прототипа и следующего R2 gate после принятия AI.
+Гипотеза: локальный process handoff будет отделён от независимого production trust и isolation.
+Зависит от: EXP-366
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: real verifier service, provider, credentials, deployment и завершение R2.
+Разрешённые пути:
+- README.md
+- docs/27-implementation-status.md
+- docs/24-mvp-final-plan.md
+Критерии приёмки:
+- R2 показывает AF/AG/AH и AI follow-up с корректным количеством батчей после acceptance AI;
+- описан только локальный subprocess JSON handoff и его проверенный suite;
+- independently trusted verifier, production sandbox/isolation, remote provenance, LLM Worker и external providers остаются открытыми;
+- process separation не представлена как trust independence.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Результат Control Plane:
+- SUPERSEDED CHANGES REQUESTED 2026-10-01: commit `0e63cda` обновляет разрешённые документы,
+  но после принятия EXP-365 и EXP-366 их status text «17/20 принято,
+  EXP-365—367 ждут Control Plane» устарел: текущий queue state — 19/20 принято,
+  EXP-367 остаётся в REVIEW. Обновить только README.md,
+  docs/27-implementation-status.md и docs/24-mvp-final-plan.md так, чтобы они
+  согласованно отражали 19/20 и незавершённую приёмку EXP-367, сохраняя явно
+  открытые remote provenance, LLM Worker, independent production trust,
+  production isolation/durability и external provider gates. Не закрывать R2.
+- ACCEPTED 2026-10-01 после remediation commit `417a723`: remediation находится
+  в разрешённом scope и приводит документы к корректному review-срезу 19/20,
+  сохраняя открытые R2 gates. Control Plane принял EXP-367 и актуализировал
+  все три документа и queue status на 20/20; R2 по-прежнему не завершён.
+  Полный suite: 709 tests, 1 opt-in Docker test skipped;
+  `git diff 0e63cda..417a723 --check` passed.
+
+## Batch AJ — GitHub remote snapshot claim, mock transport only (5 карточек)
+
+Цель: локально реализовать ограниченный read-only контракт для получения
+GitHub commit/tree/blob объектов через подставной byte transport, строго
+привязать ответ к полному commit SHA и вычисленному содержимому snapshot.
+Эти карточки проверяют только парсеры и композицию на локальных fixture; они
+не выполняют сетевой вызов и не доказывают remote provenance. Внешний источник
+остаётся ограничен GitHub REST API; данные ответа обозначаются как API claim,
+а не как independently trusted evidence или proof of authorship.
+
+Размер подбатча: 5 задач — EXP-368—372. Исполнение завершено отдельными
+локальными commits; после remediation Control Plane принял EXP-368—372.
+Только новые `src/app_contracts/github_snapshot.py` и
+`tests/test_github_snapshot.py` разрешены. Реальный HTTP transport, сеть,
+credentials, конкретный OWNER/REPO, testdev, Agent00X-sandbox, Docker,
+publication, branch/PR, deployment и push запрещены. Для любого последующего
+live read-only запроса потребуется отдельная карточка с точным repo, commit SHA,
+целью и командами. R2 остаётся открытым.
+
+## EXP-368 — define bounded GitHub snapshot claim records
+Статус: ACCEPTED
+Цель: определить immutable records запроса и API claims для точного GitHub commit/tree snapshot.
+Гипотеза: явное различение запроса, ответа API и доверенного доказательства предотвратит ошибочный claim об авторстве или проверенном remote provenance.
+Зависит от: EXP-367 (ACCEPTED)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: HTTP, сеть, credentials, repo allowlist configuration, GitHub App, signatures и изменение текущего executor flow.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+Критерии приёмки:
+- frozen records содержат только owner/repository slug, полный lowercase SHA-1 commit/tree OID и ограниченные API claim fields;
+- `evidence_origin` имеет явное значение `github_rest_api_claim`; типы и repr не называют данные `verified`/`trusted` и не содержат URL, credentials, raw JSON или file bytes;
+- malformed repository identifiers и OIDs отклоняются стабильными sanitized errors; тесты покрывают immutability, field inventory и repr.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- record фиксирует лишь структуру будущего API claim; сетевой источник и его доверие не проверяются.
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commits `c517f92` и remediation `6b53ca6` проверены;
+  repository slug `.`/`..` отвергаются sanitized ошибкой, negative tests
+  подтверждены. Полный suite: 736 tests, OK (skipped=1).
+
+## EXP-369 — bind GitHub commit response to the requested OID
+Статус: ACCEPTED
+Цель: строго разобрать GitHub `GET /repos/{owner}/{repo}/git/commits/{commit_sha}` response и связать его с запрошенным полным OID.
+Гипотеза: caller не сможет подменить commit или tree identity полями из несвязанного API response.
+Зависит от: EXP-368 (предыдущая READY-карточка текущего подбатча; выполнить после её локальной проверки и commit)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: HTTP, сеть, credentials, GitHub signature verification, trust in author/committer fields и публикация.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+Критерии приёмки:
+- parser принимает только object с точным `sha`, совпадающим с requested full 40-hex commit OID, и корректным `commit.tree.sha`;
+- отсутствующие, malformed и mismatched поля отклоняются до следующего collaborator без raw payload в ошибке;
+- GitHub `verification`/author/committer metadata не повышают claim до trusted/verified; tests доказывают это для valid/invalid signature metadata.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- parser тестируется только на локальных literal fixtures и не подтверждает подлинность HTTP response.
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commit `62b5659` проверен; parser связывает ровно
+  requested commit OID с tree OID, а signature/author metadata не повышают
+  уровень доверия. Полный suite: 734 tests, OK (skipped=1).
+
+## EXP-370 — parse a bounded complete GitHub tree response
+Статус: ACCEPTED
+Цель: разобрать tree response для commit-bound tree SHA и fail closed на неполном или небезопасном содержимом.
+Гипотеза: усечённый GitHub tree, traversal path или неподдерживаемый Git object не сможет выглядеть полным snapshot.
+Зависит от: EXP-369 (предыдущая READY-карточка текущего подбатча; выполнить после её локальной проверки и commit)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: сеть, скачивание blob-ов, запись файлов, submodule init, symlink following и расширение лимитов snapshot.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+Критерии приёмки:
+- parser требует `tree.sha` точного совпадения, `truncated is False`, bounded list/count/size и уникальные безопасные POSIX paths;
+- разрешены только regular blob modes `100644`/`100755` и structural tree entries; symlink, gitlink, malformed mode/type/SHA, unsafe path, дубли и превышение существующих snapshot limits отклоняются;
+- тесты покрывают truncated response и boundary values; ошибки sanitized.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- GitHub recursive tree API может возвращать truncated result; эта карточка его отклоняет, не доказывая remote completeness.
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commit `84be528` проверен; truncated/mismatched tree,
+  небезопасные/дублирующиеся пути, неподдерживаемые object modes и превышение
+  entry limit отклоняются. Полный suite: 734 tests, OK (skipped=1).
+
+## EXP-371 — decode and verify bounded GitHub blob objects
+Статус: ACCEPTED
+Цель: безопасно декодировать base64 blob response и сверить содержимое с SHA-1 blob OID из tree entry.
+Гипотеза: подмена содержимого blob или раздувание размера не попадёт в snapshot content digest.
+Зависит от: EXP-370 (предыдущая READY-карточка текущего подбатча; выполнить после её локальной проверки и commit)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: HTTP, сеть, materialization файлов, выполнение/импорт содержимого, секреты и файловые логи.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+Критерии приёмки:
+- parser принимает только `encoding=base64`, корректный строгий Base64, ожидаемые size и SHA-1 Git blob identity `SHA1("blob <size>\0" + bytes)`;
+- per-blob и суммарные ограничения не превышают констант `pinned_snapshot.py`; raw bytes не появляются в repr, исключениях или diagnostics;
+- tests покрывают invalid encoding/base64, size/SHA mismatch, oversized payload и valid binary bytes.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- SHA-1 сверяет Git object identity; это не подпись автора и не самостоятельный trust root.
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commit `664d648` проверен; строгий Base64 decode,
+  Git blob SHA-1, size/total bounds и скрытие raw bytes из repr/errors
+  подтверждены тестами. Полный suite: 734 tests, OK (skipped=1).
+
+## EXP-372 — compose a mock-transport-only GitHub snapshot reader
+Статус: ACCEPTED
+Цель: связать commit, complete tree и blob parsers в read-only GitHub snapshot reader и получить тот же bounded content digest, что у local snapshot.
+Гипотеза: последовательный GET-only contract сможет связать repo/commit/tree/bytes до передачи результата executor без сетевой capability у него.
+Зависит от: EXP-371 (предыдущая READY-карточка текущего подбатча; выполнить после её локальной проверки и commit)
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: default/real HTTP transport, сеть, auth headers/token, environment lookup, executor integration, публикация и production trust claims.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+Критерии приёмки:
+- reader использует только injected bounded transport вида `transport(method, url, headers, max_bytes, allow_redirects=False)` и фиксированные `GET` endpoints для commit/tree/blob на `https://api.github.com`, с явным `Accept` и API version `2026-03-10`; default network transport отсутствует;
+- object chain связывает requested commit → tree SHA → bounded blob OIDs/content, отвергает transport/JSON/HTTP-result errors sanitized и не допускает redirects/auth/other methods в transport contract;
+- content digest совпадает с существующим `compute_snapshot_tree_digest` на временном локальном fixture; mismatch и любой неполный response не дают claim;
+- итог помечен только `github_rest_api_claim`; тесты доказывают zero transport calls при невалидном request и отсутствие live network/default transport;
+- полный suite проходит, `git diff --check` проходит.
+Проверки:
+- PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+Разрешённые внешние команды:
+- none
+Commit: ALLOWED
+Ограничения и риски:
+- mock transport не проверяет TLS, серверную идентичность, реальную доступность репозитория, авторство или remote provenance; следующий live experiment требует отдельной точной target card.
+Результат Control Plane:
+- ACCEPTED 2026-10-01: commits `5998238` и remediation `1c53717` проверены;
+  oversized body отсекается до decode/JSON parse для commit/tree/blob limits,
+  regression tests подтверждены. Полный suite: 736 tests, OK (skipped=1);
+  `git diff --check` прошёл. Остаётся ограничение исходной карточки: mock
+  transport не доказывает TLS, серверную идентичность или remote provenance.
+
+## R2 → R3 — provisional completion roadmap (planning only)
+
+Batch AJ: все 5 карточек (EXP-368—372) приняты. Для перехода к R3 предварительно
+планируются ещё три последовательных подбатча AL—AN по 5 задач — 15
+дополнительных экспериментов; Batch AK расширен с 5 до 10 карточек пятью
+обусловленными live-tree finding задачами. Весь текущий план до решения о
+переходе составляет ориентировочно 30 задач / 5 подбатчей, считая AJ—AN. Это
+оценка декомпозиции, не доказательство достаточности: findings могут добавить
+задачи. Batch AK разложен на 10 карточек: EXP-373 принята с pinned SHA
+`df16e2f22cc0e97f39dfc428614f8683b0db63d9`; EXP-374 принята после исправления
+parser path по официальному GitHub REST response shape; commit SHA подтверждён,
+tree SHA `12c7a4fc88b55729511473767aa9007a3ee53a27`. EXP-375 завершилась
+fail-closed на oversized metadata; EXP-376 — на отсутствующих путях до blob GET.
+EXP-380 принята как metadata-only диагностика: 2 исходных пути present, 2
+missing, найдены bounded candidates; blob GET — 0. EXP-381 BLOCKED: первый blob
+содержал wrapped base64 и executor отклонился от точной команды. EXP-382 принята:
+четыре blobs и Git OIDs совпали, независимо пересчитанный selected-content digest
+`sha256:1d4b2136da49e7f956f4ea50b637bd5aeb049c29f6c8b61b4255fdeaf3bc69d9`; claim
+только для allowlist, `full_snapshot=false`. EXP-377 принята: targeted suite —
+30 tests, OK; один SSH not-found GET вернул HTTP 404 без чтения response body и
+без claim. Основная серия Batch AK: 7/10 ACCEPTED, 3 исторические BLOCKED;
+отдельные read-only follow-ups EXP-388/389: два bounded GET к разным
+документированным commit endpoints завершились sanitized failure без claim и
+без повторов; EXP-390 классифицировал TLS отказ, EXP-391 —
+`certificate_verification`. На тот момент follow-up API claim отсутствовал, и
+TLS verification gate остановил следующие запросы.
+Ни один результат не доказывает
+authorship/TLS/trust-root/full snapshot. Для Batch AL созданы 5 карточек:
+1 ACCEPTED и 4 DRAFT; Batch AM—AN остаются planning gates.
+
+Актуализация 2026-10-03: локальный OpenSSL Python runtime не загружал CA по
+умолчанию (`cert_count=0`), хотя системный `/etc/ssl/cert.pem` содержит 128
+CA. Использование этого существующего bundle только для процесса сняло TLS gate
+без изменения trust store. EXP-392 подтвердил strict TLS + HTTP 200 без чтения
+body; EXP-393 подтвердил точные commit/tree pins и
+`verification.verified=false`; EXP-394 на commit-summary endpoint подтвердил
+те же pins, `github_verified=false reason=unsigned`. Все response bodies остались
+в памяти и не выводились/не сохранялись. Это GitHub REST API claim, не
+independent signature validation, authorship proof, provenance вне данного TLS
+trust path или full repository snapshot. Старые BLOCKED статусы EXP-388/389
+сохранены как история; их factual question покрыт последующими accepted
+follow-ups. Новых `READY` карточек в Batch AK нет.
+
+### Batch AK — live read-only remote snapshot evidence (10 карточек)
+
+Подготовлены карточки EXP-373—382 для одного публичного репозитория
+`SoldatovAlexander/Agent00X`; GitHub показывает default branch `main`. EXP-373
+принята и SHA ветки pinned в очереди. В EXP-374 были DNS/auth блокировки и
+несколько неуспешных проходов; после уточнения SSH-пользователя bounded GET
+успешно связал pinned commit с tree SHA
+`12c7a4fc88b55729511473767aa9007a3ee53a27`. Причина прежнего `tree OID invalid`
+— парсер ожидал неверный `commit.tree` вместо top-level `tree`; исправленный
+парсер и точный `ConnectTimeout=10` подтвердили критерии. EXP-375 выполнила один
+точный bounded recursive-tree GET: HTTP 200, tree SHA совпал, `truncated=false`,
+структурные поля прошли проверки, но размер одной записи превысил лимит 100000
+байт. Карточка BLOCKED, success tree claim отсутствует; повтора и blob GET не
+было. По принятой пользователем рекомендации EXP-378 сохраняет крупный
+nonnegative `size` как metadata, но reader отклоняет oversized blob до любого
+blob request; лимиты per-file/total content остаются неизменны. EXP-379 принят:
+один bounded GET вернул HTTP 200, exact tree SHA, `truncated=false`, 134 entries
+(115 blobs, 19 trees) и один blob с declared size выше лимита; в evidence
+сохранены только counts. EXP-375 остаётся исторически BLOCKED на прежней
+metadata-политике. Единственный запуск EXP-376 остановился на allowlist
+preflight до blob GET; EXP-376 BLOCKED, digest не создан. EXP-377 ACCEPTED после
+принятия EXP-382: targeted suite — 30 tests, OK; один sanitized not-found GET
+вернул HTTP 404 без чтения response body и без claim; blob snapshot не повторялся.
+EXP-380 ACCEPTED: два исходных пути present, два missing; выбран новый metadata-
+eligible allowlist. EXP-381 BLOCKED: wrapped-base64 decode отказал, и executor
+отклонился от точной команды. EXP-382 ACCEPTED: выбранный четырёхфайловый
+content digest независимо пересчитан и совпал; full snapshot не заявляется.
+Никаких GitHub API
+credentials, writes, branch/PR, publication, push или изменений service на
+testdev.
+
+## EXP-373 — pin one public GitHub snapshot target
+Статус: ACCEPTED
+Цель: закрепить полный commit SHA текущего `main` в публичном `SoldatovAlexander/Agent00X` для Batch AK.
+Гипотеза: явный immutable target не позволит незаметно переключить источник или ref во время сбора evidence.
+Зависит от: Batch AJ (EXP-368—372 ACCEPTED)
+Среда исполнения: local, read-only
+Внешняя цель: `https://github.com/SoldatovAlexander/Agent00X`, только публичная ветка `main`.
+Вне scope: private repositories, credentials, writes, branch/PR, публикация, любые другие refs/remotes.
+Разрешённые пути: none; только read-only сбор evidence.
+Критерии приёмки:
+- единственная команда возвращает ровно ref `refs/heads/main` и lowercase SHA-1 из 40 hex; нулевой или неоднозначный результат означает BLOCKED, не fallback на другой ref;
+- SHA записывается Control Plane как pin для EXP-374—377; исполнитель не выбирает tag, другой branch или commit самостоятельно;
+- только hash/ref сохраняются в evidence, без credential/helper output.
+Проверки:
+- `env GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c protocol.version=2 ls-remote --heads https://github.com/SoldatovAlexander/Agent00X.git refs/heads/main`
+Разрешённые внешние команды:
+- только команда проверки выше; ровно один запуск.
+Commit: DENIED
+Ограничения и риски: `main` изменяемая ветка; зафиксированный SHA — snapshot только на момент чтения. GitHub page указывает репозиторий как Public и показывает `main` на 2026-10-01.
+Результат Control Plane:
+- ACCEPTED 2026-10-01: точная разрешённая команда завершилась с exit code 0 и
+  вернула единственный ref `refs/heads/main` с SHA
+  `df16e2f22cc0e97f39dfc428614f8683b0db63d9` (40 lowercase hex). Запрос был
+  read-only; credentials, checkout, fetch и изменения удалённого репозитория
+  не выполнялись.
+
+## EXP-374 — bind live commit API response to the pinned OID
+Статус: ACCEPTED
+Цель: выполнить один bounded GET к точному commit endpoint и сверить ответ с EXP-373 target.
+Гипотеза: response от выбранного API endpoint можно связать с запрошенным полным SHA без доверия к branch names или подписи автора.
+Зависит от: EXP-373 ACCEPTED
+Среда исполнения: testdev, read-only; из OpenCode на macOS через существующий SSH alias `testdev` и уже настроенный agent, без чтения/копирования credential values
+Внешняя цель: публичный `SoldatovAlexander/Agent00X`, commit `df16e2f22cc0e97f39dfc428614f8683b0db63d9` из принятой EXP-373.
+Вне scope: GitHub API auth/token minting, другие API hosts, redirects, writes,
+default transport в приложении, чтение/копирование/вывод ключей или `.env`,
+любые команды на testdev кроме указанной ниже.
+Разрешённые пути: none; только read-only сбор evidence.
+Критерии приёмки:
+- выполняется только точный GET `/repos/{OWNER}/{REPO}/git/commits/{COMMIT_SHA}` на `https://api.github.com`, с явными Accept/API-version headers, redirect disabled и установленным response byte limit;
+- HTTP status и JSON shape проверяются fail-closed; top-level `sha` равен закреплённому commit SHA, а `tree.sha` — lowercase full 40-hex OID;
+- mismatched/invalid response не создаёт success evidence; API-ответ не интерпретируется как доказательство авторства или trusted provenance.
+Проверки:
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+COMMIT_SHA = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+URL = (
+    "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/"
+    + COMMIT_SHA
+)
+MAX_BYTES = 1_000_000
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+def reject_constant(_value):
+    raise ValueError("invalid JSON constant")
+
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "AgentProcessPlatform-read-only-snapshot-check",
+    },
+    method="GET",
+)
+opener = urllib.request.build_opener(
+    NoRedirect(), urllib.request.ProxyHandler({})
+)
+try:
+    response = opener.open(request, timeout=10)
+except urllib.error.HTTPError as error:
+    status = error.code
+    error.close()
+    print(f"github snapshot: HTTP status {status}")
+    sys.exit(1)
+except Exception:
+    print("github snapshot: transport failed")
+    sys.exit(1)
+
+try:
+    with response:
+        if response.status != 200:
+            print(f"github snapshot: HTTP status {response.status}")
+            sys.exit(1)
+        deadline = time.monotonic() + 30
+        chunks = bytearray()
+        while len(chunks) <= MAX_BYTES:
+            if time.monotonic() >= deadline:
+                print("github snapshot: response read timed out")
+                sys.exit(1)
+            chunk = response.read1(min(65536, MAX_BYTES + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+except Exception:
+    print("github snapshot: bounded response read failed")
+    sys.exit(1)
+body = bytes(chunks)
+
+if len(body) > MAX_BYTES:
+    print("github snapshot: response exceeds 1000000 bytes")
+    sys.exit(1)
+try:
+    payload = json.loads(
+        body.decode("utf-8"),
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_constant,
+    )
+except Exception:
+    print("github snapshot: response JSON invalid")
+    sys.exit(1)
+
+if type(payload) is not dict:
+    print("github snapshot: response shape invalid")
+    sys.exit(1)
+returned_commit = payload.get("sha")
+tree_object = payload.get("tree")
+tree_sha = tree_object.get("sha") if type(tree_object) is dict else None
+if returned_commit != COMMIT_SHA or not isinstance(returned_commit, str):
+    print("github snapshot: commit OID mismatch")
+    sys.exit(1)
+if not isinstance(tree_sha, str) or re.fullmatch(r"[0-9a-f]{40}", tree_sha) is None:
+    print("github snapshot: tree OID invalid")
+    print("commit_field_matches_expected=true")
+    print("tree_field_present=" + str("tree" in payload).lower())
+    print("tree_object_type=" + type(tree_object).__name__)
+    print("tree_sha_field_present=" + str(type(tree_object) is dict and "sha" in tree_object).lower())
+    print("tree_sha_type=" + type(tree_sha).__name__)
+    print("tree_sha_length=" + (str(len(tree_sha)) if isinstance(tree_sha, str) else "n/a"))
+    print("tree_sha_lowercase_hex40=" + str(isinstance(tree_sha, str) and re.fullmatch(r"[0-9a-f]{40}", tree_sha) is not None).lower())
+    sys.exit(1)
+
+print("HTTP 200")
+print("commit_sha=" + returned_commit)
+print("tree_sha=" + tree_sha)
+PY
+```
+Разрешённые внешние команды:
+- только SSH-команда из проверки выше; ровно один запуск. Она использует
+  существующий SSH profile/agent для testdev, но не читает или передаёт значения
+  ключей; на testdev запускается только Python-скрипт для bounded read-only GET.
+- не читать credentials, `.env.github-app`, private key или system-wide secrets;
+  не включать секреты в prompt, логи или evidence.
+- операция явно разрешена пользователем 2026-10-02 и выполняется в OpenCode на macOS.
+- не изменять unit-файлы, не перезапускать сервисы и не выполнять deployment.
+Commit: DENIED
+Ограничения и риски: одиночный API claim не доказывает TLS/server trust beyond transport defaults, подпись автора или полноту дерева.
+Результат Control Plane:
+- BLOCKED 2026-10-02: Executor дополнительно выполнил локальный `ssh -G testdev`
+  для проверки alias, затем сформировал попытку SSH с `ConnectTimeout=15`
+  (карточка задаёт `ConnectTimeout=10`). SSH сообщил
+  `Could not resolve hostname testdev`; remote command не стартовал, запрос к
+  GitHub API не выполнялся. Это не считается успешным или точным исполнением
+  карточки; секреты/credentials не открывались. Не повторять, пока не появится
+  явно одобренный рабочий сетевой маршрут и обновлённая точная команда.
+- BLOCKED 2026-10-02: единственный разрешённый запуск завершился exit code 1 и
+  sanitized output `github snapshot: transport failed`; HTTP response не получен,
+  commit/tree claim отсутствует. Причина нижнего уровня не раскрывалась. Запрос
+  не повторять и EXP-375—377 не запускать до утверждения нового exact transport
+  path/command; credentials не использовать.
+- Control Plane 2026-10-02: GitHub connector рассмотрен как возможная альтернатива,
+  но его контракт возвращает metadata/diff без проверяемых HTTP status, headers,
+  redirect policy и body limit. Он не удовлетворяет текущим критериям EXP-374;
+  authenticated connector не разрешён, карточка остаётся BLOCKED без ослабления
+  критериев.
+- Control Plane 2026-10-02: по предложению пользователя подготовлена новая попытка
+  того же bounded GET на явно названном `testdev`. Никакие реквизиты доступа не
+  искались и не читались.
+- READY 2026-10-02: пользователь дал команду попробовать операцию; подтверждён
+  правильный OpenCode workspace Agent00X. Разрешён ровно один запуск точной
+  команды выше в testdev. Никаких иных карточек, deployment, unit/service
+  changes, credential access или retries без новой task card.
+- Control Plane correction 2026-10-02: предыдущий отказ получен от роли
+  `reviewer-remediator`, хотя карточка имеет статус READY и должна исполняться
+  ролью `executor`. Команда не запускалась (0 запусков); вывод о недоступности
+  testdev был неприменим и удалён как ошибочный.
+- READY 2026-10-02: пользователь предоставил адрес `192.168.88.101` после
+  DNS-блокировки alias `testdev`. Разрешён ровно один новый запуск точной команды
+  выше с `HostName=192.168.88.101`, сохраняя настроенный alias/agent; только
+  bounded public GET. Credentials других проектов не искать/не читать.
+- BLOCKED 2026-10-02: с IP `192.168.88.101` SSH дошёл до auth и вернул
+  sanitized `Permission denied (publickey,password)`; удалённая сессия не
+  установлена, Python и GitHub GET не запускались. Executor использовал
+  `ConnectTimeout=15`, хотя карточка задавала `10`; и это не меняет отсутствие
+  удалённого запуска. Credentials не читались и не подбирались. Не повторять до
+  восстановления штатной SSH-аутентификации и нового решения Control Plane.
+- READY 2026-10-02: пользователь поручил продолжить; в OpenCode выбран
+  `executor`. Разрешён ровно один запуск точной команды выше на testdev. Никаких
+  иных карточек, deployment, unit/service changes, credential access или
+  retries без новой task card.
+- BLOCKED 2026-10-02: правильная роль `executor` подтвердила, что доступна
+  только локальная shell-среда и testdev route отсутствует. Команда не
+  запускалась (0 запусков этой testdev-попытки); HTTP-запрос не повторялся,
+  credentials не открывались. Нужен подтверждённый OpenCode/testdev execution
+  path; до этого EXP-375—377 не запускать.
+- READY 2026-10-02: пользователь явно разрешил подключить OpenCode к включённому
+  `testdev` с использованием уже существующих параметров доступа из других
+  проектов. Контрольная граница: не извлекать и не передавать значения секретов;
+  использовать только существующий SSH profile/agent и только точную команду
+  этой карточки. Повторная попытка ограничена одним запуском.
+- READY 2026-10-02: пользователь уточнил правильное SSH-имя `alex` и сообщил,
+  что используется только key auth, парольного входа нет. Разрешён ровно один
+  новый запуск команды выше: `User=alex`, public-key authentication only,
+  HostName `192.168.88.101`, существующий alias/agent; без секретов и pre-checks.
+- BLOCKED 2026-10-02: Executor установил SSH-сессию как `alex` к
+  `192.168.88.101` с public-key-only auth и выполнил bounded GET один раз.
+  Команда отличалась от утверждённой карточкой: использован
+  `ConnectTimeout=15` вместо `ConnectTimeout=10`; поэтому точное исполнение
+  карточки не подтверждено. Sanitized output: `github snapshot: tree OID
+  invalid` (exit code 1); программа сообщила о совпадении commit SHA, но не
+  обнаружила валидный lowercase 40-hex `commit.tree.sha`. Success evidence не
+  создан, criteria не выполнены, лимит нового запуска исчерпан. Секреты не
+  читались; дополнительных проверок, retries или действий на сервисах не было.
+  EXP-375—377 остаются DRAFT. Новая попытка требует отдельного решения Control
+  Plane и обновлённой точной команды.
+- READY 2026-10-02: по новому прямому указанию пользователя Control Plane
+  разрешил ровно один диагностический повтор EXP-374 после предыдущего
+  `tree OID invalid`. Использовать только точную команду этой карточки с
+  `ConnectTimeout=10`, существующий SSH alias/agent, `User=alex` и
+  `HostName=192.168.88.101`. На invalid `tree.sha` скрипт выводит только типы,
+  наличие поля, длину и boolean результата lowercase-hex40; никаких значений
+  ответа, дополнительных команд, retries, credential access или service changes.
+- BLOCKED 2026-10-02: диагностическая попытка прошла по SSH как `alex` с
+  `ConnectTimeout=10`, выполнила один bounded GET и вернула только
+  `github snapshot: tree OID invalid` (exit code 1). По отчету Executor,
+  запущенная версия всё ещё искала `payload["commit"]["tree"]["sha"]` и не
+  вывела запрошенные field/type/length flags; remote GET не повторять. Raw
+  response и секреты не сохранены.
+- Control Plane 2026-10-02: сверка официального примера GitHub REST API для
+  `GET /repos/{owner}/{repo}/git/commits/{commit_sha}` показала, что Git
+  Database response содержит `tree` на верхнем уровне рядом с `sha`, а не в
+  `commit.tree`. Предыдущий парсер был привязан к неверному shape. Исправлена
+  только навигация к `payload["tree"]["sha"]`; endpoint, pin, byte/deadline
+  limits и fail-closed проверки сохранены.
+- READY 2026-10-02: пользователь поручил решить причину `tree OID invalid` и
+  продолжить работу. Разрешён ровно один точный read-only GET по исправленному
+  парсеру выше через `alex@192.168.88.101`, SSH key-only, `ConnectTimeout=10`;
+  без предварительных команд, raw response, credentials, service changes или
+  retries. При валидном commit/tree OID Control Plane проверит evidence и
+  сможет принять EXP-374; иначе EXP-374 останется BLOCKED.
+- ACCEPTED 2026-10-02: OpenCode Executor сверил актуальную карточку до запуска
+  (top-level `payload["tree"]["sha"]`, `ConnectTimeout=10`) и выполнил её exact
+  команду один раз. Результат: `HTTP 200`, commit SHA совпал с EXP-373 pin
+  `df16e2f22cc0e97f39dfc428614f8683b0db63d9`, tree SHA
+  `12c7a4fc88b55729511473767aa9007a3ee53a27` прошёл lowercase full 40-hex
+  проверку. Raw body, credentials и секреты не сохранены; redirects отключены,
+  response limit/deadline применены. Endpoint claim не является доказательством
+  авторства или trusted provenance.
+
+## EXP-375 — read and bound the pinned GitHub tree
+Статус: BLOCKED
+Цель: получить recursive tree для tree OID, принятого в EXP-374, и проверить полноту и границы ответа.
+Гипотеза: mismatched или truncated tree не будет принят за complete snapshot.
+Зависит от: EXP-374 ACCEPTED
+Среда исполнения: testdev, read-only через OpenCode на macOS
+Внешняя цель: `SoldatovAlexander/Agent00X`; только pinned commit/tree OIDs из принятых EXP-373/374.
+Вне scope: blob fetch, запись файлов, submodule/symlink following, другие endpoints и расширение лимитов.
+Разрешённые пути: none; только read-only сбор evidence.
+Критерии приёмки:
+- выполняется только bounded GET `/repos/{OWNER}/{REPO}/git/trees/{TREE_SHA}?recursive=1` на `https://api.github.com`, с redirects disabled;
+- response tree SHA точно совпадает, `truncated` строго `false`, а bytes/count/path/mode/type удовлетворяют лимитам и parser contract Batch AJ;
+- любая ошибка или превышение лимита даёт sanitized non-success; сохраняется только необходимое evidence.
+Проверки:
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+TREE_SHA = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = (
+    "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/trees/"
+    + TREE_SHA
+    + "?recursive=1"
+)
+MAX_BYTES = 8_000_000
+MAX_FILES = 10_000
+MAX_PATH_BYTES = 240
+MAX_FILE_BYTES = 100_000
+MAX_TOTAL_BYTES = 1_000_000
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+def reject_constant(_value):
+    raise ValueError("invalid JSON constant")
+
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "AgentProcessPlatform-read-only-snapshot-check",
+    },
+    method="GET",
+)
+opener = urllib.request.build_opener(
+    NoRedirect(), urllib.request.ProxyHandler({})
+)
+try:
+    response = opener.open(request, timeout=10)
+except urllib.error.HTTPError as error:
+    status = error.code
+    error.close()
+    print(f"github snapshot: HTTP status {status}")
+    sys.exit(1)
+except Exception:
+    print("github snapshot: transport failed")
+    sys.exit(1)
+
+try:
+    with response:
+        if response.status != 200:
+            print(f"github snapshot: HTTP status {response.status}")
+            sys.exit(1)
+        deadline = time.monotonic() + 30
+        chunks = bytearray()
+        while len(chunks) <= MAX_BYTES:
+            if time.monotonic() >= deadline:
+                print("github snapshot: response read timed out")
+                sys.exit(1)
+            chunk = response.read1(min(65536, MAX_BYTES + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+except Exception:
+    print("github snapshot: bounded response read failed")
+    sys.exit(1)
+
+body = bytes(chunks)
+if len(body) > MAX_BYTES:
+    print("github snapshot: response exceeds byte limit")
+    sys.exit(1)
+try:
+    payload = json.loads(
+        body.decode("utf-8"),
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_constant,
+    )
+except Exception:
+    print("github snapshot: response JSON invalid")
+    sys.exit(1)
+if type(payload) is not dict:
+    print("github snapshot: response shape invalid")
+    sys.exit(1)
+if payload.get("sha") != TREE_SHA:
+    print("github snapshot: tree OID mismatch")
+    sys.exit(1)
+if payload.get("truncated") is not False:
+    print("github snapshot: tree response incomplete")
+    sys.exit(1)
+entries = payload.get("tree")
+if type(entries) is not list or len(entries) > MAX_FILES:
+    print("github snapshot: tree entry count invalid")
+    sys.exit(1)
+
+seen = set()
+blob_count = 0
+directory_count = 0
+known_blob_bytes = 0
+for entry in entries:
+    if type(entry) is not dict:
+        print("github snapshot: tree entry invalid")
+        sys.exit(1)
+    path = entry.get("path")
+    if (
+        not isinstance(path, str) or not path or path != path.strip()
+        or path.startswith("/") or "\\" in path or "//" in path
+        or any(ord(char) < 32 or ord(char) == 127 for char in path)
+        or any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        print("github snapshot: tree path invalid")
+        sys.exit(1)
+    try:
+        if len(path.encode("utf-8")) > MAX_PATH_BYTES:
+            raise ValueError("path too long")
+    except (UnicodeEncodeError, ValueError):
+        print("github snapshot: tree path invalid")
+        sys.exit(1)
+    normalized = "/".join(path.split("/"))
+    if normalized in seen:
+        print("github snapshot: duplicate tree path")
+        sys.exit(1)
+    seen.add(normalized)
+    mode = entry.get("mode")
+    kind = entry.get("type")
+    if mode in ("100644", "100755") and kind == "blob":
+        blob_count += 1
+    elif mode == "040000" and kind == "tree":
+        directory_count += 1
+    else:
+        print("github snapshot: tree mode or type invalid")
+        sys.exit(1)
+    oid = entry.get("sha")
+    if not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None:
+        print("github snapshot: tree entry OID invalid")
+        sys.exit(1)
+    if "size" in entry:
+        size = entry["size"]
+        if type(size) is not int or not 0 <= size <= MAX_FILE_BYTES:
+            print("github snapshot: tree entry size invalid")
+            sys.exit(1)
+        if kind == "blob":
+            known_blob_bytes += size
+            if known_blob_bytes > MAX_TOTAL_BYTES:
+                print("github snapshot: declared blob total exceeds limit")
+                sys.exit(1)
+
+print("HTTP 200")
+print("tree_sha=" + TREE_SHA)
+print("entry_count=" + str(len(entries)))
+print("blob_count=" + str(blob_count))
+print("tree_count=" + str(directory_count))
+print("known_blob_bytes=" + str(known_blob_bytes))
+PY
+```
+Разрешённые внешние команды:
+- только SSH-команда выше, ровно один запуск; она передаёт inline Python на
+  `testdev` и выполняет один bounded read-only GET указанного endpoint. Без
+  pre-checks, retries, иных endpoints, blob-запросов и записи файлов.
+- существующий SSH alias/agent; не читать credentials, `.env`, ключи или secrets;
+  не сохранять raw response. Выполнять в OpenCode на macOS.
+- пользователь явно разрешил этот путь подключения 2026-10-02; unit/service
+  changes, restart и deployment не разрешены.
+Commit: DENIED
+Ограничения и риски: API tree claim не доказывает authenticity источника или отсутствие изменения удалённого repository после чтения.
+Результат Control Plane:
+- READY 2026-10-02: EXP-374 принят с tree OID
+  `12c7a4fc88b55729511473767aa9007a3ee53a27`. Разрешён ровно один запуск
+  точной bounded-команды выше через `alex@192.168.88.101`, key-only,
+  `ConnectTimeout=10`. Любой отказ — sanitized non-success без повторов.
+- BLOCKED 2026-10-02: Executor сверил target SHA, transport options и точную
+  команду до запуска; выполнил ровно один bounded GET. Sanitized output:
+  `github snapshot: tree entry size invalid` (exit code 1). По прохождению
+  проверок до этой точки HTTP был 200, tree SHA совпал, `truncated` был строго
+  `false`, количество entries, пути, mode/type и OID прошли; отказ произошёл
+  на `size` одной записи, которая не укладывается в карточный предел 100000
+  байт. Какое именно значение — неизвестно и не сохранялось. Raw response,
+  credentials и секреты не сохранялись; дополнительных запросов, retries,
+  blob fetch, файловых или service изменений не было. Успешный tree claim не
+  создан; EXP-376—377 не запускались. Для продолжения требуется Control Plane
+  решение: оставить tree лимит и считать эту цель несовместимой либо отдельной
+  локальной карточкой изменить границу metadata-versus-selected-blobs; текущие
+  критерии/безопасность ради успеха внешнего запроса не ослаблялись.
+
+## EXP-376 — bind selected live blobs to the pinned tree
+Статус: BLOCKED
+Цель: получить четыре заранее выбранных regular blobs, динамически найденных в принятом EXP-379 tree, сверить каждый Git blob OID и вычислить digest только выбранного содержимого.
+Гипотеза: содержимое каждого выбранного файла соответствует OID принятого tree; digest ограничен allowlist и не заявляет полный repository snapshot.
+Зависит от: EXP-379 ACCEPTED
+Среда исполнения: testdev, read-only через OpenCode на macOS
+Внешняя цель: `SoldatovAlexander/Agent00X`; только pinned tree и blob OIDs из него.
+Вне scope: любые файлы вне allowlist, symlinks/gitlinks, запись или исполнение содержимого, credentials, публикация и полный repository snapshot claim.
+Разрешённые пути: none; только read-only сбор evidence.
+Критерии приёмки:
+- ровно один bounded recursive-tree GET: exact tree SHA `12c7a4fc88b55729511473767aa9007a3ee53a27`, `truncated=false`, response <=8,000,000 bytes, <=10,000 entries, unique safe paths and valid modes/types/OIDs/optional sizes;
+- до любого blob GET все четыре точных пути `README.md`, `docs/27-implementation-status.md`, `src/app_contracts/github_snapshot.py`, `tests/test_github_snapshot.py` присутствуют ровно один раз как regular blobs, declared size exact int 0..100,000, total <=1,000,000; при неуспехе — остановка без blob GET;
+- затем ровно один blob GET для каждого выбранного OID (всего 4), без retries, redirects и proxy; каждое тело <=200,000 bytes и deadline <=30s, strict JSON/base64/size checks, Git SHA-1 `blob <size>\0<bytes>` match, decoded total <=1,000,000;
+- независимо пересчитаны per-file SHA-256 и selected-content digest с каноникализацией Batch AJ (`app-process-snapshot-tree/v1`, sorted-key compact UTF-8 JSON); digest включает только allowlist и mode, список отсортирован по path;
+- отчёт содержит только пути allowlist, Git OID, byte size, per-file digest, общий selected-content digest и явный `full_snapshot=false`; raw content не выводится/не сохраняется. Claim не доказывает authorship, trusted provenance или полный snapshot.
+Проверки: ровно один запуск команды ниже. Всего ровно пять GitHub REST GET (tree + четыре blobs); никаких retries.
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import base64, hashlib, json, re, time, urllib.request
+
+TREE_SHA = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+ALLOW = ("README.md", "docs/27-implementation-status.md", "src/app_contracts/github_snapshot.py", "tests/test_github_snapshot.py")
+BASE = "https://api.github.com/repos/SoldatovAlexander/Agent00X"
+OID = re.compile(r"[0-9a-f]{40}\Z")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl): return None
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+def pairs(items):
+    d = {}
+    for k,v in items:
+        if k in d: raise ValueError()
+        d[k] = v
+    return d
+def bad_constant(_): raise ValueError()
+def get(path, cap):
+    req = urllib.request.Request("https://api.github.com"+path, headers={"Accept":"application/vnd.github+json", "X-GitHub-Api-Version":"2026-03-10", "User-Agent":"Agent00X-bounded-evidence"}, method="GET")
+    start = time.monotonic()
+    with opener.open(req, timeout=10) as r:
+        if r.status != 200: raise ValueError()
+        b = bytearray()
+        while True:
+            if time.monotonic()-start > 30: raise ValueError()
+            chunk = r.read(min(65536, cap+1-len(b)))
+            if not chunk: break
+            b.extend(chunk)
+            if len(b)>cap: raise ValueError()
+    return json.loads(bytes(b).decode("utf-8","strict"), object_pairs_hook=pairs, parse_constant=bad_constant)
+def safe(p):
+    return type(p) is str and 0<len(p.encode("utf-8","strict"))<=240 and not p.startswith("/") and "\\" not in p and all(x not in ("", ".", "..") for x in p.split("/")) and not any(ord(c)<32 or ord(c)==127 for c in p)
+def gitsha(b): return hashlib.sha1(b"blob "+str(len(b)).encode()+b"\0"+b).hexdigest()
+
+tree = get("/repos/SoldatovAlexander/Agent00X/git/trees/"+TREE_SHA+"?recursive=1", 8_000_000)
+if type(tree) is not dict or tree.get("sha")!=TREE_SHA or tree.get("truncated") is not False or type(tree.get("tree")) is not list or len(tree["tree"])>10_000: raise ValueError()
+seen, selected = set(), {}
+for e in tree["tree"]:
+    if type(e) is not dict or not safe(e.get("path")) or e["path"] in seen: raise ValueError()
+    seen.add(e["path"]); mode,typ,sha,size=e.get("mode"),e.get("type"),e.get("sha"),e.get("size")
+    if type(sha) is not str or not OID.fullmatch(sha): raise ValueError()
+    if "size" in e and (type(size) is not int or size<0): raise ValueError()
+    if typ=="tree":
+        if mode!="040000": raise ValueError()
+    elif typ=="blob":
+        if mode not in ("100644","100755"): raise ValueError()
+    else: raise ValueError()
+    if e["path"] in ALLOW:
+        if typ!="blob" or mode not in ("100644","100755") or type(size) is not int or not 0<=size<=100_000: raise ValueError()
+        selected[e["path"]]=(sha,mode,size)
+if set(selected)!=set(ALLOW) or len(selected)!=4 or sum(v[2] for v in selected.values())>1_000_000: raise ValueError()
+
+files=[]; total=0
+for path in ALLOW:
+    sha,mode,n=selected[path]; obj=get("/repos/SoldatovAlexander/Agent00X/git/blobs/"+sha, 200_000)
+    if type(obj) is not dict or obj.get("sha")!=sha or obj.get("encoding")!="base64" or type(obj.get("content")) is not str or type(obj.get("size")) is not int or obj["size"]!=n: raise ValueError()
+    raw=base64.b64decode(obj["content"],validate=True)
+    if len(raw)!=n or gitsha(raw)!=sha: raise ValueError()
+    total+=n
+    if total>1_000_000: raise ValueError()
+    cd="sha256:"+hashlib.sha256(raw).hexdigest()
+    files.append({"path":path,"content_digest":cd,"mode":mode,"git_blob_oid":sha,"size":n})
+canon=[{"path":x["path"],"content_digest":x["content_digest"],"mode":x["mode"]} for x in sorted(files,key=lambda x:x["path"])]
+payload={"canonicalization":"app-process-snapshot-tree/v1","files":canon}
+digest="sha256:"+hashlib.sha256(json.dumps(payload,ensure_ascii=False,allow_nan=False,separators=(",",":"),sort_keys=True).encode("utf-8")).hexdigest()
+for x in files: print("file="+x["path"]+" git_blob_oid="+x["git_blob_oid"]+" size="+str(x["size"])+" content_digest="+x["content_digest"])
+print("selected_file_count=4 selected_total_bytes="+str(total)+" selected_content_digest="+digest+" canonicalization=app-process-snapshot-tree/v1 full_snapshot=false")
+PY
+```
+Разрешённые внешние команды:
+- ровно SSH-команда выше один раз через OpenCode на macOS; только указанные пять bounded public GitHub REST GETs; без retries, прочих команд, endpoints или записи файлов.
+- key-only через существующий SSH alias/agent; credentials, `.env`, ключи и secrets не читать. Пользователь явно разрешил testdev и `alex@192.168.88.101` 2026-10-02; разрешение не включает service changes, restart, deployment или GitHub writes.
+Commit: DENIED
+Результат Control Plane:
+- BLOCKED 2026-10-02: единственный запуск завершился на selected-set preflight
+  (`set(selected) != set(ALLOW)`); дерево было прочитано, но выполнение
+  остановилось до любого blob GET. Выбранный digest не создан. Raw content не
+  выводился и не сохранялся; stdout digest отсутствовал. Повтор карточки не
+  разрешён. EXP-380 отдельно диагностирует pinned-tree paths и metadata.
+Commit: DENIED
+Ограничения и риски: digest относится только к четырём выбранным путям из одного GitHub API claim; не доказывает authorship, TLS/server trust root или полный repository state.
+
+## EXP-377 — negative matrix and source-evidence review
+Статус: ACCEPTED
+Цель: доказать fail-closed результат при remote not-found и локальных tampering/truncation/limit/transport failures, затем собрать итоговое evidence Batch AK.
+Гипотеза: ни один неполный или некорректный ответ не превращается в accepted snapshot claim.
+Зависит от: EXP-374, EXP-379, EXP-380 и EXP-382 ACCEPTED; EXP-376/381 остаются BLOCKED historical attempts.
+Среда исполнения: local tests и один testdev read-only not-found GET через OpenCode на macOS.
+Внешняя цель: `SoldatovAlexander/Agent00X`; для not-found — заранее заданный невозможный full SHA без изменений удалённых ресурсов.
+Вне scope: любые writes, retries без лимита, создание веток/PR, изменение remote state и credentials.
+Разрешённые пути: none; только тесты и read-only evidence, без изменения файлов.
+Критерии приёмки:
+- targeted tests подтверждают mismatch, truncation, body/total limits, transport/JSON/HTTP failures и sanitized fail-closed на локальных doubles;
+- ровно один GET к заранее заданному отсутствующему commit SHA даёт HTTP 404 без чтения или печати response body и без claim;
+- Control Plane принимает source evidence с ограничением: один публичный repo + pinned commit/tree, GitHub API claim only, без authorship/TLS/trust-root proof.
+Проверки: выполнить ровно две команды ниже в указанном порядке.
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q
+```
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import sys, urllib.error, urllib.request
+
+URL="https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/0000000000000000000000000000000000000000"
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl): return None
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+req=urllib.request.Request(URL,headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10","User-Agent":"Agent00X-bounded-evidence"},method="GET")
+try:
+    with opener.open(req,timeout=10) as r:
+        print("http_status="+str(r.status)+" claim_created=false response_body_read=false")
+        sys.exit(1)
+except urllib.error.HTTPError as e:
+    print("http_status="+str(e.code)+" claim_created=false response_body_read=false")
+    if e.code!=404: sys.exit(1)
+except Exception:
+    print("sanitized_transport_failure=true claim_created=false response_body_read=false")
+    sys.exit(1)
+PY
+```
+Разрешённые внешние команды:
+- targeted unittest команда ровно один раз локально; только doubles, no network calls.
+- SSH-команда ровно один раз через OpenCode на macOS; только один public read-only GET к указанному impossible SHA; без retries, иных endpoints или response-body reads.
+- key-only через существующий SSH alias/agent; credentials, `.env`, ключи и secrets не читать. Service changes/restarts/deployments/GitHub writes запрещены.
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-02: OpenCode выполнил обе разрешённые команды по одному разу
+  и в заданном порядке после сверки зависимостей (EXP-374/379/380/382 ACCEPTED;
+  EXP-376/381 BLOCKED как historical attempts). Targeted suite: 30 tests, OK.
+  Один SSH-запрос к заданному impossible commit SHA вернул HTTP 404;
+  `claim_created=false`, `response_body_read=false`, exit 0. Файлы и remote state
+  не менялись. Принимается только как evidence локальных doubles и одного
+  read-only GitHub API not-found claim; authorship/TLS/trust-root/full snapshot
+  не доказаны. R2 требует отдельного stage-exit review.
+Ограничения и риски: карточка не разрешает любые provider writes; выполнение не завершает R2 без отдельного stage-exit review.
+
+## EXP-378 — separate tree size metadata from blob content limits
+Статус: ACCEPTED
+Цель: принимать корректный GitHub tree inventory с крупными blobs, не ослабляя
+лимиты скачиваемого snapshot content.
+Гипотеза: size в tree является метаданными; oversized blob можно отвергнуть до
+любого blob request, сохранив границы per-file и total decoded bytes.
+Зависит от: EXP-370 ACCEPTED и finding EXP-375.
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: default/live HTTP transport, GitHub API calls, изменение лимитов
+`MAX_SNAPSHOT_FILE_BYTES`/`MAX_SNAPSHOT_TOTAL_BYTES`, partial snapshot digest,
+path allowlists и изменение remote repository.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+Критерии приёмки:
+- отсутствующий tree `size` остаётся `None`; присутствующий size принимается
+  только если `type(size) is int` и `size >= 0`, сохраняется в `GitHubTreeEntry`
+  и не ограничивается лимитом content bytes;
+- `parse_github_blob` отвергает declared oversized entry до разбора/decode
+  response; declared size, когда есть, совпадает с decoded response size;
+- `read_github_snapshot` preflights всё дерево до первого blob request и
+  sanitized-отказывает, если любой regular blob объявлен больше per-file cap;
+- actual decoded per-file и running total limits остаются неизменными;
+  тест доказывает zero blob transport calls при oversized declaration;
+- targeted и полный unittest suite проходят, `git diff --check` проходит.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_github_snapshot -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды:
+- none
+Commit: DENIED
+Ограничения и риски: успешный tree parse говорит только о structurally bounded
+metadata; он не доказывает, что все blob contents скачаны или входят в digest.
+Относительно EXP-370 меняется только per-entry metadata size policy; tree body,
+entry count, path, mode/type/OID и actual blob limits не меняются.
+Результат Control Plane:
+- READY 2026-10-02: пользователь принял рекомендацию разделить tree metadata
+  и blob content limits. Codex Control Plane реализует только перечисленные
+  локальные пути; commit запрещён.
+- ACCEPTED 2026-10-02: `GitHubTreeEntry` сохраняет optional exact nonnegative
+  declared size без per-file content cap. `parse_github_blob` связывает его с
+  decoded size и отклоняет oversized entries до decode; `read_github_snapshot`
+  preflights всё дерево и делает zero blob requests при объявленном oversized
+  blob. Targeted snapshot tests: 30 passed; full suite: 739 tests OK, 1 skipped;
+  `git diff --check` passed. Не закрывает transport/provenance; actual per-file
+  и total decoded-content limits не менялись. Обнаружены существующие
+  `ResourceWarning` о незакрытых SQLite connections в unrelated tests.
+
+## EXP-379 — re-read the pinned GitHub tree under metadata-only size policy
+Статус: ACCEPTED
+Цель: получить bounded recursive tree claim для прежних pinned commit/tree OIDs
+после принятия EXP-378.
+Гипотеза: корректная tree metadata с крупным blob не препятствует принятому
+inventory, при этом content limits остаются отдельным gate до blob request.
+Зависит от: EXP-374 и EXP-378 ACCEPTED; EXP-375 остаётся историческим BLOCKED.
+Среда исполнения: testdev, read-only через OpenCode на macOS.
+Внешняя цель: только публичный `SoldatovAlexander/Agent00X` и
+`TREE_SHA=12c7a4fc88b55729511473767aa9007a3ee53a27` из принятой EXP-374.
+Вне scope: blob fetch, любые writes, другие endpoints, redirects, credentials,
+изменение limits, ветки/PR, service changes, restart и deployment.
+Разрешённые пути: none; только read-only сбор evidence.
+Критерии приёмки:
+- один bounded GET к точному recursive tree endpoint, HTTP 200, exact tree SHA,
+  `truncated is False`, response <=8,000,000 bytes и read deadline 30s;
+- count <=10,000; paths/types/modes/OIDs соответствуют правилам Batch AJ;
+  optional `size` имеет exact int type и неотрицательное значение;
+- size metadata >100,000 для blob учитывается только как inventory; success
+  output сообщает количество таких blobs, не значения размеров или raw body;
+- любая ошибка даёт sanitized non-success; никаких blob calls или retries.
+Проверки:
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+
+TREE_SHA = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = (
+    "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/trees/"
+    + TREE_SHA
+    + "?recursive=1"
+)
+MAX_BYTES = 8_000_000
+MAX_FILES = 10_000
+MAX_PATH_BYTES = 240
+MAX_BLOB_BYTES = 100_000
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+def reject_constant(_value):
+    raise ValueError("invalid JSON constant")
+
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "AgentProcessPlatform-read-only-snapshot-check",
+    },
+    method="GET",
+)
+opener = urllib.request.build_opener(
+    NoRedirect(), urllib.request.ProxyHandler({})
+)
+try:
+    response = opener.open(request, timeout=10)
+except urllib.error.HTTPError as error:
+    status = error.code
+    error.close()
+    print(f"github snapshot: HTTP status {status}")
+    sys.exit(1)
+except Exception:
+    print("github snapshot: transport failed")
+    sys.exit(1)
+
+try:
+    with response:
+        if response.status != 200:
+            print(f"github snapshot: HTTP status {response.status}")
+            sys.exit(1)
+        deadline = time.monotonic() + 30
+        chunks = bytearray()
+        while len(chunks) <= MAX_BYTES:
+            if time.monotonic() >= deadline:
+                print("github snapshot: response read timed out")
+                sys.exit(1)
+            chunk = response.read1(min(65536, MAX_BYTES + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+except Exception:
+    print("github snapshot: bounded response read failed")
+    sys.exit(1)
+
+body = bytes(chunks)
+if len(body) > MAX_BYTES:
+    print("github snapshot: response exceeds byte limit")
+    sys.exit(1)
+try:
+    payload = json.loads(
+        body.decode("utf-8"),
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_constant,
+    )
+except Exception:
+    print("github snapshot: response JSON invalid")
+    sys.exit(1)
+if type(payload) is not dict or payload.get("sha") != TREE_SHA:
+    print("github snapshot: tree OID mismatch")
+    sys.exit(1)
+if payload.get("truncated") is not False:
+    print("github snapshot: tree response incomplete")
+    sys.exit(1)
+entries = payload.get("tree")
+if type(entries) is not list or len(entries) > MAX_FILES:
+    print("github snapshot: tree entry count invalid")
+    sys.exit(1)
+
+seen = set()
+blob_count = 0
+tree_count = 0
+oversized_blob_count = 0
+for entry in entries:
+    if type(entry) is not dict:
+        print("github snapshot: tree entry invalid")
+        sys.exit(1)
+    path = entry.get("path")
+    if (
+        not isinstance(path, str) or not path or path != path.strip()
+        or path.startswith("/") or "\\" in path or "//" in path
+        or any(ord(char) < 32 or ord(char) == 127 for char in path)
+        or any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        print("github snapshot: tree path invalid")
+        sys.exit(1)
+    try:
+        if len(path.encode("utf-8")) > MAX_PATH_BYTES:
+            raise ValueError("path too long")
+    except (UnicodeEncodeError, ValueError):
+        print("github snapshot: tree path invalid")
+        sys.exit(1)
+    normalized = "/".join(path.split("/"))
+    if normalized in seen:
+        print("github snapshot: duplicate tree path")
+        sys.exit(1)
+    seen.add(normalized)
+    mode = entry.get("mode")
+    kind = entry.get("type")
+    if mode in ("100644", "100755") and kind == "blob":
+        blob_count += 1
+    elif mode == "040000" and kind == "tree":
+        tree_count += 1
+    else:
+        print("github snapshot: tree mode or type invalid")
+        sys.exit(1)
+    oid = entry.get("sha")
+    if not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None:
+        print("github snapshot: tree entry OID invalid")
+        sys.exit(1)
+    if "size" in entry:
+        size = entry["size"]
+        if type(size) is not int or size < 0:
+            print("github snapshot: tree entry size invalid")
+            sys.exit(1)
+        if kind == "blob" and size > MAX_BLOB_BYTES:
+            oversized_blob_count += 1
+
+print("HTTP 200")
+print("tree_sha=" + TREE_SHA)
+print("entry_count=" + str(len(entries)))
+print("blob_count=" + str(blob_count))
+print("tree_count=" + str(tree_count))
+print("oversized_blob_count=" + str(oversized_blob_count))
+PY
+```
+Разрешённые внешние команды:
+- только SSH-команда выше, ровно один запуск на `testdev`; только указанный
+  bounded read-only tree GET. Без pre-checks, retries, blob-запросов, иных
+  endpoints или записи файлов.
+- существующий SSH alias/agent, key-only; не читать credentials, `.env`, ключи
+  или secrets, не сохранять raw response. Запустить через OpenCode на macOS.
+- пользователь явно разрешил testdev и `alex@192.168.88.101` 2026-10-02;
+  service changes, restart и deployment не разрешены.
+Результат Control Plane:
+- ACCEPTED 2026-10-02: Executor сверил accepted EXP-378, pinned tree SHA,
+  endpoint и все transport/size criteria; выполнил точную команду один раз.
+  Результат: HTTP 200, tree SHA совпал, `truncated=false`, 134 entries,
+  115 blobs, 19 trees, `oversized_blob_count=1`. Paths, modes, types, OIDs и
+  optional nonnegative integer sizes прошли validation; oversized metadata
+  учтено без передачи raw size/path и без blob GET. Raw response, credentials и
+  секреты не сохранялись; retries/других команд не было. Это tree inventory
+  claim, не полный content digest, authorship или trusted provenance.
+Commit: DENIED
+Ограничения и риски: API claim не доказывает authorship, TLS/server trust root
+или полноту за пределами заявленного `truncated=false`.
+
+## EXP-380 — diagnose selected paths against the pinned tree
+Статус: ACCEPTED
+Цель: установить, какие пути исходного EXP-376 allowlist отсутствуют в принятом pinned tree, и предложить короткий metadata-only shortlist для следующего bounded allowlist.
+Гипотеза: read-only tree metadata позволит выбрать существующие файлы без скачивания blob content.
+Зависит от: EXP-379 ACCEPTED и EXP-376 BLOCKED.
+Среда исполнения: testdev, read-only через OpenCode на macOS.
+Внешняя цель: только публичный `SoldatovAlexander/Agent00X` и pinned tree `12c7a4fc88b55729511473767aa9007a3ee53a27`.
+Вне scope: blob endpoints, любые writes, secrets, remote state changes, authorship/provenance claims.
+Разрешённые пути: none; только bounded metadata evidence.
+Критерии приёмки:
+- ровно один bounded recursive-tree GET, redirects/proxy off, connect/read timeout 10s, response cap 8,000,000 bytes, deadline 30s;
+- exact tree SHA, `truncated=false`, <=10,000 entries, unique safe paths, valid tree/blob mode/type/OID and optional nonnegative integer size;
+- blob GET не выполняются; raw response/body, OIDs, точные sizes и content не выводятся и не сохраняются;
+- выводится present/missing для каждого из четырёх исходных EXP-376 paths и не более 40 candidate paths из prefixes `README`, `docs/`, `src/app_contracts/`, `tests/`; для кандидатов выдаются только path, mode, type и `size_eligible` boolean (`size` present and <=100000);
+- ошибки приводят к sanitized non-success; retries запрещены.
+Проверки: ровно один запуск команды ниже.
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import json, re, time, urllib.request
+
+TREE_SHA="12c7a4fc88b55729511473767aa9007a3ee53a27"
+ALLOW=("README.md","docs/27-implementation-status.md","src/app_contracts/github_snapshot.py","tests/test_github_snapshot.py")
+URL="https://api.github.com/repos/SoldatovAlexander/Agent00X/git/trees/"+TREE_SHA+"?recursive=1"
+OID=re.compile(r"[0-9a-f]{40}\Z")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl): return None
+def pairs(items):
+    d={}
+    for k,v in items:
+        if k in d: raise ValueError()
+        d[k]=v
+    return d
+def bad(_): raise ValueError()
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+req=urllib.request.Request(URL,headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10","User-Agent":"Agent00X-bounded-evidence"},method="GET")
+start=time.monotonic()
+with opener.open(req,timeout=10) as r:
+    if r.status!=200: raise ValueError()
+    body=bytearray()
+    while True:
+        if time.monotonic()-start>30: raise ValueError()
+        chunk=r.read(min(65536,8_000_001-len(body)))
+        if not chunk: break
+        body.extend(chunk)
+        if len(body)>8_000_000: raise ValueError()
+tree=json.loads(bytes(body).decode("utf-8","strict"),object_pairs_hook=pairs,parse_constant=bad)
+if type(tree) is not dict or tree.get("sha")!=TREE_SHA or tree.get("truncated") is not False or type(tree.get("tree")) is not list or len(tree["tree"])>10_000: raise ValueError()
+seen=set(); selected=set(); groups={"README":[],"docs/":[],"src/app_contracts/":[],"tests/":[]}
+for e in tree["tree"]:
+    if type(e) is not dict: raise ValueError()
+    p,m,t,s,n=e.get("path"),e.get("mode"),e.get("type"),e.get("sha"),e.get("size")
+    if type(p) is not str or not 0<len(p.encode("utf-8","strict"))<=240 or p.startswith("/") or "\\" in p or any(x in ("",".","..") for x in p.split("/")) or any(ord(c)<32 or ord(c)==127 for c in p) or p in seen: raise ValueError()
+    seen.add(p)
+    if type(s) is not str or not OID.fullmatch(s) or ("size" in e and (type(n) is not int or n<0)): raise ValueError()
+    if (t,m) not in (("blob","100644"),("blob","100755"),("tree","040000")): raise ValueError()
+    if p in ALLOW: selected.add(p)
+    if t=="blob" and m in ("100644","100755"):
+        for prefix in groups:
+            if p==prefix or p.startswith(prefix):
+                groups[prefix].append((p,m,t,type(n) is int and n<=100_000))
+for p in ALLOW: print("selected_path="+p+" status="+("present" if p in selected else "missing"))
+for prefix,items in groups.items():
+    for p,m,t,eligible in items[:10]: print("candidate_path="+p+" mode="+m+" type="+t+" size_eligible="+str(eligible).lower())
+print("tree_sha="+TREE_SHA+" entry_count="+str(len(tree["tree"]))+" blob_get_count=0 raw_response_saved=false")
+PY
+```
+Разрешённые внешние команды:
+- ровно SSH-команда выше один раз через OpenCode на macOS; только один указанный public GitHub REST tree GET, без retries, прочих endpoints или записи файлов.
+- key-only через существующий SSH alias/agent; credentials, `.env`, ключи и secrets не читать. Пользовательское разрешение на `testdev` включает только read-only evidence, не service changes, restart, deployment или GitHub writes.
+Результат Control Plane:
+- ACCEPTED 2026-10-02: единственный bounded tree GET прошёл exact SHA,
+  `truncated=false`, entry/path/mode/type/OID/size validation. Выведены статусы
+  четырех исходных путей (README и docs/27 присутствуют; локально появившиеся
+  github_snapshot.py и test_github_snapshot.py в pinned commit отсутствуют) и
+  31 кандидат из четырех оговорённых prefixes; все показанные кандидаты
+  size-eligible. Подтверждён shortlist для следующего эксперимента:
+  `README.md`, `docs/27-implementation-status.md`,
+  `src/app_contracts/actuator.py`, `tests/test_actuator.py`. Blob GET — 0;
+  raw response/OIDs/sizes/content не сохранялись и не выводились.
+Commit: DENIED
+Ограничения и риски: shortlist представляет только публичную tree metadata; выбор digest allowlist и любое blob fetch остаются отдельным решением/карточкой Control Plane.
+
+## EXP-381 — bind selected live content to the pinned tree
+Статус: BLOCKED
+Цель: получить четыре bounded regular blobs, существование и size eligibility которых подтверждены EXP-380, проверить Git blob identities и вычислить selected-content digest.
+Гипотеза: байты выбранных файлов совпадают с OIDs принятого pinned tree и дают воспроизводимый digest только выбранного набора.
+Зависит от: EXP-379 и EXP-380 ACCEPTED; EXP-376 BLOCKED (исходный allowlist отсутствовал в pinned commit).
+Среда исполнения: testdev, read-only через OpenCode на macOS.
+Внешняя цель: только публичный `SoldatovAlexander/Agent00X`, pinned tree `12c7a4fc88b55729511473767aa9007a3ee53a27`.
+Вне scope: файлы вне allowlist, любые writes, execution of contents, credentials, branch/PR/push, full-repository snapshot/authorship/provenance claim.
+Разрешённые пути: none; только read-only evidence.
+Критерии приёмки:
+- ровно один bounded recursive-tree GET и только если preflight проходит ровно один bounded blob GET для каждого из четырёх путей `README.md`, `docs/27-implementation-status.md`, `src/app_contracts/actuator.py`, `tests/test_actuator.py` (итого максимум 5 GET);
+- tree exact SHA, `truncated=false`, <=8,000,000 response bytes, <=10,000 entries, unique safe paths, valid modes/types/OIDs and optional sizes; все выбранные пути встречаются ровно один раз как regular blobs, declared size exact int 0..100,000, aggregate declared <=1,000,000;
+- при любом tree/path/size preflight failure blob GET не выполняются; никаких retries/redirects/proxy; каждое тело <=200,000 bytes, timeout 10s, per-response deadline 30s;
+- strict duplicate-key/constant JSON checks, strict base64, response SHA and size match, Git SHA-1 `blob <size>\0<bytes>` matches tree OID, decoded total <=1,000,000;
+- per-file SHA-256 и selected-content digest независимо пересчитаны по Batch AJ canonicalization `app-process-snapshot-tree/v1` (sorted keys, compact UTF-8 JSON, files sorted by path; fields `path`, `content_digest`, `mode` only);
+- output содержит только четыре paths, OIDs, sizes, per-file digests, overall selected digest и `full_snapshot=false`; raw content не выводится/не сохраняется. Claim не доказывает source authenticity, authorship или trust root.
+Проверки: ровно один запуск команды ниже.
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import base64, hashlib, json, re, time, urllib.request
+
+TREE_SHA="12c7a4fc88b55729511473767aa9007a3ee53a27"
+ALLOW=("README.md","docs/27-implementation-status.md","src/app_contracts/actuator.py","tests/test_actuator.py")
+OID=re.compile(r"[0-9a-f]{40}\Z")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl): return None
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+def pairs(items):
+    d={}
+    for k,v in items:
+        if k in d: raise ValueError()
+        d[k]=v
+    return d
+def bad(_): raise ValueError()
+def get(path,cap):
+    req=urllib.request.Request("https://api.github.com"+path,headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10","User-Agent":"Agent00X-bounded-evidence"},method="GET")
+    start=time.monotonic()
+    with opener.open(req,timeout=10) as r:
+        if r.status!=200: raise ValueError()
+        b=bytearray()
+        while True:
+            if time.monotonic()-start>30: raise ValueError()
+            chunk=r.read(min(65536,cap+1-len(b)))
+            if not chunk: break
+            b.extend(chunk)
+            if len(b)>cap: raise ValueError()
+    return json.loads(bytes(b).decode("utf-8","strict"),object_pairs_hook=pairs,parse_constant=bad)
+def safe(p):
+    return type(p) is str and p==p.strip() and 0<len(p.encode("utf-8","strict"))<=240 and not p.startswith("/") and "\\" not in p and "//" not in p and all(x not in ("", ".", "..") for x in p.split("/")) and not any(ord(c)<32 or ord(c)==127 for c in p)
+def gitsha(b): return hashlib.sha1(b"blob "+str(len(b)).encode("ascii")+b"\0"+b).hexdigest()
+
+tree=get("/repos/SoldatovAlexander/Agent00X/git/trees/"+TREE_SHA+"?recursive=1",8_000_000)
+if type(tree) is not dict or tree.get("sha")!=TREE_SHA or tree.get("truncated") is not False or type(tree.get("tree")) is not list or len(tree["tree"])>10_000: raise ValueError()
+seen=set(); selected={}
+for e in tree["tree"]:
+    if type(e) is not dict: raise ValueError()
+    p,m,t,s,n=e.get("path"),e.get("mode"),e.get("type"),e.get("sha"),e.get("size")
+    if not safe(p) or p in seen or type(s) is not str or not OID.fullmatch(s): raise ValueError()
+    seen.add(p)
+    if "size" in e and (type(n) is not int or n<0): raise ValueError()
+    if (t,m) not in (("blob","100644"),("blob","100755"),("tree","040000")): raise ValueError()
+    if p in ALLOW:
+        if t!="blob" or m not in ("100644","100755") or type(n) is not int or not 0<=n<=100_000: raise ValueError()
+        selected[p]=(s,m,n)
+if set(selected)!=set(ALLOW) or len(selected)!=4 or sum(x[2] for x in selected.values())>1_000_000: raise ValueError()
+
+files=[]; total=0
+for p in ALLOW:
+    sha,mode,n=selected[p]
+    obj=get("/repos/SoldatovAlexander/Agent00X/git/blobs/"+sha,200_000)
+    if type(obj) is not dict or obj.get("sha")!=sha or obj.get("encoding")!="base64" or type(obj.get("content")) is not str or type(obj.get("size")) is not int or obj["size"]!=n: raise ValueError()
+    raw=base64.b64decode(obj["content"],validate=True)
+    if len(raw)!=n or gitsha(raw)!=sha: raise ValueError()
+    total+=n
+    if total>1_000_000: raise ValueError()
+    cd="sha256:"+hashlib.sha256(raw).hexdigest()
+    files.append({"path":p,"content_digest":cd,"mode":mode,"git_blob_oid":sha,"size":n})
+canonical_files=[{"path":x["path"],"content_digest":x["content_digest"],"mode":x["mode"]} for x in sorted(files,key=lambda x:x["path"])]
+payload={"canonicalization":"app-process-snapshot-tree/v1","files":canonical_files}
+digest="sha256:"+hashlib.sha256(json.dumps(payload,ensure_ascii=False,allow_nan=False,separators=(",",":"),sort_keys=True).encode("utf-8")).hexdigest()
+for x in files: print("file="+x["path"]+" git_blob_oid="+x["git_blob_oid"]+" size="+str(x["size"])+" content_digest="+x["content_digest"])
+print("selected_file_count=4 selected_total_bytes="+str(total)+" selected_content_digest="+digest+" canonicalization=app-process-snapshot-tree/v1 full_snapshot=false")
+PY
+```
+Разрешённые внешние команды:
+- ровно SSH-команда выше один раз через OpenCode на macOS; только перечисленные bounded public GitHub REST GETs, без retries/redirects/proxy, прочих endpoints или записи файлов.
+- только key-only через существующий SSH alias/agent; credentials, `.env`, ключи и secrets не читать. Ранее предоставленное пользовательское разрешение на `testdev` не разрешает service changes, restart, deployment или GitHub writes.
+Commit: DENIED
+Результат Control Plane:
+- BLOCKED 2026-10-02: команда была запущена один раз; tree и path/size preflight
+  прошли, первый blob response получил base64 decode error. Digest не вычислен,
+  raw content не выводился/не сохранялся. Executor также сообщил об одной
+  лишней проверочной строке, которой нет в карточке; поэтому точность запуска
+  нарушена. Повтор EXP-381 запрещён. Новый task EXP-382 отдельно разрешит один
+  запуск с валидированным handling разрешённых ASCII whitespace в base64.
+Commit: DENIED
+Ограничения и риски: выбранный digest не создан; никакие claims о содержимом не принимаются.
+
+## EXP-382 — verify selected blobs with strict wrapped-base64 handling
+Статус: ACCEPTED
+Цель: проверить четыре bounded regular blobs как отдельный эксперимент после base64 wrapping finding EXP-381, связывая байты каждого blob с accepted pinned tree OID.
+Гипотеза: удаление только ASCII formatting whitespace из base64 wire value, затем strict decode и Git object hash verification, даёт точный selected-content digest без ослабления content limits.
+Зависит от: EXP-379 и EXP-380 ACCEPTED; EXP-381 BLOCKED и не засчитывается.
+Среда исполнения: testdev, read-only через OpenCode на macOS.
+Внешняя цель: только `SoldatovAlexander/Agent00X`, pinned tree `12c7a4fc88b55729511473767aa9007a3ee53a27`.
+Вне scope: любые файлы вне allowlist, публикация/writes, content execution, credentials и full-snapshot/authorship/provenance claims.
+Разрешённые пути: none; только bounded read-only evidence.
+Критерии приёмки:
+- точное выполнение одной команды ниже; один recursive-tree GET, после успешного preflight — четыре blob GET, без retries/redirects/proxy;
+- tree SHA, `truncated=false`, response <=8,000,000 bytes, <=10,000 entries, safe unique paths и valid OID/mode/type/optional sizes; четыре пути `README.md`, `docs/27-implementation-status.md`, `src/app_contracts/actuator.py`, `tests/test_actuator.py` присутствуют ровно один раз как regular blobs, каждый <=100,000 bytes, total <=1,000,000;
+- каждый blob body <=200,000 bytes, timeout 10s, deadline 30s; strict duplicate-key/constant JSON, response SHA/size match; content field ASCII-only, содержит standard base64 alphabet/padding plus optional ASCII SP/HT/CR/LF only; удалить только эти whitespace bytes, затем `b64decode(..., validate=True)`;
+- decoded bytes match declared/tree size and Git SHA-1 object identity; total <=1,000,000. Вычислены per-file SHA-256 и selected-content digest по Batch AJ `app-process-snapshot-tree/v1` canonicalization;
+- success output contains only four paths, OIDs, sizes, per-file and aggregate digests and `full_snapshot=false`; raw content/base64/body never printed/saved. Any error is sanitized non-success, no claim.
+Проверки: ровно один запуск команды ниже.
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 -o PreferredAuthentications=publickey -o PasswordAuthentication=no -o User=alex -o HostName=192.168.88.101 testdev python3 - <<'PY'
+import base64, hashlib, json, re, time, urllib.request
+
+TREE_SHA="12c7a4fc88b55729511473767aa9007a3ee53a27"
+ALLOW=("README.md","docs/27-implementation-status.md","src/app_contracts/actuator.py","tests/test_actuator.py")
+OID=re.compile(r"[0-9a-f]{40}\Z")
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl): return None
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+def pairs(items):
+    d={}
+    for k,v in items:
+        if k in d: raise ValueError()
+        d[k]=v
+    return d
+def bad(_): raise ValueError()
+def get(path,cap):
+    req=urllib.request.Request("https://api.github.com"+path,headers={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10","User-Agent":"Agent00X-bounded-evidence"},method="GET")
+    start=time.monotonic()
+    with opener.open(req,timeout=10) as r:
+        if r.status!=200: raise ValueError()
+        b=bytearray()
+        while True:
+            if time.monotonic()-start>30: raise ValueError()
+            chunk=r.read(min(65536,cap+1-len(b)))
+            if not chunk: break
+            b.extend(chunk)
+            if len(b)>cap: raise ValueError()
+    return json.loads(bytes(b).decode("utf-8","strict"),object_pairs_hook=pairs,parse_constant=bad)
+def safe(p):
+    return type(p) is str and p==p.strip() and 0<len(p.encode("utf-8","strict"))<=240 and not p.startswith("/") and "\\" not in p and "//" not in p and all(x not in ("", ".", "..") for x in p.split("/")) and not any(ord(c)<32 or ord(c)==127 for c in p)
+def gitsha(b): return hashlib.sha1(b"blob "+str(len(b)).encode("ascii")+b"\0"+b).hexdigest()
+def main():
+    tree=get("/repos/SoldatovAlexander/Agent00X/git/trees/"+TREE_SHA+"?recursive=1",8_000_000)
+    if type(tree) is not dict or tree.get("sha")!=TREE_SHA or tree.get("truncated") is not False or type(tree.get("tree")) is not list or len(tree["tree"])>10_000: raise ValueError()
+    seen=set(); selected={}
+    for e in tree["tree"]:
+        if type(e) is not dict: raise ValueError()
+        p,m,t,s,n=e.get("path"),e.get("mode"),e.get("type"),e.get("sha"),e.get("size")
+        if not safe(p) or p in seen or type(s) is not str or not OID.fullmatch(s): raise ValueError()
+        seen.add(p)
+        if "size" in e and (type(n) is not int or n<0): raise ValueError()
+        if (t,m) not in (("blob","100644"),("blob","100755"),("tree","040000")): raise ValueError()
+        if p in ALLOW:
+            if t!="blob" or m not in ("100644","100755") or type(n) is not int or not 0<=n<=100_000: raise ValueError()
+            selected[p]=(s,m,n)
+    if set(selected)!=set(ALLOW) or len(selected)!=4 or sum(x[2] for x in selected.values())>1_000_000: raise ValueError()
+    files=[]; total=0
+    for p in ALLOW:
+        sha,mode,n=selected[p]; obj=get("/repos/SoldatovAlexander/Agent00X/git/blobs/"+sha,200_000)
+        if type(obj) is not dict or obj.get("sha")!=sha or obj.get("encoding")!="base64" or type(obj.get("content")) is not str or type(obj.get("size")) is not int or obj["size"]!=n: raise ValueError()
+        wire=obj["content"].encode("ascii")
+        if len(wire)>200_000 or any(c not in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= \t\r\n" for c in wire): raise ValueError()
+        decoded=base64.b64decode(wire.translate(None,b" \t\r\n"),validate=True)
+        if len(decoded)!=n or gitsha(decoded)!=sha: raise ValueError()
+        total+=len(decoded)
+        if total>1_000_000: raise ValueError()
+        cd="sha256:"+hashlib.sha256(decoded).hexdigest()
+        files.append({"path":p,"content_digest":cd,"mode":mode,"git_blob_oid":sha,"size":len(decoded)})
+    canon=[{"path":x["path"],"content_digest":x["content_digest"],"mode":x["mode"]} for x in sorted(files,key=lambda x:x["path"])]
+    payload={"canonicalization":"app-process-snapshot-tree/v1","files":canon}
+    digest="sha256:"+hashlib.sha256(json.dumps(payload,ensure_ascii=False,allow_nan=False,separators=(",",":"),sort_keys=True).encode("utf-8")).hexdigest()
+    for x in files: print("file="+x["path"]+" git_blob_oid="+x["git_blob_oid"]+" size="+str(x["size"])+" content_digest="+x["content_digest"])
+    print("selected_file_count=4 selected_total_bytes="+str(total)+" selected_content_digest="+digest+" canonicalization=app-process-snapshot-tree/v1 full_snapshot=false")
+try:
+    main()
+except Exception:
+    print("github snapshot: selected content verification failed")
+    raise SystemExit(1)
+PY
+```
+Разрешённые внешние команды:
+- ровно команда выше один раз через OpenCode на macOS; только один bounded public tree GET и после preflight четыре bounded public blob GET; никаких retries, других endpoints или записи файлов.
+- key auth только через существующий alias/agent; `.env`, credentials, keys и secrets не читать. User authorization для testdev разрешает read-only evidence, но не service changes/restart/deployment или GitHub writes.
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-02: ровно одна команда выполнена без retries; bounded tree
+  preflight и четыре blob GET успешны. Все 4 Git blob identities и response
+  sizes совпали; decoded total 36,196 bytes. Per-file SHA-256 и
+  selected-content digest сформированы без raw content.
+- Агрегат независимо пересчитан Control Plane из per-file digests, путей и
+  mode `100644`; результат `sha256:1d4b2136da49e7f956f4ea50b637bd5aeb049c29f6c8b61b4255fdeaf3bc69d9`
+  совпал с executor output.
+- Утверждается только выбранный content digest для README.md,
+  docs/27-implementation-status.md, src/app_contracts/actuator.py и
+  tests/test_actuator.py; явно `full_snapshot=false`. Raw blobs, content,
+  credentials и secrets не сохранялись/не выводились.
+Ограничения и риски: whitespace normalization действовала только для ASCII
+SP/HT/CR/LF внутри base64 wire value; Git object OIDs проверены от decoded bytes.
+Digest не устанавливает trust/provenance, authorship или полный repository state.
+
+### Batch AK follow-up — EXP-388
+
+## EXP-388 — inspect signature-verification metadata for the pinned commit
+Статус: BLOCKED
+Цель: получить только GitHub REST API verification boolean для commit, уже
+pinned карточками EXP-373/374, и записать sanitized source claim.
+Зависит от: EXP-374 ACCEPTED; Batch AK snapshot pin unchanged.
+Среда исполнения: local, anonymous public HTTPS GET; no SSH, credentials, proxy,
+testdev, or writes.
+Внешняя цель: ровно
+`https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/df16e2f22cc0e97f39dfc428614f8683b0db63d9`.
+Вне scope: другие refs/commits/endpoints, credential access, retries, redirects,
+signature/payload output or storage, content fetches, all writes/publication.
+Разрешённые пути: none; evidence only.
+Критерии приёмки:
+- один bounded GET (per-read timeout 10s, total deadline 30s, body не более
+  262,144 bytes), без retries,
+  redirects, proxy, auth headers или persistence response body;
+- response commit SHA и tree SHA совпадают с accepted pin; `verification.verified`
+  — strict boolean, `verification.reason` — короткий ASCII code;
+- output содержит только pinned commit/tree, verified boolean и sanitized reason;
+  signature и signed payload не выводятся и не сохраняются;
+- verified=true и verified=false допустимы как findings; claim ограничен
+  GitHub REST API verification result, не independent signature validation,
+  author identity, TLS/trust-root provenance или full snapshot.
+Проверки: ровно один запуск команды ниже; any failure is sanitized and not retried.
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json, re, sys, time, urllib.error, urllib.request
+
+COMMIT = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+TREE = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/" + COMMIT
+MAX_BYTES = 262_144
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def unique_pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-bounded-signature-evidence",
+    },
+    method="GET",
+)
+try:
+    started = time.monotonic()
+    with opener.open(request, timeout=10) as response:
+        if response.status != 200:
+            raise ValueError()
+        body = bytearray()
+        while True:
+            if time.monotonic() - started > 30:
+                raise ValueError()
+            chunk = response.read(min(65_536, MAX_BYTES + 1 - len(body)))
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_BYTES:
+                raise ValueError()
+    payload = json.loads(
+        bytes(body).decode("utf-8", "strict"), object_pairs_hook=unique_pairs
+    )
+    verification = payload.get("verification") if type(payload) is dict else None
+    tree = payload.get("tree") if type(payload) is dict else None
+    verified = verification.get("verified") if type(verification) is dict else None
+    reason = verification.get("reason") if type(verification) is dict else None
+    if (
+        payload.get("sha") != COMMIT
+        or type(tree) is not dict
+        or tree.get("sha") != TREE
+        or type(verified) is not bool
+        or type(reason) is not str
+        or re.fullmatch(r"[a-z_]{1,64}", reason) is None
+    ):
+        raise ValueError()
+    print("commit=" + COMMIT + " tree=" + TREE + " github_verified=" + str(verified).lower() + " reason=" + reason)
+    print("evidence_origin=github_rest_api_claim signature_payload_emitted=false full_snapshot=false")
+except urllib.error.HTTPError as error:
+    print("github signature evidence: HTTP failure status=" + str(error.code))
+    sys.exit(1)
+except Exception:
+    print("github signature evidence: bounded verification failed")
+    sys.exit(1)
+PY
+```
+Разрешённые внешние команды:
+- только команда выше один раз; anonymous GET only to the exact pinned public
+  commit endpoint; no additional requests, credentials, or response-body output.
+Commit: DENIED
+Ограничения и риски: `verification` — утверждение GitHub API. Это не доказывает
+identity автора, independent signature validity, TLS/authenticated server
+provenance или полный snapshot.
+Результат Control Plane:
+- BLOCKED 2026-10-03: ровно один разрешённый запуск завершился
+  `github signature evidence: bounded verification failed` (exit 1). Ответ тела,
+  signature/payload и причина отказа не выводились и не сохранялись; причина
+  неизвестна. Запросов повторно не выполняли; claim не создан. Для продолжения
+  требуется новая карточка с изменённой гипотезой/диагностикой, без расширения
+  текущей карточки и без credentials.
+
+## EXP-389 — inspect signature metadata via the commit summary endpoint
+Статус: BLOCKED
+Цель: separately query GitHub's documented commit-summary representation for
+the pinned commit and capture only its nested signature-verification status.
+Зависит от: EXP-374 ACCEPTED; EXP-388 BLOCKED (не повторять его endpoint).
+Среда исполнения: local, anonymous public HTTPS GET; no SSH, credentials, proxy,
+testdev, or writes.
+Внешняя цель: ровно
+`https://api.github.com/repos/SoldatovAlexander/Agent00X/commits/df16e2f22cc0e97f39dfc428614f8683b0db63d9`.
+Вне scope: `/git/commits/` endpoint EXP-388, другие refs/commits/endpoints,
+credentials, retries, redirects, raw commit/file content, signature/payload
+output/storage, and all writes/publication.
+Разрешённые пути: none; evidence only.
+Критерии приёмки:
+- один bounded GET (per-read timeout 10s, total deadline 30s, body <=1,048,576
+  bytes), no retries/redirects/proxy/auth headers or body persistence;
+- response top-level commit SHA, nested `commit.tree.sha`, and nested
+  `commit.verification.verified/reason` have exact expected shape and pin;
+- output includes only pinned commit/tree, verified boolean, sanitized reason;
+  nested `files`, signature and payload are not emitted or persisted;
+- claim is only the GitHub REST API verification result, not independent
+  signature validation, author identity, TLS/trust-root provenance, or full
+  snapshot. A failure is sanitized and ends this card without retry.
+Проверки: ровно один запуск команды ниже.
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json, re, sys, time, urllib.error, urllib.request
+
+COMMIT = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+TREE = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/commits/" + COMMIT
+MAX_BYTES = 1_048_576
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def unique_pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-bounded-signature-evidence",
+    },
+    method="GET",
+)
+try:
+    started = time.monotonic()
+    with opener.open(request, timeout=10) as response:
+        if response.status != 200:
+            raise ValueError()
+        body = bytearray()
+        while True:
+            if time.monotonic() - started > 30:
+                raise ValueError()
+            chunk = response.read(min(65_536, MAX_BYTES + 1 - len(body)))
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_BYTES:
+                raise ValueError()
+    payload = json.loads(
+        bytes(body).decode("utf-8", "strict"), object_pairs_hook=unique_pairs
+    )
+    commit = payload.get("commit") if type(payload) is dict else None
+    tree = commit.get("tree") if type(commit) is dict else None
+    verification = commit.get("verification") if type(commit) is dict else None
+    verified = verification.get("verified") if type(verification) is dict else None
+    reason = verification.get("reason") if type(verification) is dict else None
+    if (
+        payload.get("sha") != COMMIT
+        or type(tree) is not dict
+        or tree.get("sha") != TREE
+        or type(verified) is not bool
+        or type(reason) is not str
+        or re.fullmatch(r"[a-z_]{1,64}", reason) is None
+    ):
+        raise ValueError()
+    print("commit=" + COMMIT + " tree=" + TREE + " github_verified=" + str(verified).lower() + " reason=" + reason)
+    print("evidence_origin=github_rest_api_claim signature_payload_emitted=false full_snapshot=false")
+except urllib.error.HTTPError as error:
+    print("github signature evidence: HTTP failure status=" + str(error.code))
+    sys.exit(1)
+except Exception:
+    print("github signature evidence: bounded verification failed")
+    sys.exit(1)
+PY
+```
+Разрешённые внешние команды:
+- только команда выше один раз; anonymous GET only to the exact pinned public
+  commit-summary endpoint; no other requests, credentials, or body output.
+Commit: DENIED
+Ограничения и риски: этот endpoint содержит дополнительные commit/file
+metadata, которые намеренно не выводятся/сохраняются; `verification` всё равно
+является утверждением GitHub API, а не independent trust proof.
+Результат Control Plane:
+- BLOCKED 2026-10-03: ровно один запуск к commit-summary endpoint завершился
+  `github signature evidence: bounded verification failed` (exit 1). Response
+  body, file patches, signature/payload и точная причина не выводились или не
+  сохранялись; claim не создан. Запрос не повторяли. Других endpoints в этой
+  карточке больше не запускать.
+
+## EXP-390 — classify one bounded anonymous pinned-commit diagnostic
+Статус: ACCEPTED
+Цель: distinguish transport, HTTP, size, JSON and response-shape failure for one
+anonymous read-only request to the already pinned public commit.
+Зависит от: EXP-373/374 ACCEPTED; EXP-388/389 BLOCKED; отдельное разрешение
+пользователя 2026-10-03 на ровно одну sanitized diagnostic request.
+Среда исполнения: local, anonymous public HTTPS GET; no SSH, credentials, proxy,
+testdev, redirects, retries, or writes.
+Внешняя цель: ровно
+`https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/df16e2f22cc0e97f39dfc428614f8683b0db63d9`.
+Разрешённые пути: none; evidence only.
+Вне scope: additional requests/endpoints, auth headers, raw body/metadata,
+signature/payload, local/remote file writes, branch/PR/push/publication.
+Критерии приёмки:
+- ровно один request; per-read timeout 10s, total deadline 30s, body cap 262,144
+  bytes; redirects and proxies disabled;
+- результат — только одна sanitized category: DNS/TLS/timeout/transport, HTTP
+  status, oversized body, invalid JSON, pin mismatch, verification-shape error,
+  or valid response shape; никаких values из response object;
+- body не сохраняется и не выводится; независимо от category запрос не повторять.
+Проверки: выполнить точную команду ровно один раз.
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json, socket, ssl, sys, time, urllib.error, urllib.request
+
+COMMIT = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+TREE = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/" + COMMIT
+MAX_BYTES = 262_144
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def unique_pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+def transport_category(error):
+    if isinstance(error, ssl.SSLError):
+        return "tls"
+    if isinstance(error, (socket.gaierror,)):
+        return "dns"
+    if isinstance(error, (socket.timeout, TimeoutError)):
+        return "timeout"
+    reason = getattr(error, "reason", None)
+    if isinstance(reason, ssl.SSLError):
+        return "tls"
+    if isinstance(reason, socket.gaierror):
+        return "dns"
+    if isinstance(reason, (socket.timeout, TimeoutError)):
+        return "timeout"
+    return "transport"
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-sanitized-diagnostic",
+    },
+    method="GET",
+)
+started = time.monotonic()
+try:
+    try:
+        response = opener.open(request, timeout=10)
+    except urllib.error.HTTPError as error:
+        print("diagnostic=http_status category=http")
+        sys.exit(0)
+    except Exception as error:
+        print("diagnostic=transport category=" + transport_category(error))
+        sys.exit(0)
+    with response:
+        if response.status != 200:
+            print("diagnostic=http_status category=http")
+            sys.exit(0)
+        body = bytearray()
+        while True:
+            if time.monotonic() - started > 30:
+                print("diagnostic=transport category=timeout")
+                sys.exit(0)
+            try:
+                chunk = response.read(min(65_536, MAX_BYTES + 1 - len(body)))
+            except Exception as error:
+                print("diagnostic=transport category=" + transport_category(error))
+                sys.exit(0)
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_BYTES:
+                print("diagnostic=response category=oversized")
+                sys.exit(0)
+    try:
+        payload = json.loads(
+            bytes(body).decode("utf-8", "strict"), object_pairs_hook=unique_pairs
+        )
+    except Exception:
+        print("diagnostic=response category=invalid_json")
+        sys.exit(0)
+    if type(payload) is not dict or payload.get("sha") != COMMIT:
+        print("diagnostic=response category=pin_mismatch")
+        sys.exit(0)
+    tree = payload.get("tree")
+    if type(tree) is not dict or tree.get("sha") != TREE:
+        print("diagnostic=response category=pin_mismatch")
+        sys.exit(0)
+    verification = payload.get("verification")
+    if (
+        type(verification) is not dict
+        or type(verification.get("verified")) is not bool
+        or type(verification.get("reason")) is not str
+    ):
+        print("diagnostic=response category=verification_shape")
+        sys.exit(0)
+    print("diagnostic=response category=valid_shape")
+except Exception:
+    print("diagnostic=client category=unexpected")
+    sys.exit(0)
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: ровно один запрос выполнен; output —
+  `diagnostic=transport category=tls` (exit 0). Ни HTTP body, ни response
+  metadata не вывелись/не сохранились; source claim не создан, поскольку TLS
+  отказ произошёл до успешной проверки формы ответа. Эта карточка принимает
+  только классификацию слоя отказа, не GitHub API evidence.
+
+## EXP-391 — distinguish TLS certificate and handshake failures
+Статус: ACCEPTED
+Цель: получить более точную sanitized категорию TLS отказа для публичного
+pinned-commit GET без вывода системного текста ошибки или response body.
+Зависит от: EXP-390 ACCEPTED (category `tls`); EXP-388/389 BLOCKED.
+Среда исполнения: local, anonymous public HTTPS GET; no SSH, credentials, proxy,
+testdev, redirects, or writes.
+Внешняя цель: тот же точный pinned endpoint EXP-390; ровно один новый
+диагностический request, отдельно разрешённый пользователем 2026-10-03.
+Вне scope: `/commits/` summary endpoint EXP-389, любые другие endpoints,
+authorization, raw body, signature/payload output, file changes or publication.
+Разрешённые пути: none; evidence only.
+Критерии приёмки:
+- один request с timeout 10s, redirects/proxies disabled, no retries;
+- результат сообщает только одно из `certificate_verification`,
+  `tls_handshake`, `dns`, `timeout`, `http_status`, `valid_http_200`, `other`;
+- при HTTP status не читать тело; при 200 закрыть response без чтения body;
+- не выводить/сохранять exception text, certificates, headers, response body,
+  signature/payload или commit metadata.
+Проверки: выполнить точную команду ровно один раз.
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import socket, ssl, sys, urllib.error, urllib.request
+
+COMMIT = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/" + COMMIT
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-sanitized-tls-diagnostic",
+    },
+    method="GET",
+)
+try:
+    response = opener.open(request, timeout=10)
+    status = response.status
+    response.close()
+    if status == 200:
+        print("diagnostic=valid_http_200 body_read=false")
+    else:
+        print("diagnostic=http_status body_read=false")
+except urllib.error.HTTPError:
+    print("diagnostic=http_status body_read=false")
+except Exception as error:
+    reason = getattr(error, "reason", None)
+    if isinstance(error, ssl.SSLCertVerificationError) or isinstance(reason, ssl.SSLCertVerificationError):
+        category = "certificate_verification"
+    elif isinstance(error, ssl.SSLError) or isinstance(reason, ssl.SSLError):
+        category = "tls_handshake"
+    elif isinstance(error, socket.gaierror) or isinstance(reason, socket.gaierror):
+        category = "dns"
+    elif isinstance(error, (socket.timeout, TimeoutError)) or isinstance(reason, (socket.timeout, TimeoutError)):
+        category = "timeout"
+    else:
+        category = "other"
+    print("diagnostic=" + category)
+    sys.exit(0)
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: ровно один anonymous request завершился sanitized
+  категорией `diagnostic=certificate_verification` (exit 0). Response body,
+  headers, certificate details и exception text не выводились/не сохранялись;
+  никакого API claim нет. Это диагностический результат, а не подтверждение
+  identity сервера; дальнейшие запросы остановлены на TLS verification gate.
+
+## EXP-392 — recheck pinned endpoint with the existing system CA bundle
+Статус: ACCEPTED
+Цель: проверить, проходит ли TLS verification и отвечает ли pinned public endpoint,
+если для одного процесса явно использовать существующий системный CA bundle.
+Зависит от: EXP-391 ACCEPTED; локальная проверка подтвердила загрузку 128 CA из
+`/etc/ssl/cert.pem`.
+Среда исполнения: local, anonymous public HTTPS GET; no credentials, proxy,
+redirects, retries, SSH, testdev, file writes, or remote writes.
+Внешняя цель: ровно один GET к
+`https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/df16e2f22cc0e97f39dfc428614f8683b0db63d9`.
+Разрешённые пути: none; evidence only.
+Вне scope: изменить системное trust store, вывести body/headers/certificate/error
+text/commit metadata, проверить или заявлять содержимое commit, и любые другие
+network requests.
+Критерии приёмки:
+- выполнить точную команду один раз с `SSL_CERT_FILE=/etc/ssl/cert.pem`;
+- redirects и proxies отключены; timeout 10 секунд; response body не читать;
+- вывести только `diagnostic=http_status` при HTTPError/не-200,
+  `diagnostic=tls_verified_http_200` при 200, либо одну sanitized transport
+  category (`certificate_verification`, `tls_handshake`, `dns`, `timeout`, `other`);
+- независимо от результата не повторять запрос и не делать API content claim.
+Проверки: выполнить точную команду ровно один раз.
+```bash
+SSL_CERT_FILE=/etc/ssl/cert.pem PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import socket, ssl, sys, urllib.error, urllib.request
+
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-sanitized-ca-recheck",
+    },
+    method="GET",
+)
+try:
+    response = opener.open(request, timeout=10)
+    status = response.status
+    response.close()
+    print("diagnostic=tls_verified_http_200" if status == 200 else "diagnostic=http_status")
+except urllib.error.HTTPError:
+    print("diagnostic=http_status")
+except Exception as error:
+    reason = getattr(error, "reason", None)
+    if isinstance(error, ssl.SSLCertVerificationError) or isinstance(reason, ssl.SSLCertVerificationError):
+        category = "certificate_verification"
+    elif isinstance(error, ssl.SSLError) or isinstance(reason, ssl.SSLError):
+        category = "tls_handshake"
+    elif isinstance(error, socket.gaierror) or isinstance(reason, socket.gaierror):
+        category = "dns"
+    elif isinstance(error, (socket.timeout, TimeoutError)) or isinstance(reason, (socket.timeout, TimeoutError)):
+        category = "timeout"
+    else:
+        category = "other"
+    print("diagnostic=" + category)
+    sys.exit(0)
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: локально подтверждено, что системный bundle содержит
+  128 CA; ровно один anonymous GET с `SSL_CERT_FILE=/etc/ssl/cert.pem` завершился
+  `diagnostic=tls_verified_http_200`. Body не читалось, дополнительных метаданных
+  нет. TLS gate разрешён без изменения system trust store; content claim не
+  сделан.
+
+## EXP-393 — verify the pinned commit and tree through the trusted endpoint
+Статус: ACCEPTED
+Цель: независимо проверить только ожидаемые commit/tree pins и типы
+GitHub verification fields для публичного pinned commit после подтверждённого
+TLS handshake.
+Зависит от: EXP-373/374 ACCEPTED; EXP-390/391/392 ACCEPTED; публичные pins
+зафиксированы как commit `df16e2f22cc0e97f39dfc428614f8683b0db63d9` и tree
+`12c7a4fc88b55729511473767aa9007a3ee53a27`.
+Среда исполнения: local, один anonymous HTTPS GET с системным CA bundle; no
+credentials, proxy, redirects, retries, SSH, testdev, or writes.
+Внешняя цель: ровно pinned Git database commit endpoint EXP-390.
+Разрешённые пути: none; sanitized evidence only.
+Вне scope: raw JSON/body/headers/signature/payload, commit message/author/date,
+любые другие endpoints, claims о GitHub вне проверенных полей и повтор запроса.
+Критерии приёмки:
+- exact pinned request ровно один раз с `SSL_CERT_FILE=/etc/ssl/cert.pem`,
+  timeout 10 секунд на read, total deadline 30 секунд, cap 262144 bytes,
+  redirects/proxies disabled;
+- body только в памяти; дубликаты JSON keys отклоняются; при ошибке печатается
+  лишь одна sanitized category: `transport`, `http_status`, `oversized`,
+  `invalid_json`, `pin_mismatch`, `verification_shape`;
+- успех выводит только совпадение commit/tree pins, boolean
+  `verification.verified` и факт string-типа `verification.reason`; сырой ответ
+  не сохраняется/не выводится;
+- независимо от исхода не повторять запрос и не создавать широких API claims.
+Проверки: выполнить точную команду ровно один раз.
+```bash
+SSL_CERT_FILE=/etc/ssl/cert.pem PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json, socket, ssl, sys, time, urllib.error, urllib.request
+
+COMMIT = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+TREE = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/git/commits/" + COMMIT
+MAX_BYTES = 262_144
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def unique_pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+def category(error):
+    reason = getattr(error, "reason", None)
+    if isinstance(error, (ssl.SSLError,)) or isinstance(reason, ssl.SSLError):
+        return "transport"
+    if isinstance(error, (socket.gaierror, socket.timeout, TimeoutError)) or isinstance(
+        reason, (socket.gaierror, socket.timeout, TimeoutError)
+    ):
+        return "transport"
+    return "transport"
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-sanitized-pinned-commit-check",
+    },
+    method="GET",
+)
+started = time.monotonic()
+try:
+    try:
+        response = opener.open(request, timeout=10)
+    except urllib.error.HTTPError:
+        print("diagnostic=http_status")
+        sys.exit(0)
+    except Exception as error:
+        print("diagnostic=" + category(error))
+        sys.exit(0)
+    with response:
+        if response.status != 200:
+            print("diagnostic=http_status")
+            sys.exit(0)
+        body = bytearray()
+        while True:
+            if time.monotonic() - started > 30:
+                print("diagnostic=transport")
+                sys.exit(0)
+            try:
+                chunk = response.read(min(65_536, MAX_BYTES + 1 - len(body)))
+            except Exception as error:
+                print("diagnostic=" + category(error))
+                sys.exit(0)
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_BYTES:
+                print("diagnostic=oversized")
+                sys.exit(0)
+    try:
+        payload = json.loads(bytes(body).decode("utf-8", "strict"), object_pairs_hook=unique_pairs)
+    except Exception:
+        print("diagnostic=invalid_json")
+        sys.exit(0)
+    if type(payload) is not dict or payload.get("sha") != COMMIT:
+        print("diagnostic=pin_mismatch")
+        sys.exit(0)
+    tree = payload.get("tree")
+    if type(tree) is not dict or tree.get("sha") != TREE:
+        print("diagnostic=pin_mismatch")
+        sys.exit(0)
+    verification = payload.get("verification")
+    if (
+        type(verification) is not dict
+        or type(verification.get("verified")) is not bool
+        or type(verification.get("reason")) is not str
+    ):
+        print("diagnostic=verification_shape")
+        sys.exit(0)
+    print(
+        "diagnostic=valid_shape commit_pin=true tree_pin=true verified="
+        + str(verification["verified"]).lower()
+        + " reason_is_string=true"
+    )
+except Exception:
+    print("diagnostic=transport")
+    sys.exit(0)
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: ровно один bounded anonymous GET с системным CA bundle
+  вернул `diagnostic=valid_shape commit_pin=true tree_pin=true verified=false
+  reason_is_string=true`. Response body не сохранялся и raw metadata/signature
+  не выводились. Установлен только GitHub REST verification boolean; причина
+  `verified=false` этим evidence не определена, independent signature validation
+  не выполнялась.
+
+## EXP-394 — read the sanitized reason through the commit summary endpoint
+Статус: ACCEPTED
+Цель: получить только sanitized GitHub REST verification reason для pinned
+commit через ранее неуспешный commit-summary endpoint после подтверждения TLS.
+Зависит от: EXP-373/374 ACCEPTED; EXP-389 BLOCKED; EXP-392 ACCEPTED; EXP-393
+подтвердил exact pins и `verification.verified=false` для Git database endpoint.
+Среда исполнения: local, один anonymous HTTPS GET с системным CA bundle; no
+credentials, proxy, redirects, retries, SSH, testdev, or writes.
+Внешняя цель: ровно
+`https://api.github.com/repos/SoldatovAlexander/Agent00X/commits/df16e2f22cc0e97f39dfc428614f8683b0db63d9`.
+Разрешённые пути: none; sanitized evidence only.
+Вне scope: raw JSON/body/headers, files, author/date/message, signature/payload,
+any other endpoint, retries, or claims beyond this API response.
+Критерии приёмки:
+- one GET only, `SSL_CERT_FILE=/etc/ssl/cert.pem`, 10s per-read timeout,
+  30s total deadline, 1,048,576-byte cap, redirects/proxies disabled;
+- validate exact commit/tree pins, strict boolean `verified`, and ASCII
+  `reason` matching `[a-z_]{1,64}`; body exists only in memory;
+- success outputs only pinned SHA/tree, `github_verified` and validated reason;
+  failures output only a sanitized category; never retry.
+Проверки: выполнить точную команду ровно один раз.
+```bash
+SSL_CERT_FILE=/etc/ssl/cert.pem PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json, re, socket, ssl, sys, time, urllib.error, urllib.request
+
+COMMIT = "df16e2f22cc0e97f39dfc428614f8683b0db63d9"
+TREE = "12c7a4fc88b55729511473767aa9007a3ee53a27"
+URL = "https://api.github.com/repos/SoldatovAlexander/Agent00X/commits/" + COMMIT
+MAX_BYTES = 1_048_576
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def unique_pairs(items):
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+def failure(error):
+    reason = getattr(error, "reason", None)
+    if isinstance(error, (ssl.SSLError,)) or isinstance(reason, ssl.SSLError):
+        return "transport"
+    if isinstance(error, (socket.gaierror, socket.timeout, TimeoutError)) or isinstance(
+        reason, (socket.gaierror, socket.timeout, TimeoutError)
+    ):
+        return "transport"
+    return "invalid_response"
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(
+    URL,
+    headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-sanitized-commit-summary-check",
+    },
+    method="GET",
+)
+started = time.monotonic()
+try:
+    try:
+        response = opener.open(request, timeout=10)
+    except urllib.error.HTTPError:
+        print("diagnostic=http_status")
+        sys.exit(0)
+    except Exception as error:
+        print("diagnostic=" + failure(error))
+        sys.exit(0)
+    with response:
+        if response.status != 200:
+            print("diagnostic=http_status")
+            sys.exit(0)
+        body = bytearray()
+        while True:
+            if time.monotonic() - started > 30:
+                print("diagnostic=transport")
+                sys.exit(0)
+            try:
+                chunk = response.read(min(65_536, MAX_BYTES + 1 - len(body)))
+            except Exception as error:
+                print("diagnostic=" + failure(error))
+                sys.exit(0)
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > MAX_BYTES:
+                print("diagnostic=oversized")
+                sys.exit(0)
+    try:
+        payload = json.loads(bytes(body).decode("utf-8", "strict"), object_pairs_hook=unique_pairs)
+    except Exception:
+        print("diagnostic=invalid_json")
+        sys.exit(0)
+    commit = payload.get("commit") if type(payload) is dict else None
+    tree = commit.get("tree") if type(commit) is dict else None
+    verification = commit.get("verification") if type(commit) is dict else None
+    verified = verification.get("verified") if type(verification) is dict else None
+    reason = verification.get("reason") if type(verification) is dict else None
+    if (
+        payload.get("sha") != COMMIT
+        or type(tree) is not dict
+        or tree.get("sha") != TREE
+        or type(verified) is not bool
+        or type(reason) is not str
+        or re.fullmatch(r"[a-z_]{1,64}", reason) is None
+    ):
+        print("diagnostic=invalid_response")
+        sys.exit(0)
+    print(
+        "commit=" + COMMIT + " tree=" + TREE + " github_verified="
+        + str(verified).lower() + " reason=" + reason
+    )
+    print("evidence_origin=github_rest_api_claim signature_payload_emitted=false full_snapshot=false")
+except Exception:
+    print("diagnostic=invalid_response")
+    sys.exit(0)
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: ровно один bounded anonymous GET с системным CA bundle
+  прошёл strict TLS verification; оба pins совпали. Sanitized evidence:
+  `github_verified=false reason=unsigned` от GitHub REST API. Body/files/raw
+  signature и payload не сохранялись и не выводились. Это подтверждает только
+  API verification result, не независимую проверку подписи, authorship или
+  authenticity вне TLS trust configuration текущего процесса.
+
+## EXP-395 — consolidate accepted Batch AK evidence in status docs
+Статус: ACCEPTED
+Цель: синхронизировать публичное описание Batch AK с принятыми bounded evidence
+и сохранить точные границы выводов.
+Зависит от: EXP-373—382 и EXP-392—394 ACCEPTED.
+Среда исполнения: local documentation-only; сеть запрещена.
+Внешняя цель: none.
+Разрешённые пути:
+- `README.md`
+- `docs/27-implementation-status.md`
+Вне scope: source/tests/schemas, credentials, network, status changes в
+WORK_QUEUE кроме evidence этого шага, full snapshot/authorship/signature claims,
+branch/PR/commit/push/publication.
+Критерии приёмки:
+- README и section 5/7 docs/27 отражают исходную Batch AK серию 7/10 ACCEPTED,
+  3 исторические BLOCKED и follow-ups 392—394 ACCEPTED;
+- статус указывает pins и GitHub REST result `verified=false, reason=unsigned`
+  только как API claim; отдельно сохранены ограничения: не независимая проверка
+  подписи, authorship, полный snapshot или provenance вне использованного TLS
+  trust path;
+- старые blocked-карточки не переписываются как будто их первоначальный запуск
+  прошёл; принятые follow-ups обозначены отдельно;
+- Batch AL остаётся 4/5 ACCEPTED, 1 DRAFT; R2 не объявляется завершённым.
+Проверки: `git diff --check`.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-03: README и docs/27 синхронизированы с принятой factual
+  consolidation. Сохранены исходные 7/10 и исторические BLOCKED статусы,
+  follow-ups EXP-392—394, pins и только GitHub REST API claim
+  `verified=false, reason=unsigned`; независимая подпись, authorship, полный
+  snapshot/provenance и завершение R2 не заявлены. Дата сверки docs/27 обновлена
+  до 2026-10-03; Batch AL 4/5 + 1 DRAFT сохранён. `git diff --check` passed.
+  Кодовые проверки не запускались (documentation-only).
+
+### Batch AL — bounded real LLM Worker and minimal CLI (5 карточек)
+
+Решение Control Plane от 2026-10-02: для первого узкого пилота выбран OpenAI
+Responses API и модель `gpt-6.1-sol`, reasoning effort `low`, без встроенных
+tools; модельный ID и цена перепроверены по официальным OpenAI API docs.
+Выбор — кандидат для ограниченного coding workload, не утверждение доступности
+API-аккаунта или оптимальности модели. API-вызов не включён в READY-карточки.
+Предпочтительная среда — локальная разработка; `testdev` не используется для
+Worker и не меняется. Broker credential channel не реализован и является
+условием интеграции. Любой live call остаётся отдельным действием с явным
+разрешением пользователя на точные данные и получателя.
+
+Предварительный лимит live pilot: один запрос без retries/tools, input не более
+20,000 UTF-8 bytes, `max_output_tokens=4096`. По опубликованным тарифам модели
+это около $0.081 максимум за запрос до возможных налогов/региональных или иных
+аккаунтных факторов; фактический API billing и доступность не проверены.
+Указанный лимит — предложение, не разрешение расходовать средства.
+
+Решение Control Plane от 2026-10-03 для незапущенного EXP-387: заменить OpenAI
+на DeepSeek Chat Completions. Использовать официальный endpoint
+`https://api.deepseek.com/chat/completions` и model ID `deepseek-flash`
+(официальный alias текущего DeepSeek-V4.1-Flash), `reasoning_effort=low`,
+`max_tokens=4096`, без tools/retries. Это меняет только будущий live-pilot;
+принятые mock-only OpenAI Responses adapter и его tests остаются без изменений.
+Текущая опубликованная пиковая цена DeepSeek Flash — $0.30/M input cache-miss и
+$1.20/M output; бюджетная оценка не является account-level hard cap и не
+разрешает запрос без подтверждённого безопасного credential channel и доступного
+лимита. Official docs: https://api-docs.deepseek.com/api/create-chat-completion/;
+https://api-docs.deepseek.com/quick_start/pricing/;
+https://api-docs.deepseek.com/updates/.
+
+Состав Batch AL: EXP-383—386 ACCEPTED; EXP-387 DRAFT до появления безопасного
+DeepSeek credential channel и подтверждённого account-level spend cap. Пользователь
+разрешил один synthetic live call к DeepSeek с максимумом $0.10. Только synthetic
+fixture для будущего live pilot; рабочие
+файлы проекта, credentials, `.env`, ключи и пользовательские данные не уходят
+в provider без отдельного разрешения.
+
+## EXP-383 — bound explicit task input for the model worker
+Статус: ACCEPTED
+Цель: дополнить текущий metadata-only `WorkerInput` минимальным явным заданием
+и bounded caller-selected text context, чтобы будущая модель не пыталась
+восстанавливать цель задачи по `task_id` или самостоятельно читать workspace.
+Гипотеза: immutable text-only input, переданный вызывающим кодом в пределах
+указанных лимитов и scope, можно проверить до вызова Worker без сетевых прав.
+Зависит от: EXP-367 ACCEPTED.
+Среда исполнения: local, только unit tests.
+Внешняя цель: none; сетевые вызовы запрещены.
+Вне scope: provider adapter, сетевые запросы, Credential Broker, изменение
+CLI, secrets scanning, автоматическое чтение или передача файлов workspace.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `tests/test_executor.py`
+Критерии приёмки:
+- `ExecutionRequest` и `WorkerInput` получают additive поля
+  `task_instruction: str | None = None` и `context_files: tuple[tuple[str, str], ...] = ()`;
+- если instruction задан, он должен быть непустой строкой только с печатными
+  Unicode-символами, `\n` или `\t`, до 4,096 UTF-8 bytes; содержимое не strip/normalize;
+- caller-selected context files передаются как immutable `(relative_path, text)`
+  tuples, не читаются executor'ом из filesystem и обязаны использовать path,
+  буквально совпадающий с одним из `declared_change_paths`;
+- context ограничен 8 файлами, 12,000 UTF-8 bytes на файл и 20,000 bytes total
+  (сумма UTF-8 bytes path и text); дубликаты недопустимы;
+- абсолютные/traversal/дублирующиеся пути, не-текстовые значения и превышение
+  лимитов отвергаются при создании `ExecutionRequest` с точной ошибкой
+  `execution request: worker input is invalid`; normalization не расширяет allowlist;
+- executor передаёт Worker только явные instruction/context; отсутствие (None/())
+  остаётся допустимым только для обратной совместимости с injected fake workers;
+  будущий реальный provider adapter обязан отвергать пустой instruction или context;
+- `WorkerProposal`, verifier checks, approval и publication semantics не меняются;
+- тесты подтверждают bounds/scope, early rejection до `worker.propose` и detached
+  tuple pass-through без aliasing. Существующие callsites вне allowlist не меняются.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Разрешённые внешние команды: none.
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-02: разрешённые изменения ограничены `executor.py` и
+  `test_executor.py`. Новые поля, UTF-8/control-character/size/path validation,
+  exact error и detached tuple pass-through соответствуют уточнённым критериям;
+  существующие callsites вне allowlist не менялись. Targeted: 40 tests, OK;
+  полный suite: 744 tests, OK (1 штатный opt-in Docker skip). `git diff --check`
+  прошёл. При полном suite выведены ResourceWarning о двух unclosed SQLite
+  connections; они не изменили exit/result, их источник отдельно не установлен.
+- Сеть/credentials не использовались; commit запрещён. Этот контракт принимает
+  caller-selected context и не доказывает secrets scanning; будущий provider
+  adapter обязан отвергать отсутствующий instruction/context.
+Ограничения и риски: caller-selected context может содержать секреты; эта
+локальная карточка не отправляет его наружу и не доказывает secrets scanning.
+
+## EXP-384 — OpenAI Responses adapter behind an opaque broker channel
+Статус: ACCEPTED
+Цель: преобразовать проверенный `WorkerInput` в точный Responses API request и
+превратить только завершённый structured response в `WorkerProposal`, используя
+injected opaque channel без credential или network доступа у Worker.
+Гипотеза: отделение deterministic request/response adapter от будущего Broker
+transport позволит проверить mapping/fail-closed semantics до любой передачи.
+Зависит от: EXP-383 ACCEPTED.
+Среда исполнения: local unit tests с fake channel; сеть запрещена.
+Внешняя цель: проектируемый `https://api.openai.com/v1/responses`; запросов эта
+карточка не выполняет.
+Вне scope: реальный API key, HTTP/TLS/client implementation, Broker code,
+credentials/`.env`, provider calls, CLI и передача любых данных наружу.
+Разрешённые пути:
+- `src/app_contracts/openai_worker.py` (new)
+- `tests/test_openai_worker.py` (new)
+- `docs/27-implementation-status.md`
+Критерии приёмки:
+- определить frozen `ResponsesModelResult(status, output_text, refusal=None)`
+  и `OpenAIResponsesChannel.create_response(payload) -> ResponsesModelResult`;
+  channel не принимает/не возвращает credential values;
+- `OpenAIProposalWorker.propose` fail-closed с точной ошибкой
+  `execution worker: model input is invalid`, если channel invalid либо
+  `task_instruction` пустой/None или `context_files` пустой;
+- ровно один fake-channel call с `model=gpt-6.1-sol`, `reasoning.effort=low`,
+  `max_output_tokens=4096`, `store=false`, `tools=[]`, один structured
+  `text.format` JSON schema для non-empty `changes[{path,content}]` и только
+  instruction/context из WorkerInput; credentials и остальные поля запроса не
+  читаются из окружения;
+- refusal, incomplete/non-completed result, missing/invalid output text или bad
+  proposal shape дают exact `execution worker: provider response is invalid`;
+  fake-channel exception даёт `execution worker: provider request failed`;
+- structured JSON строго преобразуется в `WorkerProposal`; существующая
+  executor validation по declared paths остаётся обязательной;
+- unit tests проверяют exact request mapping, single call, all fail-closed cases,
+  и что никакого HTTP/network/file/environment access нет.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_openai_worker.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Разрешённые внешние команды: none.
+Commit: DENIED
+Источники decision: `https://developers.openai.com/api/docs/models/gpt-6.1-sol`,
+`https://developers.openai.com/api/docs/guides/structured-outputs`,
+`https://developers.openai.com/api/docs/guides/conversation-state`.
+Результат Control Plane:
+- CHANGES REQUESTED 2026-10-03: две тестовые ошибки подтверждены. Тест пустого
+  instruction неверно ожидал ошибку на `propose`, хотя EXP-383 отвергает его при
+  создании `WorkerInput`; проверка `assertNotIn("environ", source)` давала
+  ложный результат из-за слова `environment` в docstring.
+- ACCEPTED 2026-10-03: remediation независимо сверена. Изменён только
+  `tests/test_openai_worker.py`: `None` и пустой context проверяются на
+  `propose` с нулём вызовов; пустой instruction проверяется как ранняя ошибка
+  `WorkerInput`; удалён только substring assert, AST/import/call-attribute
+  проверки сохранены. Targeted: 12 tests, OK; full suite: 756 tests, OK,
+  skipped=1 (opt-in Docker). Две штатные ResourceWarning об unrelated SQLite
+  connections результата не изменили. Новых runtime-зависимостей, network,
+  credentials, commit или изменений вне allowlist нет.
+Ограничения и риски: этот adapter вызывает только fake `Channel`; ни Broker
+security policy, ни TLS/server identity, ни live API behavior не проверяются.
+
+## EXP-385 — enforce cost, output and redaction bounds
+Статус: ACCEPTED
+Цель: ввести детерминированные пределы размера запроса/ответа, таймаута,
+количества вызовов и безопасных диагностик для OpenAI worker.
+Гипотеза: один ограниченный вызов без retry/tools с ограниченным выводом
+останавливает неограниченное потребление и не превращает provider body в log.
+Зависит от: EXP-384 ACCEPTED.
+Среда исполнения: local unit tests, no network.
+Внешняя цель: none.
+Вне scope: реальный API billing, account-level spend controls, HTTP, live calls,
+retries, logging output text или изменения provider account.
+Разрешённые пути:
+- `src/app_contracts/openai_worker.py`
+- `tests/test_openai_worker.py`
+- `docs/27-implementation-status.md`
+Критерии приёмки:
+- rendered user-content блоки из payload ограничены суммарно 20,000 UTF-8 bytes
+  до `create_response`; при превышении — `execution worker: model input is invalid`
+  и 0 channel calls. Лимит включает instruction и точный rendered path/context,
+  но не JSON envelope/model metadata.
+- output остаётся ограничен `max_output_tokens=4096`; после ответа adapter
+  отвергает `output_text` свыше 32,768 UTF-8 bytes до JSON parsing с точной
+  ошибкой `execution worker: provider response is invalid`.
+- передавать channel ровно один timeout `30.0` секунд как keyword-only
+  `timeout_seconds`; retries запрещены, tools остаются `[]`. Это требование
+  контракта к будущему transport; fake channel тестирует передачу значения, но
+  реальный timeout enforcement этой карточкой не доказывается.
+- ошибки канала и валидации не содержат instruction, context, credentials,
+  output/refusal/body или текст исключения; не добавлять logging. Тесты проверяют
+  отсутствие sentinel prompt/context/provider response в ошибках и отсутствие
+  logging/network/environment imports/access.
+- сохранить существующие exact error strings и structured response/scope
+  проверки; цены, spend limits и usage metadata не добавлять.
+Проверки — ровно по одному разу в указанном порядке:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_openai_worker.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Разрешённые внешние команды: none.
+Commit: DENIED
+Ограничения: локальные bounds не гарантируют provider-side hard spend cap;
+fake channel не доказывает реальный timeout enforcement или provider behavior.
+Результат Control Plane: ACCEPTED 2026-10-03: два разрешённых файла проверены.
+Worker ограничивает rendered input до 20,000 UTF-8 bytes до channel call,
+передаёт timeout 30.0 ровно один раз, сохраняет no-retry/tools=[] и отвергает
+output свыше 32,768 bytes до parsing. Ошибки фиксированные и redacted; AST-тест
+запрещает logging и прежние file/network/environment paths. Targeted: 16 tests,
+OK; full suite: 760 tests, OK, skipped=1 (opt-in Docker). Нет сетевых вызовов,
+credentials, commits или изменений вне allowlist. Fake channel не доказывает
+реальный timeout enforcement, API/provider behavior или provider-side spend cap.
+
+## EXP-386 — local CLI for the bounded executor path
+Статус: ACCEPTED
+Цель: добавить fixture-only demonstration CLI для bounded executor, которое
+использует mock-only Responses adapter и выводит только безопасную metadata.
+Гипотеза: фиксированная demo-команда может показать путь Worker → local
+prepare/test → injected verifier, не принимая произвольные пути, команды или
+пользовательские данные из CLI.
+Зависит от: EXP-383—385 ACCEPTED.
+Среда исполнения: local unit tests и одна локальная fixture demo; сеть запрещена.
+Внешняя цель: none.
+Вне scope: live model/provider/API, произвольная конфигурация, чтение пользовательских
+файлов/context, approvals, actuator, GitHub/publication, secrets, Docker и commits.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py` (new)
+- `tests/test_worker_cli.py` (new)
+- `docs/27-implementation-status.md`
+Критерии приёмки:
+- CLI запускается как `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m app_contracts.worker_cli`
+  из корня репозитория; единственный режим — фиксированная synthetic demo.
+- snapshot только `fixtures/repository/project`, declared path ровно
+  `calculator.py`, allowed command set ровно `python3`, test command ровно
+  `python3 -m unittest discover -s . -p test_calculator.py -q`; нельзя принимать
+  пути, команды, prompts или context из argv/environment.
+- demo Worker использует `OpenAIProposalWorker` с локальным fake channel,
+  который возвращает заранее заданный synthetic structured proposal. Никакой
+  HTTP, реального credentials или внешнего вызова; не читать исходные файлы из
+  рабочего проекта. Context/instruction фиксированные и synthetic.
+- вызов делегирует подготовку `run_local_execution`; verifier явно помечен как
+  демонстрационный (`cli-demo-verifier`, `evidence_origin=local_test`) и не
+  заявляется как независимый или security verifier. Sandbox остаётся локальным
+  process fallback, не security boundary.
+- stdout на VERIFIED содержит только JSON metadata `status`, `demo` и
+  `evidence_origin`; FAILED выводит только `status` и stable `failure_code`.
+  Ни source, proposal, context, prompt, exception, stdout/stderr тестового
+  процесса или credentials не выводятся. Успех exit 0; failure exit non-zero;
+  invalid argv — sanitized usage/error и exit 2.
+- callable `main` допускает injection worker/verifier/output streams только для
+  unit tests; поведение обычной CLI всегда fixture-only и не включает worker
+  injection из argv/environment.
+- tests проверяют фиксированную request scope, success/output allowlist,
+  отказ на лишнем argv, blocked/worker failure/verifier failure, sanitized
+  output и что реальный `run_local_execution` вызывается только с bounded demo
+  request и injected collaborators.
+Проверки — ровно по одному разу в указанном порядке:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_worker_cli.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Ограничения: демонстрация использует fixed fake channel/verifier и локальный
+process sandbox; не является реальной LLM-задачей, независимой проверкой или
+доказательством production isolation.
+Результат Control Plane:
+- CHANGES REQUESTED 2026-10-03: первоначальные два test command завершились
+  одинаковым failure в `test_cli_has_no_env_file_network_access`:
+  `assertNotIn("credential", source.lower())` ловил `credentials` в безопасном
+  docstring. Независимый осмотр подтвердил substring false positive; AST/import/
+  call checks оставались основными.
+- ACCEPTED 2026-10-03: reviewer-remediator изменил только
+  `tests/test_worker_cli.py`: broad substring assertion заменён точечной
+  проверкой sentinel-паттернов `api_key/apikey/access_token/secret_key/bearer /
+  authorization:`; AST/import/call-attribute, `open(` и `.env` проверки сохранены.
+  Targeted suite: 8 tests, OK; full suite: 768 tests, OK, skipped=1 (штатный
+  opt-in Docker). Отдельный запуск точной fixture demo-команды завершился
+  `{"status": "verified", "demo": "worker-cli-synthetic", "evidence_origin": "local_test"}`.
+  Runtime и другие файлы не менялись; сеть, credentials, Docker и commit не
+  использовались. Независимая сверка подтверждает fixed fixture, fake
+  channel/verifier и sanitized output; demo не является production isolation
+  или независимой security verification.
+
+## EXP-387 — one explicitly authorized live model call
+Статус: DRAFT
+Цель: провести один bounded live call к `api.deepseek.com` на отдельном synthetic
+fixture и зафиксировать только sanitized usage/result metadata.
+Зависит от: EXP-383—386 ACCEPTED; отдельное явное разрешение пользователя.
+Среда исполнения: local only; DeepSeek Credential Broker channel must be approved and
+available. `testdev` не используется.
+Внешняя цель: `https://api.deepseek.com/chat/completions`, model `deepseek-flash`
+(DeepSeek-V4.1-Flash), reasoning effort `low`.
+Вне scope: реальные project files, testdev, GitHub API/writes, retries,
+публикация и любое чтение credentials/`.env`/private keys.
+Разрешённые пути: none; evidence only, no file writes.
+Критерии приёмки: передача ровно одной synthetic input payload; один Chat
+Completions request с `stream=false`, `response_format={"type":"json_object"}`
+и JSON-инструкцией/примером в prompt; `max_tokens=4096`, без tools/retries,
+input <=20,000 UTF-8 bytes; output locally parsed and validated against the
+worker proposal contract; остановиться
+до запроса, если установленный API spend cap >$0.10 или недоступен. Ответ
+валидируется локально и не сохраняется; пользователь принимает sanitized
+evidence до изменения статуса.
+Проверки: точный single-request flow и credential channel указать в карточке
+только после явного разрешения на передачу synthetic payload и максимум $0.10
+API spend. До этого никакого запроса не выполнять.
+Commit: DENIED
+Блокеры: безопасный DeepSeek API credential channel, подтверждённый account-level
+spend cap <=$0.10 и рабочая доступность API-аккаунта. User разрешил именно
+передачу synthetic payload к DeepSeek с потолком $0.10; это не подтверждает
+наличие безопасного Broker channel или установленного account-level spend cap.
+Public pricing не подтверждает наличие средств/лимита на аккаунте.
+
+### Batch AM — independently trusted verifier и isolation boundary (5 плановых задач)
+
+Задать threat model и trust root → определить verifier principal/runtime,
+отдельный от Worker → enforce input/result binding → проверить isolation/resource
+limits/no capability inheritance → failure/replay matrix и limitation evidence.
+Пять запланированных экспериментов:
+1. Утвердить attacker model, trust root и границы обещаний verifier.
+2. Ввести отдельную verifier identity/runtime и bounded protocol.
+3. Связать verifier result криптографическим/bound evidence с exact input и
+   зафиксированным verifier identity/version.
+4. Проверить выбранную isolation boundary, resource limits и отсутствие
+   наследования capabilities/secrets.
+5. Проверить tampering, replay, timeout/crash и собрать независимое evidence.
+Process separation Batch AI сама по себе не считается независимым trust domain.
+
+Решение Control Plane 2026-10-03: исследовательский verifier prototype будет
+запускаться отдельным per-invocation container на локальном Docker Engine текущего
+macOS host, UID/GID `65532:65532`, exact pinned base image
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78`.
+Profile намерен использовать `--network none`, read-only rootfs, no bind mounts
+или Docker socket, no inherited host environment/secrets, dropped capabilities,
+`no-new-privileges` и bounded tmpfs/resources. TCB: host kernel, Docker Engine,
+контрольный launcher и pinned image. Это не защищает от host admin/kernel/daemon
+compromise или container escape и не является production isolation/provenance.
+EXP-396—398 подтвердили локальный Docker CLI/daemon и подготовили base-image
+digest evidence; выбранный base image на проверенной точке отсутствовал в локальном
+store. Runtime image не собран и verifier container ещё не запускался.
+
+EXP-399 принят как Control Plane preflight/ADR. Batch AM включает 5 исполнимых
+карточек EXP-400—404; все пять карточек приняты. EXP-404 принят как раскрытое
+локальное исключение: два live verifier invocations вместо лимита в один;
+corrective targeted suite прошёл. Актуально на 2026-10-06: входные параметры
+Batch AN уточнены ниже; разрешён только записанный там local/read-only scope.
+Для каждой Docker
+integration проверки карточка задаёт
+`RUN_DOCKER_SANDBOX_TESTS=1`, exact image и ожидаемый результат.
+
+Текущий read-only `docker image inspect` после EXP-400 показал, что выбранный
+base image отсутствует в локальном store; принятое EXP-398 evidence подтверждает
+pull только на тот момент. Pin остаётся прежним: Docker Official Images metadata
+подтверждает multi-platform index digest
+`7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`, а для
+linux/amd64 — manifest `2055081c860db8c842b663415b795b026e7e5cc63b59c5193fcc9997713ea5b8`.
+Будущая opt-in карточка должна отдельно разрешить одно анонимное pull при
+отсутствии base image.
+
+## EXP-396 — inventory local isolation primitives without exercising them
+Статус: ACCEPTED
+Цель: безопасно определить, какие локальные isolation primitives доступны для
+планирования Batch AM, не запускать verifier, container или sandbox.
+Зависит от: Batch AL mock-only adapter/CLI ACCEPTED; Batch AM planning gate.
+Среда исполнения: local read-only host inventory only.
+Внешняя цель: none; не обращаться к remote Docker contexts/hosts.
+Разрешённые пути: none; evidence only.
+Вне scope: запуск контейнера/профиля, image listing/pull, account enumeration,
+изменение пользователя/групп, host/security settings, Docker config/credentials,
+testdev, сеть и любые file/remote writes.
+Критерии приёмки:
+- вывести только platform family и booleans для наличия локальных executable
+  `docker` и `sandbox-exec`;
+- не читать Docker context/config, images, env secrets или identity databases;
+- команда не запускает executable/container; никаких изменений файлов/сервисов.
+Проверки: выполнить точную команду один раз.
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import platform, shutil
+
+print("platform=" + platform.system().lower())
+print("docker_cli_present=" + str(shutil.which("docker") is not None).lower())
+print("sandbox_exec_present=" + str(shutil.which("sandbox-exec") is not None).lower())
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: один локальный inventory показал `platform=darwin`,
+  `docker_cli_present=true`, `sandbox_exec_present=true`. Никакой sandbox,
+  Docker daemon, container или account database не трогался; из доступности CLI
+  нельзя сделать вывод о готовности runtime или security boundary.
+
+## EXP-397 — preflight the local Docker engine and pinned verifier image
+Статус: ACCEPTED
+Цель: проверить доступность именно локального Docker engine и заранее выбранного
+immutable image для Batch AM, ничего не скачивая и не запуская.
+Зависит от: EXP-396 ACCEPTED.
+Среда исполнения: local Docker preflight only; no remote context/host.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Image: `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Ожидаемый результат: sanitized booleans `local_daemon_available` и
+`pinned_image_available`; отсутствие любого prerequisite завершает preflight
+без pull или container run.
+Внешняя цель: none; force local Unix Docker socket only.
+Разрешённые пути: none; evidence only.
+Вне scope: image pull/list, container start/run, integration tests, remote Docker,
+Docker config/credentials, network calls, service changes, file/remote writes.
+Проверки: выполнить точную команду один раз.
+```bash
+RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import shutil, subprocess
+
+IMAGE = "python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78"
+DOCKER = shutil.which("docker")
+if DOCKER is None:
+    print("local_daemon_available=false pinned_image_available=false")
+    raise SystemExit(0)
+
+HOST = "unix:///var/run/docker.sock"
+def available(args):
+    try:
+        result = subprocess.run(
+            [DOCKER, "--host", HOST, *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except Exception:
+        return False
+
+daemon = available(["version", "--format", "{{.Server.Version}}"])
+image = daemon and available(["image", "inspect", IMAGE, "--format", "{{.Id}}"])
+print("local_daemon_available=" + str(daemon).lower() + " pinned_image_available=" + str(image).lower())
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: прямой запрос к локальному Unix socket подтвердил
+  `local_daemon_available=true`; exact immutable image пока отсутствует
+  (`pinned_image_available=false`). Container не запускался, pull не выполнялся.
+
+## EXP-398 — anonymously pull the pinned verifier base image
+Статус: ACCEPTED
+Цель: подготовить выбранный pinned image в локальном Docker store без чтения
+сохранённых Docker credentials и без запуска контейнера.
+Зависит от: EXP-397 ACCEPTED (`local_daemon_available=true`, image missing).
+Среда исполнения: one local Docker Hub image pull; no remote Docker context.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Image: `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Source: Docker Official Images metadata for the pinned index and linux/amd64
+manifest:
+`https://hub.docker.com/layers/library/python/3.12.15-alpine3.24/images/sha256-2055081c860db8c842b663415b795b026e7e5cc63b59c5193fcc9997713ea5b8`.
+Ожидаемый результат: `image_pull=success` for the exact digest; no container runs.
+Внешняя цель: public Docker Official Image registry read only.
+Разрешённые пути: none; local Docker image store only.
+Вне scope: credentials/auth login, remote writes, container run, test execution,
+daemon/service changes, tag-only pulls, and source file writes.
+Критерии приёмки:
+- one exact digest-pinned pull via `unix:///var/run/docker.sock`;
+- use a fresh ephemeral empty `DOCKER_CONFIG` so existing Docker auth state is
+  neither read nor reused; do not print Docker output/error text;
+- output only `image_pull=success|failed|timeout`; no other image listing or
+  network request.
+Проверки: выполнить точную команду один раз.
+```bash
+RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import os, shutil, subprocess, tempfile
+
+IMAGE = "python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78"
+DOCKER = shutil.which("docker")
+if DOCKER is None:
+    print("image_pull=failed")
+    raise SystemExit(0)
+
+HOST = "unix:///var/run/docker.sock"
+with tempfile.TemporaryDirectory(prefix="agent00x-anon-docker-") as config:
+    try:
+        result = subprocess.run(
+            [DOCKER, "--config", config, "--host", HOST, "pull", IMAGE],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"DOCKER_CONFIG": config, "PATH": os.path.dirname(DOCKER) + ":/usr/bin:/bin"},
+            timeout=120,
+            check=False,
+        )
+        print("image_pull=" + ("success" if result.returncode == 0 else "failed"))
+    except subprocess.TimeoutExpired:
+        print("image_pull=timeout")
+    except Exception:
+        print("image_pull=failed")
+PY
+```
+Commit: DENIED
+Результат Control Plane:
+- ACCEPTED 2026-10-03: один pull точного multi-platform index digest завершился
+  `image_pull=success`. Docker использовал выделенный временный пустой
+  `DOCKER_CONFIG`; существующие auth state/credentials не читались, output
+  registry не выводился. Container не запускался; изменения ограничены local
+  Docker image store.
+
+## EXP-399 — record the verifier container threat model and claim boundary
+Статус: ACCEPTED
+Цель: зафиксировать ограниченный local prototype threat model, trust roots и
+явные исключения до реализации Docker-backed verifier.
+Зависит от: Batch AL ACCEPTED; EXP-396—398 ACCEPTED.
+Среда исполнения: local documentation-only; сеть запрещена.
+Разрешённые пути:
+- `docs/06-decision-register.md`
+Вне scope: code/tests/schema, Docker run, system settings, testdev, credentials,
+claims о production/host-kernel isolation, signature/authorship/provenance или
+external publication.
+Критерии приёмки:
+- ADR distinguishes untrusted worker/input/evidence from trusted control plane,
+  Docker Engine, macOS kernel, exact official image digest and launch policy;
+- verifier container contract uses dedicated non-root UID 65532, bounded stdin
+  protocol, no mounts/socket/network/inherited env, read-only root with bounded
+  tmpfs/resources, dropped capabilities/no-new-privileges;
+- residuals explicitly exclude privileged host/kernel/daemon compromise and
+  container escape, and deny claims of production independent trust;
+- note the present `VerifierInput` omits the base snapshot bytes, so the container
+  cannot claim an independent test replay until a later bounded-input card;
+- record says this is a decision for an experiment, not implemented behavior.
+Проверки: `git diff --check`.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-03: ADR-033 зафиксировал local Docker TCB, exact image
+  digest, planned UID 65532/protocol/isolation flags и явные exclusions по
+  host/kernel/daemon/container-escape/production claims. Дополнительно
+  зафиксировано, что текущий `VerifierInput` не содержит base snapshot bytes и
+  до bounded-input card никакого independent test replay claim нет.
+  `git diff --check` passed; code/runtime не менялись.
+
+## EXP-400 — add the bounded pinned snapshot to VerifierInput
+Статус: ACCEPTED
+Цель: передавать exact pinned base snapshot в verifier protocol, чтобы будущий
+отдельный runtime мог самостоятельно материализовать базу, применить проверенный
+patch и запустить заданный bounded test command.
+Зависит от: EXP-399 ACCEPTED; Batch AI protocol ACCEPTED.
+Среда исполнения: local unit tests; no Docker/network.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `src/app_contracts/verifier_process.py`
+- `tests/test_executor.py`
+- `tests/test_verifier_process.py`
+- `tests/test_pinned_snapshot.py` (narrow dependency-boundary regression: permit
+  the executor's bounded GitHub snapshot data-model dependency, not a client)
+Вне scope: Docker adapter/image, schema outside VerifierInput protocol, testdev,
+credentials, source changes to worker/policy/publication behavior.
+Критерии приёмки:
+- additive immutable `VerifierInput.snapshot_files` tuple of
+  `(relative_path, mode, bytes)`; default empty preserves unpinned fake verifier
+  callsites, but pinned verifier input must contain the complete base snapshot;
+- producer independently enumerates regular files under pinned snapshot only,
+  rejects symlinks/special files, and confirms recomputed tree digest equals the
+  accepted pin before attaching data;
+- bounds: <=256 files, path <=240 UTF-8 bytes, each file <=100,000 bytes, total
+  raw snapshot bytes <=512,000; modes exactly `100644` or `100755`; safe unique
+  relative paths sorted lexicographically; any limit failure is fail-closed
+  before verifier call;
+- wire schema advances to version 2; version 1 requests remain rejected. JSON
+  base64-encodes raw file bytes deterministically; strict parse rejects
+  malformed base64, duplicate keys, paths/modes/count/size violations; full
+  request remains <=2,000,000 bytes; digest covers snapshot data;
+- tests prove exact round-trip, tree-pin binding, detached bytes, invalid path,
+  duplicate/mode/base64 rejection, oversize early rejection and no verifier call
+  on failure; existing unpinned behavior remains unchanged.
+Проверки выполняются по одному разу после финальных изменений; если набор упал,
+после исправления повторяется только этот упавший набор, затем полный suite:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_verifier_process.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Docker/network: запрещены. Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-03: immutable `VerifierInput.snapshot_files` добавляется
+  только для pinned tree после regular-file enumeration, bounds и совпадения
+  пересчитанного tree digest; schema v2 переносит bytes как canonical base64 и
+  отклоняет malformed paths/modes/duplicates/base64/oversize и pin mismatch.
+  Unpinned callers сохраняют пустое значение по умолчанию.
+- Финальные проверки: executor 41 тест OK; verifier-process 82 теста OK;
+  полный suite 774 теста OK, 1 skipped; `git diff --check` прошёл.
+- Docker/container/network, внешние записи и commit не выполнялись. Первичные
+  проверки обнаружили дефекты; Control Plane разрешил повторить только упавшие
+  наборы после исправлений, затем выполнить полный suite.
+
+## EXP-401 — implement the dedicated Docker verifier runtime
+Статус: ACCEPTED
+Цель: создать отдельный verifier image/entrypoint и контейнерный invocation
+adapter, принимающий только EXP-400 schema-v2 bounded stdin protocol и
+самостоятельно materializing pinned base + candidate contents для заданной
+локальной тестовой команды.
+Зависит от: EXP-400 ACCEPTED.
+Среда исполнения: local source changes and unit tests only; no Docker CLI/build/run,
+network or testdev. EXP-398 pull evidence is historical; do not assume base image
+currently exists in the local Docker store.
+Разрешённые пути:
+- `containers/verifier/Dockerfile`
+- `src/app_contracts/verifier_container.py`
+- `src/app_contracts/verifier_container_entrypoint.py`
+- `tests/test_verifier_container.py`
+Вне scope: all other paths, Docker build/run/pull, external host/service changes,
+testdev, credentials, image publishing, branch/PR/commit/push.
+Критерии приёмки:
+- Dockerfile uses exact official multi-platform base
+  `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`,
+  sets numeric `USER 65532:65532`, copies only the minimal entrypoint/package,
+  and defines no credentials or host mounts;
+- launcher accepts only trusted explicit absolute Docker executable, content-
+  addressed local runtime image ID (`sha256:<64 lowercase hex>`) and bounded
+  timeout/stream config; image tags and request-selected images are rejected;
+  pins local endpoint `--host=unix:///var/run/docker.sock`, sets
+  a fresh empty ephemeral `DOCKER_CONFIG`, and uses argv without shell,
+  `--pull=never`, `--network=none`,
+  `--read-only`, `--user=65532:65532`, `--cap-drop=ALL`,
+  `--security-opt=no-new-privileges:true`, fixed pids/memory/CPU limits, and only
+  bounded `/tmp` and `/work` tmpfs mounts; no bind mount/socket/TTY/host env;
+- canonical schema-v2 request bytes go on stdin only; entrypoint validates exact
+  serialization, materializes safe unique paths under fresh `/work`, overlays
+  only declared verified contents, invokes argv-only command with a bounded
+  deadline, returns typed bounded output and never exposes source/test output;
+- launcher bounds streams and timeout, kills/reaps the Docker CLI on
+  overflow/timeout, and fails closed on nonzero/malformed response; exactly one
+  `docker run` with no retry, plus a bounded best-effort `docker rm --force` by
+  generated name after failure to clean a possibly detached container;
+- fake Docker CLI unit tests prove argv/stdin/env/limits and never call real Docker;
+  cover malformed input, unsafe paths, command failure/timeout/output overflow,
+  forced cleanup and sanitization.
+Проверки (после финальных изменений; при ошибке повторять только упавший набор):
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_verifier_container.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Docker/network: запрещены. Commit: DENIED. Результат Control Plane: pending.
+
+Результат Control Plane:
+- ACCEPTED 2026-10-06: добавлены отдельный минимальный verifier image/entrypoint,
+  bounded Docker adapter и fake-CLI tests. Приёмка относится к коду и тестам;
+  реальный Docker build/run, проверка локальной image identity и границы ядра
+  контейнера не выполнялись.
+- Проверки: `test_verifier_container.py` — 13 тестов OK; полный suite — 787
+  тестов OK, 1 skipped; `git diff --check` прошёл. Commit/push/network не
+  выполнялись. Базовый image digest закреплён; runtime image ещё не собран.
+
+## EXP-402 — bind result to request and verifier identity/version
+Статус: ACCEPTED
+Цель: bind the accepted result to the exact EXP-400 request and a trusted
+Control Plane-supplied runtime image ID + verifier source-code digest. Child-
+reported `verifier_id` is informational/untrusted and must be replaced in the
+accepted result by the identity derived from trusted launcher config.
+Зависит от: EXP-401 ACCEPTED.
+Среда исполнения: local source changes and unit tests only; no Docker CLI/build/run,
+network, testdev or secrets.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `src/app_contracts/verifier_container.py`
+- `tests/test_executor.py`
+- `tests/test_verifier_container.py`
+Вне scope: wire protocol/schema changes, child-selected identity, Docker,
+network, external services, testdev, credentials, image publishing, commits,
+pushes or PRs.
+Критерии приёмки:
+- trusted config requires exact `sha256:<64 lowercase hex>` runtime image ID
+  and source-code digest; neither value is accepted from request/child output;
+- after existing response parsing and exact request-digest/result binding, the
+  adapter replaces child `verifier_id` with
+  `docker-image:sha256:<image hex>/code:sha256:<code hex>` derived only from
+  trusted config, then validates the resulting typed result against the request;
+- both existing short verifier labels and this one structured identity format
+  validate; malformed identity strings fail closed;
+- wrong request digest or any existing result-binding mismatch is rejected;
+  the result carries exact trusted image/code identity. This does not prevent
+  replay of an identical response to an identical request; that remains an
+  explicit open limitation (no nonce in wire protocol v2).
+Проверки (по одному разу после финальных изменений; при ошибке повторять только
+упавший набор, затем полный suite):
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_verifier_container.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+Docker/network: запрещены. Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-06: launcher принимает trusted runtime image ID и code
+  digest только из конфигурации; после точной request/result binding заменяет
+  дочерний label на `docker-image:sha256:<hex>/code:sha256:<hex>` и повторно
+  валидирует typed result.
+- Проверки: `test_executor.py` — 41 тест OK;
+  `test_verifier_container.py` — 13 тестов OK; полный suite — 787 тестов OK,
+  1 skipped. `git diff --check` прошёл. Docker/network/commit не выполнялись.
+- Открыто: wire protocol v2 не отличает replay того же ответа на идентичный
+  запрос; перед утверждением replay resistance потребуется nonce в протоколе.
+
+## EXP-403 — verify the pinned container isolation profile
+Статус: ACCEPTED
+Цель: build a minimal local verifier runtime image from the EXP-401 Dockerfile
+and run one synthetic bounded verifier request under the EXP-401 fixed profile.
+Зависит от: EXP-402 ACCEPTED.
+Среда исполнения: только локальный Docker Engine через `unix:///var/run/docker.sock`;
+исполнить в OpenCode для macOS с включённым Docker opt-in.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Разрешённые пути:
+- `tests/test_verifier_container.py`
+- временный каталог для минимального build context и временный пустой
+  `DOCKER_CONFIG` (удаляются при завершении команды)
+Разрешённое внешнее чтение: один anonymous pull только базового официального
+образа `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`;
+auth/config/credential helpers запрещены. Сначала собрать минимальный временный
+context только из `containers/verifier/Dockerfile` и перечисленных в нём
+`src/app_contracts` файлов; не передавать repository root в Docker build.
+Построенный runtime image пометить локальным tag
+`agent00x-verifier-exp403:local`, затем получить immutable local ID через
+`docker image inspect --format '{{.Id}}'` и передать в launcher только этот
+`sha256:<64 lowercase hex>` ID. Code digest — SHA-256 канонического архива тех
+же исходных файлов build context, фиксируется в evidence и trusted config.
+Разрешённые команды (строго одна сборка и один verifier run). Первая команда
+создаёт минимальный временный context, выполняет ровно один anonymous pull и
+одну сборку, затем печатает только executable path, image ID и code digest;
+cleanup ограничен двумя собственными каталогами `mktemp`:
+
+```sh
+RUN_DOCKER_SANDBOX_TESTS=1 /bin/sh -c 'set -eu; docker_executable="$(command -v docker)"; docker_config="$(mktemp -d)"; context="$(mktemp -d)"; trap '\''rm -rf "$docker_config" "$context"'\'' EXIT; export DOCKER_CONFIG="$docker_config"; docker --host=unix:///var/run/docker.sock pull python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78 >/dev/null; mkdir -p "$context/src/app_contracts"; cp containers/verifier/Dockerfile "$context/containers.Dockerfile"; cp src/app_contracts/__init__.py src/app_contracts/digests.py src/app_contracts/executor.py src/app_contracts/pinned_snapshot.py src/app_contracts/repository_process.py src/app_contracts/sandbox.py src/app_contracts/validator.py src/app_contracts/verifier_process.py src/app_contracts/verifier_container_entrypoint.py "$context/src/app_contracts/"; mv "$context/containers.Dockerfile" "$context/Dockerfile"; docker --host=unix:///var/run/docker.sock build --pull=false --network=none --tag agent00x-verifier-exp403:local "$context" >/dev/null; image_id="$(docker --host=unix:///var/run/docker.sock image inspect --format '\''{{.Id}}'\'' agent00x-verifier-exp403:local)"; code_digest="$(python3 -c '\''import hashlib,pathlib,sys; root=pathlib.Path(sys.argv[1]); files=sorted((p for p in root.rglob("*") if p.is_file()),key=lambda p:p.relative_to(root).as_posix()); h=hashlib.sha256(); [h.update(p.relative_to(root).as_posix().encode()+b"\\0"+hashlib.sha256(p.read_bytes()).digest()) for p in files]; print("sha256:"+h.hexdigest())'\'' "$context")"; printf "docker_executable=%s\\nimage_id=%s\\ncode_digest=%s\\n" "$docker_executable" "$image_id" "$code_digest"'
+```
+
+Вторая команда использует только точные значения из первой и запускает один
+opt-in integration test (он делает один synthetic verifier run):
+
+```sh
+RUN_DOCKER_SANDBOX_TESTS=1 AGENT00X_DOCKER_EXECUTABLE=<absolute path from step 1> AGENT00X_VERIFIER_IMAGE_ID=<image_id from step 1> AGENT00X_VERIFIER_CODE_DIGEST=<code_digest from step 1> PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_verifier_container.py' -q
+```
+Ожидаемый результат: одна bounded synthetic request получает `PASS`, итоговый
+result label точно соответствует trusted image/code digests; request test
+asserts UID 65532, read-only root, отсутствие Docker socket и ограниченный
+child environment. Фактические Docker argv фиксируют `--network=none`,
+`--cap-drop=ALL`, resource limits, отсутствие host mounts и только ограниченные
+tmpfs `/tmp` и `/work`; это не independent kernel/daemon attestation. Вывод
+содержит только image/code digest, тестовый итог и
+санитизированные факты; никаких env/config значений.
+Вне scope: testdev, Docker daemon/service configuration, credentials, publish,
+commit/push/PR. Остановка при отсутствии локального Docker, ошибке anonymous
+pull/build, неожиданном image ID или несовпадении любого isolation свойства.
+Commit: DENIED. Результат Control Plane: pending.
+
+Результат Control Plane:
+- ACCEPTED 2026-10-06: OpenCode выполнил один anonymous pull закреплённого
+  официального base image, собрал `agent00x-verifier-exp403:local` из
+  минимального временного context и запустил один live synthetic verifier run.
+  Build context не содержал repository root; временные context и пустой
+  `DOCKER_CONFIG` удалены trap-ом; image оставлен в локальном store для
+  последующих экспериментов.
+- Evidence: runtime image ID
+  `sha256:95485e25fbda5bdbb976d88014df5d8c251b71fa9c6326601366cd6546b58e3a`;
+  code digest временного context
+  `sha256:c43d5cf872779e24f1e2825235835a6a74b23430688064385a50161207432695`.
+  Вторая команда получила `Ran 14 tests in 8.926s; OK` (13 fake-CLI тестов +
+  один live Docker test; opt-in тест не был skipped). Live probe проверил UID
+  65532, read-only `/`, отсутствие Docker socket и restricted child env;
+  фиксированный argv/no network/no bind mounts/caps/resource profile проверены
+  unit tests и использованы live invocation.
+- Read-only `git status --short` до и после совпал: только предсуществующие
+  uncommitted изменения; файлы репозитория executor-ом не менялись. Build
+  сообщил только legacy-builder deprecation warning. Нет independent kernel/
+  daemon attestation; Docker TCB и same-request replay остаются ограничениями.
+  Commit/push/PR/deploy не выполнялись.
+
+## EXP-404 — test failure, replay, timeout, crash and cleanup semantics
+Статус: ACCEPTED
+Цель: close the same-request stale-response replay gap in the Docker-specific
+protocol, then exercise failure, timeout, crash and cleanup behavior.
+Зависит от: EXP-403 ACCEPTED.
+Среда исполнения: local source changes, offline local Docker build and unit /
+opt-in tests only. No pull, network, testdev, credentials, external service or
+remote state.
+Разрешённые пути:
+- `src/app_contracts/verifier_container.py`
+- `src/app_contracts/verifier_container_entrypoint.py`
+- `tests/test_verifier_container.py`
+- временный минимальный build context и пустой `DOCKER_CONFIG`
+Вне scope: generic `verifier_process` wire schema v2, other modules, Docker
+daemon configuration, host security settings, credentials, publish,
+commit/push/PR/deploy.
+Критерии приёмки:
+- generate a fresh 256-bit cryptographic nonce per container invocation in the
+  trusted parent; pass it only as a fixed entrypoint argument and have the
+  child echo it in the existing bounded result field;
+- before returning any result, parent requires exact match to its invocation
+  nonce as well as exact request digest/result bindings; a cached response from
+  a previous invocation of the identical request is rejected, and no result is
+  accepted on malformed output, nonzero child exit, timeout, or output overflow;
+- tests prove a stale result replay for the same request is rejected, child-
+  supplied or malformed nonce cannot select identity, and each invocation uses
+  a distinct nonce; existing no-retry/cleanup/sanitization behavior remains;
+- nonce only addresses accidental/stale response replay; it does not attest the
+  child, protect a malicious child that sees its nonce, or authenticate Docker/
+  host/kernel.
+Проверки — выполняются через OpenCode для macOS и только после финальных правок:
+команда 1 — одна offline build из минимального temporary context, `--pull=false`
+и `--network=none`, затем вывести только absolute Docker executable, immutable
+image ID и code digest:
+
+```sh
+RUN_DOCKER_SANDBOX_TESTS=1 /bin/sh -c 'set -eu; docker_executable="$(command -v docker)"; docker_config="$(mktemp -d)"; context="$(mktemp -d)"; trap '\''rm -rf "$docker_config" "$context"'\'' EXIT; export DOCKER_CONFIG="$docker_config"; mkdir -p "$context/src/app_contracts"; cp containers/verifier/Dockerfile "$context/Dockerfile"; cp src/app_contracts/__init__.py src/app_contracts/digests.py src/app_contracts/executor.py src/app_contracts/pinned_snapshot.py src/app_contracts/repository_process.py src/app_contracts/sandbox.py src/app_contracts/validator.py src/app_contracts/verifier_process.py src/app_contracts/verifier_container_entrypoint.py "$context/src/app_contracts/"; docker --host=unix:///var/run/docker.sock build --pull=false --network=none --tag agent00x-verifier-exp404:local "$context" >/dev/null; image_id="$(docker --host=unix:///var/run/docker.sock image inspect --format '\''{{.Id}}'\'' agent00x-verifier-exp404:local)"; code_digest="$(python3 -c '\''import hashlib,pathlib,sys; root=pathlib.Path(sys.argv[1]); files=sorted((p for p in root.rglob("*") if p.is_file()),key=lambda p:p.relative_to(root).as_posix()); h=hashlib.sha256(); [h.update(p.relative_to(root).as_posix().encode()+b"\\0"+hashlib.sha256(p.read_bytes()).digest()) for p in files]; print("sha256:"+h.hexdigest())'\'' "$context")"; printf "docker_executable=%s\\nimage_id=%s\\ncode_digest=%s\\n" "$docker_executable" "$image_id" "$code_digest"'
+```
+
+команда 2 — один targeted suite и максимум один live container run:
+
+```sh
+RUN_DOCKER_SANDBOX_TESTS=1 AGENT00X_DOCKER_EXECUTABLE=<absolute path from step 1> AGENT00X_VERIFIER_IMAGE_ID=<image_id from step 1> AGENT00X_VERIFIER_CODE_DIGEST=<code_digest from step 1> PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_verifier_container.py' -q
+```
+Ожидаемый результат: весь targeted suite проходит; live synthetic request
+получает `PASS` с nonce-bound trusted identity; fault/replay cases fail closed;
+никакой request/test output, nonce, credential/config content в evidence не
+попадает; Docker CLI cleanup не оставляет running container. `git status
+--short` до/после — только read-only evidence; грязное исходное дерево само по
+себе не основание для остановки, поскольку commit запрещён и ни staging, ни
+изменения за пределами allowlist не допускаются. `git diff` после команды
+допустим как read-only scope evidence.
+Commit: DENIED. Результат Control Plane: ACCEPTED как раскрытое локальное
+исключение по явному решению пользователя от 2026-10-06. Отклонение сохранено в
+evidence: команда 2 выполнена дважды, и каждый прогон содержал один live
+synthetic verifier invocation (итого 2 вместо лимита 1); первый прогон упал
+только на IndentationError нового fake-harness, corrective прогон прошёл (21
+тест). Оба запуска были local/offline, без credentials и внешних writes. Это
+исключение не меняет ограничений для будущих карточек; дополнительных запусков
+по EXP-404 не выполнять.
+
+### Batch AN — controlled provider publication, durable recovery и R2 exit (5 плановых задач)
+
+Только после AK—AM: bind verified remote snapshot/Worker/verifier result к
+approval и выполнить пять планируемых экспериментов:
+1. Зафиксировать R2 composed request, intent, approval, policy и Gateway
+   bindings для тех же remote inputs.
+2. Проверить Broker grant scope/expiry/use-time и безопасную GitHub read-only
+   preflight для выбранной цели.
+3. Подготовить отдельную точную card для минимального разрешённого provider
+   write; выполнить его только после отдельного подтверждения операции.
+4. Проверить durable recovery после matching, unknown, conflict и crash без
+   blind retry или повторного side effect.
+5. Провести end-to-end evidence review, сверить остаточные риски и принять
+   отдельное решение Control Plane о закрытии R2.
+Любой внешний write требует отдельной точной карточки и явного подтверждения
+операции; roadmap не разрешает его заранее.
+
+#### Решение Control Plane по параметрам Batch AN (2026-10-06)
+
+- Тестовая цель: публичный `SoldatovAlexander/brainbooster_full_v11`, выбранный
+  пользователем. Это настоящий Telegram MiniApp prototype, не disposable
+  Hello World; обращаться только к synthetic/test content и не менять его
+  поведение или данные.
+- Ветка для read-only preflight: `master`. Текущая разрешённая операция — только
+  публичные unauthenticated GET/просмотр metadata, tree и содержимого; никаких
+  branch/ref/file/PR mutations. Не переключать remotes локального Agent00X.
+- GitHub App permissions/credentials: не запрашивать и не использовать; в
+  текущем scope разрешений App нет. Историческая возможность получить App
+  credentials не переносится на эту цель.
+- Approval owner: пользователь. Это не даёт предварительного approval на
+  конкретный provider write. Любой такой write остаётся DRAFT до отдельной
+  карточки с одним exact operation, branch/path/content digest, требуемыми
+  permissions и подтверждением непосредственно перед действием.
+- Локальное recovery evidence: временная file-backed SQLite БД существующего
+  journal harness; проверять close/reopen и детерминированные crash points.
+  Вывод ограничить состоянием записи, digest/receipt identifiers, числом
+  side effects и итогом reconciliation; не сохранять токены или содержимое
+  credentials. Это подтверждает только локальное process-restart поведение, не
+  production durability, power-loss semantics, multi-process locking или
+  provider atomicity.
+- Достаточный локальный failure/recovery evidence: positive/matching result;
+  unknown outcome; conflicting receipt; crash до side effect и после возможного
+  side effect; reopen процесса/БД; отсутствие blind retry; максимум один
+  provider-side effect в fake endpoint; reconciliation-required при
+  неоднозначности. Для реального провайдера эти свойства не выводить из fake.
+- `Agent00X-sandbox` не используется. Эти решения снимают входной gate только
+  для локальных и публичных read-only карточек; provider-write и любые
+  credential-backed карточки остаются неразрешёнными.
+
+#### Карточки Batch AN (5 задач; 4 ACCEPTED, 1 BLOCKED)
+
+## EXP-405 — retain bounded GitHub snapshot bytes with the API claim
+Статус: ACCEPTED
+Цель: сохранить bounded blob bytes вместе с существующим GitHub REST claim,
+чтобы следующий локальный этап мог передать ровно этот snapshot executor-у.
+Гипотеза: immutable typed result связывает owner/repository/commit/tree,
+content digest и каждый verified blob; claim остаётся `github_rest_api_claim`
+и не становится локально или криптографически verified.
+Зависит от: Batch AM ACCEPTED.
+Среда исполнения: local; только fake transport и synthetic fixture.
+Внешняя цель: none. Не читать выбранный пользовательский репозиторий этой
+карточкой, не запускать его код, не обращаться к сети или credentials.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `tests/test_github_snapshot.py`
+Критерии приёмки:
+- новый immutable result возвращает exact commit/tree claim и tuple bounded
+  `GitHubBlobClaim` для всех файлов; старый `read_github_snapshot` API и его
+  digest-only result остаются совместимыми;
+- result отклоняет дубликаты/несортированные либо несогласованные файлы,
+  неверный aggregate content digest и превышение лимитов; read path сохраняет
+  точные owner/repository/commit/tree bindings и `github_rest_api_claim` origin;
+- repr/исключения не содержат raw file bytes; ни одно поле не утверждает
+  signature, authorship, authenticated provenance или проверку кода;
+- позитивные/негативные тесты используют synthetic responses и доказывают,
+  что transport принимает только существующие bounded GET call pattern.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q`
+- `git diff --check`
+Commit: DENIED. Вне scope: все остальные файлы, сеть, target repository,
+executor integration, credentials, branch/PR/file writes, testdev, Docker,
+commit/push/deploy.
+Результат Control Plane: ACCEPTED 2026-10-06. Synthetic fake-transport tests
+подтвердили bound content records, old metadata-only API compatibility,
+per-blob Git SHA/content digest checks, deterministic aggregate digest, hidden
+raw bytes in repr и GET-only/no-redirect transport. Targeted suite: 32 tests OK;
+`git diff --check` passed. No target repository reads, network, credentials,
+execution of repository code or external writes. Existing pre-task worktree
+changes were preserved; no commit.
+
+## EXP-406 — bind one remote snapshot through local Worker and Verifier inputs
+Статус: ACCEPTED
+Цель: связать exact EXP-405 snapshot и `github_rest_api_claim` через
+`ExecutionRequest`, WorkerInput, bounded VerifierInput и ExecutionResult.
+Гипотеза: mismatch между выбранным snapshot, локально материализованным base,
+Worker и verifier не может незаметно потерять исходную identity; remote claim
+не повышается до local/trusted evidence и не создаёт publication seed.
+Зависит от: EXP-405 ACCEPTED.
+Среда исполнения: local synthetic snapshot + fake Worker/Verifier/backend only.
+Remote snapshot не исполнять через default LocalProcess backend: явно
+инжектировать тестовый backend; не запускать код `brainbooster_full_v11` и не
+передавать его live модели.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `src/app_contracts/verifier_process.py`
+- `tests/test_executor.py`
+- `tests/test_verifier_process.py`
+Критерии приёмки:
+- `ExecutionRequest` может нести либо local `PinnedSnapshot`, либо remote
+  `GitHubSnapshotContents`, но не оба; remote owner/repository и commit должны
+  совпадать с request identity;
+- перед вызовом Worker parent проверяет, что materialized snapshot — только
+  bounded regular files, без symlink, и байты/path/mode/digest в точности
+  равны content-bearing claim; mismatch останавливает исполнение до Worker;
+- WorkerInput получает snapshot digest, `github_rest_api_claim` origin и
+  digest полной claim identity; он не получает remote source bytes по этому
+  полю;
+- VerifierInput содержит те же bounded base snapshot bytes и claim digest;
+  обновлённая subprocess wire schema version 3 передаёт digest внутри
+  canonical request, не выдавая его как verifier-result claim;
+- ExecutionResult сохраняет remote origin/digest для успешных и failed flows;
+- local pinned flow остаётся совместимым; remote snapshot не удовлетворяет
+  local pinned replay и `build_publication_seed` fail-closed его отвергает;
+- tests используют synthetic files и injected fakes; никакой target code,
+  сеть, Docker или внешнее действие не запускаются.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_verifier_process.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_pinned_snapshot.py' -q`
+- `git diff --check`
+Вне scope: follow-up provider-write preparation (EXP-407), live model, реальные
+GitHub calls/credentials, provider publication, branch/PR/file writes,
+testdev, Docker opt-in, commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Full-suite verification exposed
+that the request schema bump must not also version-bump the independent
+verifier-response envelope; request v3 and response v2 are now explicit. The
+snapshot-only executor dependency is documented in the narrow static-boundary
+regression; no GitHub client or credentials dependency is allowed. Remote
+`GitHubSnapshotContents`
+прошёл через локальный executor только с injected fake backend/Worker/Verifier:
+до Worker проверяются owner/repository/commit binding, mutual exclusion с local
+pin, bounded regular-file snapshot, отсутствие symlink и точные path/mode/bytes
+между claim, исходным каталогом и sandbox snapshot. Worker получает только
+`github_rest_api_claim` origin, tree digest и canonical claim digest; bounded
+VerifierInput получает совпадающие synthetic base bytes и digest. Process wire
+schema v3 включает claim digest в canonical request; результат verifier не
+объявляет claim digest собственным evidence. Успешный и worker-failed results
+сохраняют remote identity; remote не проходит local pinned replay и
+`build_publication_seed` fail-closed. Targeted suites: `test_executor.py` — 44
+tests OK; `test_verifier_process.py` — 83 tests OK; `test_pinned_snapshot.py` —
+33 tests OK; `test_verifier_container.py` — 20 tests OK, 1 opt-in test skipped;
+full suite — 801 tests OK, 2 opt-in tests skipped; `git diff --check` passed.
+Никаких target code execution, live model, network, Docker, credentials или
+внешних writes; commit не создавался.
+
+## EXP-407 — prepare one exact provider-write card, without executing it
+Статус: BLOCKED
+Цель: подготовить отдельно предъявляемую пользователю операционную карточку
+на один минимальный write, включая точную ветку, path/payload digest, API
+operation, permissions, approval freshness и compensation/reconciliation.
+Владелец approval: пользователь. Целевая репа: `SoldatovAlexander/brainbooster_full_v11`.
+Разрешённая операция сейчас: none; эта карточка не разрешает и не выполняет
+branch/ref/file/PR mutation. READY не выставлять без отдельного свежего
+подтверждения пользователя exact operation после предъявления payload digest.
+Credentials/App permissions: none. Не читать и не запрашивать secrets.
+Результат Control Plane: BLOCKED 2026-10-06. В рамках MVP пока нет утверждённого
+точного изменения для целевого Telegram MiniApp, проверенного payload digest и
+отдельного подтверждения конкретного provider write. Не выбирать произвольную
+публикацию ради демонстрации. Никакие branch/ref/file/PR операции не
+разрешены; вернуться к карточке после предъявления полезного MVP change и
+отдельного approval пользователя.
+
+## EXP-408 — extend local SQLite reopen evidence for publication recovery
+Статус: ACCEPTED
+Цель: проверить persistent journal recovery matrix для matching receipt,
+unknown result и conflicting receipt после close/reopen; запретить blind retry
+и подтвердить bounded fake endpoint side-effect count.
+Зависит от: EXP-405 ACCEPTED. Независима от remote executor integration
+EXP-406; выполнена отдельной локальной fake-only веткой.
+Среда: только temporary file-backed SQLite и fake endpoint, никакого реального
+GitHub/credentials. Power-loss, multi-process и production durability не
+утверждать.
+Разрешённые пути:
+- `tests/test_controlled_publication.py`
+Критерии приёмки:
+- для synthetic unknown endpoint result и mismatched receipt интеграция сначала
+  переводит journal в `reconciliation_required`;
+- после закрытия/повторного открытия file-backed SQLite состояние сохраняется,
+  `recover_publication` остаётся fail-closed, и endpoint lookup/publish не
+  вызывается повторно;
+- fresh approval/grant для того же process не открывает повторную публикацию;
+- проверка сообщает только synthetic call counts/statuses, без payload и
+  credentials.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_controlled_publication.py' -q`
+- `git diff --check`
+Вне scope: source changes, сеть, реальные GitHub-вызовы, credentials, Docker,
+commit/push/PR/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. `test_controlled_publication.py`
+проверяет неизвестный outcome и conflicting receipt, переход в
+`reconciliation_required`, close/reopen SQLite, fail-closed recovery и отсутствие
+дополнительных lookup/publish после reopen или новой approval/grant. Проверка:
+55 tests OK; `git diff --check` passed. Только synthetic fake endpoint и
+temporary local SQLite; production durability не утверждается. Commit не создан.
+
+## EXP-409 — review evidence and decide R2 exit without assuming completion
+Статус: ACCEPTED
+Цель: сопоставить принятые Batch AN evidence с R2 exit criteria и обновить
+только factual status docs. R2 закрывать только при наличии повторяемого
+сквозного evidence и решения пользователя по оставшимся production gates.
+Зависит от: EXP-405—408 accepted или отдельно раскрытые/отклонённые.
+Разрешённые пути (план): `docs/27-implementation-status.md`, `README.md`,
+`.opencode/tasks/WORK_QUEUE.md`.
+Вне scope: код, новые внешние операции, credentials, claims о production
+durability/isolation/provenance, auto-merge, deployment.
+Результат Control Plane: ACCEPTED 2026-10-06. Проверены принятые fake/local
+evidence Batch AN, раскрытый blocker EXP-407 и R2 criteria документа 24. Batch
+AN содержит 4 ACCEPTED и 1 BLOCKED карточку. R2 не закрыт: remote provenance
+пока ограничен public REST claim, Worker/backend/verifier не являются live и
+independently trusted chain, публикация и credential isolation не доказаны,
+production durability/isolation отсутствуют. Следующий допустимый шаг — новый
+локальный/read-only batch с пользой для MVP; provider write остаётся отдельным
+gate и не должен использоваться для формального закрытия R2.
+
+### Условие перехода
+
+R3 не запускать по одному только исчерпанию числа карточек. Control Plane
+переходит к R3 после принятия всех обязательных карточек R2, воспроизводимого
+end-to-end evidence и явного решения по оставшимся production границам. Если
+любая из них остаётся непринятой, обновить статус как открытый/заблокированный,
+а не объявлять R2 завершённым.
+
+### Batch AO — remote snapshot materialization и public input path (5 задач)
+
+Цель batch: перейти от content-bearing API claim к воспроизводимому,
+content-safe remote-input path, сохранив `github_rest_api_claim` как
+неаутентифицированное доказательство. Все первые проверки — synthetic/fake;
+никаких provider writes или credentials.
+
+#### Карточки Batch AO (5 задач; 5 ACCEPTED)
+
+## EXP-410 — safely materialize bounded GitHub snapshot contents locally
+Статус: ACCEPTED
+Цель: превратить принятый `GitHubSnapshotContents` в lease-owned временное
+read-only дерево файлов, которое можно передать remote executor без ручного
+копирования в caller-selected path.
+Зависит от: EXP-405, EXP-406 ACCEPTED.
+Среда исполнения: local synthetic records only; no target repository, network,
+credentials, model, Docker or repository code.
+Разрешённые пути:
+- `src/app_contracts/remote_snapshot_workspace.py` (new)
+- `tests/test_remote_snapshot_workspace.py` (new)
+Критерии приёмки:
+- материализатор принимает только точный typed `GitHubSnapshotContents`,
+  создаёт принадлежащую lease уникальную временную директорию и возвращает
+  context-managed handle с exact claim и скрытым от repr path;
+- записываются в точности bounded path/mode/bytes; parent directories и files
+  не являются symlink; после записи содержимое повторно проверяется по claim
+  digest; доступ к handle после `close()` отклоняется;
+- успешный lease закрывается и удаляет только собственный временный root; error
+  path не оставляет созданный partial workspace; исходные bytes не включаются в
+  repr, exception или stdout;
+- synthetic tests покрывают nested paths, executable mode, cleanup, duplicate /
+  invalid records, tampering/mismatch и отсутствие неожиданных writes.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_workspace.py' -q`
+- `git diff --check`
+Вне scope: `ExecutionRequest` integration, live GitHub GET, model, verifier,
+provider publication, branch/PR/file writes, credentials, testdev, Docker,
+commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added
+`MaterializedGitHubSnapshot` lease and `materialize_github_snapshot()` using
+synthetic bounded records only. Input claim/blob records are defensively
+reconstructed before any filesystem side effect; traversal/tampered paths fail
+closed. Exact path/mode/bytes are re-read and digest-checked; generated files
+and directories are read-only, symlinks rejected, path/content hidden from repr
+and stable errors, and partial/normal close removes only the owned temporary
+root. `test_remote_snapshot_workspace.py`: 6 tests OK; full suite: 807 tests OK,
+2 opt-in tests skipped; `git diff --check` passed. No network, credentials,
+target-code execution, Docker, provider write or commit.
+
+## EXP-411 — bind owned remote workspace into executor lifecycle
+Статус: ACCEPTED
+Цель: дать `ExecutionRequest` typed optional binding к
+`MaterializedGitHubSnapshot` и проверить, что executor использует path/claim
+этого открытого lease, а не несовпадающие caller-selected values.
+Зависит от: EXP-410 ACCEPTED.
+Среда исполнения: local synthetic snapshot + injected fake Worker/Verifier/backend.
+Lease остаётся caller-owned: его context manager закрывается caller-ом после
+любого результата executor; executor не удаляет чужой ресурс самовольно.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `tests/test_executor.py`
+- `tests/test_pinned_snapshot.py` (narrow static dependency allowlist for the
+  bounded workspace data model; still reject network/client imports)
+Критерии приёмки:
+- `ExecutionRequest.remote_workspace` принимает только exact
+  `MaterializedGitHubSnapshot`; если переданы вместе `remote_snapshot` и
+  `remote_workspace`, их immutable contents и `snapshot_path` должны совпадать;
+- remote run повторно проверяет открытое состояние lease и binding до создания
+  backend session; закрытый/чужой/mismatched workspace не достигает backend,
+  Worker или Verifier;
+- валидный workspace проходит существующие bounded path/mode/bytes/digest
+  checks и Worker/Verifier сохраняют уже проверенные claim bindings;
+- caller-owned lease закрывается через `with` после success и failure, удаляя
+  только свой temp root; local pinned flow и compatibility path без workspace
+  остаются прежними.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_pinned_snapshot.py' -q`
+- `git diff --check`
+Вне scope: live GitHub GET, model, verifier redesign, provider publication,
+branch/PR/file writes, credentials, testdev, Docker, commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. `ExecutionRequest` может
+содержать typed workspace lease; request path и remote contents сверяются с
+его открытым состоянием. Executor перепроверяет lease до backend creation,
+а success и worker-failed fake flows завершаются caller-side context cleanup;
+закрытый lease не достигает backend/Worker. Старый local pinned и unleased
+synthetic compatibility path не изменены. `test_executor.py`: 46 tests OK;
+`test_pinned_snapshot.py`: 33 tests OK; full suite: 809 tests OK, 2 opt-in
+tests skipped; `git diff --check` passed. No network, credentials, external
+writes or commit.
+
+## EXP-412 — implement one anonymous bounded GET transport for selected public pin
+Статус: ACCEPTED
+Цель: добавить конкретный production-shaped, но fake-tested anonymous HTTPS
+transport для уже определённых bounded GitHub REST GET контрактов.
+Зависит от: EXP-405 ACCEPTED.
+Среда исполнения: local fake connection factory only; this card does not make
+live network calls.
+Разрешённые пути:
+- `src/app_contracts/github_http_transport.py` (new)
+- `tests/test_github_http_transport.py` (new)
+Критерии приёмки:
+- принимает только GET на `https://api.github.com/repos/{owner}/{repo}/git/{commits|trees}/{full-sha}` с допустимым `recursive=1` только для tree;
+- требует redirect opt-out, точные expected request headers и bounded positive
+  response limit; запрещает userinfo, alternate host/port, arbitrary path,
+  method, retries, token/auth headers и не следует redirect;
+- TLS использует системный default verified SSL context; timeout задаётся
+  bounded config; body читается не более limit+1, connection всегда закрывается;
+- никакие status body, credential, URL/query input или exception text не
+  попадают в ошибки/diagnostics; unit tests используют исключительно fake
+  connection factory, никакой network syscall.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_http_transport.py' -q`
+- `git diff --check`
+Вне scope: live public GitHub GET, selected commit selection, model, executor,
+CLI, provider publication, credentials, testdev, Docker, commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added
+`GitHubAnonymousSnapshotTransport`: fixed HTTPS origin and commit/tree path
+grammar, GET only, exact non-auth headers, redirect opt-out, default verified
+TLS context, bounded timeout/body read and guaranteed connection close. A 3xx
+response is returned as data and never followed; caller rejects non-200. All
+transport tests use fake connections; no network calls. Targeted suite: 5 tests
+OK; full suite: 814 tests OK, 2 opt-in tests skipped; `git diff --check` passed.
+No credentials, selected-repository reads, provider writes or commit.
+
+## EXP-413 — pin public target and inventory tree metadata only
+Статус: ACCEPTED
+Цель: получить один актуальный commit/tree pin для выбранной пользователем
+публичной цели и определить candidate source allowlist только по metadata; не
+читать blob contents.
+Зависит от: EXP-405, EXP-412 ACCEPTED.
+Точная цель: `SoldatovAlexander/brainbooster_full_v11`, branch `master`.
+Разрешённые unauthenticated GET:
+- `https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/commits/master`
+- `https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/git/trees/{returned_tree_sha}?recursive=1`
+Разрешённые действия: прочитать commit SHA, tree SHA и tree metadata
+`path/type/mode/size`; классифицировать потенциально sensitive filenames и
+выбрать только source/test paths для последующей отдельной карточки.
+Запрещено: blob/content GET, download/clone, code execution, credentials,
+GitHub App, writes, branch/PR/push/deploy, remotes Agent00X, testdev, Docker.
+Разрешённый путь: `.opencode/tasks/WORK_QUEUE.md` (evidence only).
+Критерии приёмки:
+- подтвердить commit SHA и соответствующий tree SHA, привязать tree inventory к
+  тому же commit;
+- зафиксировать общий inventory count и только необходимые candidate source
+  paths; исключить `.env*`, secrets, credentials, keys, dumps, user data и
+  неизвестные бинарные/генерируемые файлы, не запрашивая их contents;
+- отметить, что repository state — public GitHub API claim без signature,
+  authorship или independent server attestation;
+- никакие repository code bytes не скачаны и не исполнены.
+Проверки:
+```bash
+curl --fail --silent --show-error --max-time 20 --proto '=https' --tlsv1.2 \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  'https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/commits/master' \
+  | python3 -c 'import json,sys; p=json.load(sys.stdin); print("commit_sha="+p["sha"]); print("tree_sha="+p["commit"]["tree"]["sha"])'
+curl --fail --silent --show-error --max-time 20 --proto '=https' --tlsv1.2 \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  'https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/git/trees/REPLACE_WITH_TREE_SHA?recursive=1' \
+  | python3 -c 'import json,sys; p=json.load(sys.stdin); es=p.get("tree",[]); print("tree_sha="+str(p.get("sha"))); print("truncated="+str(p.get("truncated")).lower()); print("entry_count="+str(len(es))); [print(("excluded=" if any(x in e.get("path","").lower() for x in (".env", "secret", "credential", "private_key", "token", "dump", "backup", "upload", "user-data", ".pem", ".key", ".sqlite", ".db")) else "entry=")+e.get("path","")+" type="+str(e.get("type"))+" mode="+str(e.get("mode"))+" size="+str(e.get("size"))) for e in es]'
+```
+Заменить placeholder только на `tree_sha` из первой команды. Не добавлять `-L`;
+оба запроса — unauthenticated GET и возвращают только metadata.
+После сохранения evidence: `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Anonymous GET resolved
+`master` to commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
+`2007066217aadafd9887fb3e3069220333b4fddb`; recursive tree response returned
+the same tree SHA, `truncated=false`, 28 entries. Tree metadata showed no path
+matching `.env`, secret/credential/token/key/dump/backup/upload/user-data or
+database filename exclusions. Candidate later content allowlist only:
+`backend/*.py`, `frontend/*.html`, `static/script.js`, `static/style.css`, and
+`run.py`; `push_to_github.sh`, `FILE_TREE.txt`, CI/Docker files, `README.md`,
+`requirements.txt`, and `static/logo.png` remain excluded. No blob/content GET,
+clone, repository code execution, credentials, or writes. This is an
+unauthenticated API claim, not signature/authorship/server attestation.
+
+## EXP-414 — bind an explicit selected-path snapshot allowlist
+Статус: ACCEPTED
+Цель: позволить запросить строго заданный subset blob contents после tree
+metadata inspection и явно сохранить partial/full scope в immutable claim.
+Зависит от: EXP-405, EXP-410—413 ACCEPTED.
+Среда исполнения: local synthetic fake transport only; no live API, credentials,
+model, Docker or target code.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `src/app_contracts/executor.py`
+- `src/app_contracts/remote_snapshot_workspace.py`
+- `tests/test_github_snapshot.py`
+- `tests/test_executor.py`
+- `tests/test_remote_snapshot_workspace.py`
+Критерии приёмки:
+- `GitHubSnapshotRequest.include_paths` is optional; `None` preserves current
+  full-snapshot behavior, while a non-empty sorted unique safe path tuple fetches
+  only exact matching tree blobs; missing paths, directories, malformed sets and
+  selected per-file/aggregate limit violations fail closed;
+- selected claims expose explicit `selected_paths` and remain visibly partial;
+  full claims carry no selection. `GitHubSnapshotContents` and local materializer
+  reject inconsistent selection-vs-file bindings;
+- remote canonical claim digest binds full/partial state and exact selected paths
+  before Worker; no unselected blob endpoint is called;
+- synthetic fixtures include an excluded `.env` tree entry and prove its blob is
+  never requested and its content never appears in diagnostics/evidence;
+- old metadata API and default full fake snapshot tests remain compatible.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_workspace.py' -q`
+- `git diff --check`
+Вне scope: live target GET/blob reads, CLI, live Worker/model, verifier redesign,
+provider publication, credentials, branch/PR/file writes, testdev, Docker,
+commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Selected path requests fetch
+only exact matching tree blobs; a synthetic `.env` canary blob is never
+requested, missing/invalid selections fail closed, and full-vs-partial selection
+is bound into the snapshot claim and executor digest. Materialization preserves
+the partial scope, and a deliberately mutated frozen request is revalidated
+before any transport call. Targeted checks: snapshot 35 tests, executor 46,
+workspace 7; full suite: 818 tests OK, 2 opt-in tests skipped; `git diff
+--check` passed. No live blob GET, target code execution, credentials, Docker,
+provider write or commit. Batch AO: 5/5 accepted.
+
+### Batch AP — safe public source intake и remote MVP composition (5 задач)
+
+Цель batch: подготовить безопасное чтение выбранных public source blobs и
+связать remote snapshot с локальным MVP path. На старте все проверки synthetic;
+live source read потребует отдельной карточки с точной целью/commit/paths и
+остаётся read-only. Ни одна карточка не разрешает credentials, model calls,
+provider write, branch/PR, push, deployment, testdev, Docker или commit.
+
+#### Карточки Batch AP (5 задач; 4 ACCEPTED, 1 DRAFT)
+
+## EXP-415 — detect common credential-shaped material in snapshot bytes
+Статус: ACCEPTED
+Цель: добавить fail-closed preflight для ограниченных bytes snapshot, который
+распознаёт распространённые credential-shaped patterns, не выводя значения.
+Гипотеза: известные token/key/private-key форматы в bounded source files можно
+остановить до передачи содержимого Worker-у.
+Зависит от: EXP-414 ACCEPTED.
+Среда исполнения: local synthetic byte fixtures only; no target repository,
+network, credentials, model, Docker or repository code.
+Разрешённые пути:
+- `src/app_contracts/secret_scan.py`
+- `tests/test_secret_scan.py`
+Критерии приёмки:
+- preflight принимает только ограниченные exact bytes records; обнаруживает
+  synthetic GitHub token, AWS access-key-shaped string, PEM private-key header
+  и типовое assignment с `token`/`secret`/`api_key`/`password`;
+- findings содержат только стабильный rule ID/путь (без bytes, matches,
+  excerpts, repr исходной записи или secret values); ошибка fail-closed имеет
+  фиксированный текст без входного содержимого;
+- чистые fixtures проходят; oversized, malformed и credential-shaped fixtures
+  блокируются без утечки значений в repr/diagnostics;
+- документация и тесты явно называют детектор heuristic, не доказательством
+  отсутствия неизвестных форматов; существующий canary scanner совместим.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_secret_scan.py' -q`
+- `git diff --check`
+Вне scope: интеграция в network reader, live blob GET, repository code execution,
+Worker/model, credentials, publication, testdev, Docker, commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added bounded synthetic-only
+credential-shaped-content preflight for common GitHub token, AWS access-key,
+PEM private-key and credential-assignment patterns. It reports only path and
+rule ID; fail-closed diagnostics contain no source bytes or matched values.
+Input shape/path/size/order and UTF-8 are bounded and validated. Targeted
+`test_secret_scan.py`: 18 tests OK; full suite: 820 tests OK, 2 opt-in tests
+skipped; `git diff --check` passed. The detector is explicitly heuristic and
+does not establish absence of unknown secrets. No live source read, credentials,
+network, model, target-code execution, Docker, provider write or commit.
+
+## EXP-416 — gate selected snapshot content before Worker handoff
+Статус: ACCEPTED
+Цель: не допустить попадания credential-shaped selected snapshot bytes в
+materialized workspace или Worker input; проверять это также при повторной
+проверке typed snapshot на executor boundary.
+Зависит от: EXP-415 ACCEPTED.
+Среда исполнения: local synthetic records + fake Worker/backend only; no live
+API, target repository, model, credentials, Docker or repository code.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `src/app_contracts/executor.py`
+- `src/app_contracts/remote_snapshot_workspace.py`
+- `tests/test_github_snapshot.py`
+- `tests/test_executor.py`
+- `tests/test_pinned_snapshot.py` (exact bounded data-model import allowlist only)
+- `tests/test_remote_snapshot_workspace.py`
+Критерии приёмки:
+- `GitHubSnapshotContents` runs the bounded EXP-415 heuristic after record
+  shape validation and rejects matching content with stable redacted error;
+- executor defensively reconstructs/revalidates remote claim and blob records
+  before creating/calling backend, including when a frozen record was tampered;
+- materializer reconstruction uses the same guard and creates no temp root for
+  suspect bytes; diagnostics/repr contain neither matches nor file contents;
+- positive/negative synthetic tests prove clean content continues to Worker,
+  suspicious content never reaches backend/Worker, and existing digest semantics
+  bind the exact accepted bytes;
+- heuristic limitations remain explicit; unknown patterns are not claimed safe.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_workspace.py' -q`
+- `git diff --check`
+Вне scope: live blob GET, model, provider write, credentials, branch/PR,
+testdev, Docker, commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. `GitHubSnapshotContents`
+re-validates bounded records and blocks heuristic matches before returning a
+snapshot; executor reconstructs remote claims/blobs before backend creation, and
+materializer repeats defensive reconstruction before creating its temp root.
+Synthetic canaries confirm no match reaches the Worker/backend and no temp root
+is created; diagnostics are redacted. Targeted checks: GitHub snapshot 36,
+executor 47, materializer 8, pinned-snapshot dependency boundary 33; full suite:
+823 tests OK, 2 opt-in tests skipped; `git diff --check` passed. The scanner is
+heuristic only; no live source read, credentials, model, target-code execution,
+Docker, provider write or commit.
+
+## EXP-417 — read pinned public source allowlist with redacted evidence
+Статус: ACCEPTED
+Цель: получить только предварительно выбранные source blobs из уже pinned commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` репозитория
+`SoldatovAlexander/brainbooster_full_v11`; показать только path/size/digest и
+preflight outcome, никогда source bytes/excerpts.
+Зависит от: EXP-416 ACCEPTED.
+Среда исполнения: exact anonymous read-only HTTPS GETs through
+`GitHubAnonymousSnapshotTransport`; no auth, code execution, model, Docker or
+target mutation.
+Commit/tree pin:
+- commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`
+- tree `2007066217aadafd9887fb3e3069220333b4fddb`
+Точная allowlist:
+- `backend/__init__.py`
+- `backend/database.py`
+- `backend/logic.py`
+- `backend/main.py`
+- `backend/routes.py`
+- `frontend/game.html`
+- `frontend/index.html`
+- `frontend/level.html`
+- `frontend/result.html`
+- `run.py`
+- `static/script.js`
+- `static/style.css`
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (sanitized evidence only).
+Разрешённая команда (из корня проекта; печатает только metadata/digests,
+никогда bytes/excerpts):
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0,"src"); from app_contracts.github_snapshot import GitHubSnapshotRequest,read_github_snapshot_contents; from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport; paths=("backend/__init__.py","backend/database.py","backend/logic.py","backend/main.py","backend/routes.py","frontend/game.html","frontend/index.html","frontend/level.html","frontend/result.html","run.py","static/script.js","static/style.css"); request=GitHubSnapshotRequest(owner="SoldatovAlexander",repository="brainbooster_full_v11",commit_oid="2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e",include_paths=paths); snapshot=read_github_snapshot_contents(request,GitHubAnonymousSnapshotTransport()); print("commit_sha="+snapshot.claim.commit_oid); print("tree_sha="+snapshot.claim.tree_oid); print("content_digest="+snapshot.claim.content_digest); print("selected_count="+str(len(snapshot.files))); [print(blob.path+" size="+str(blob.size)+" digest="+blob.content_digest) for blob in snapshot.files]'
+```
+Критерии приёмки:
+- resolved commit/tree точно совпадают с pin и все 12 selected blobs успешно
+  проходят bounded local credential-pattern preflight;
+- output содержит только commit/tree/content digest и allowlisted path/size/digest;
+- ни один `.env`/secret/config/binary/CI/Docker/push-to-GitHub/readme blob не
+  запрашивается; ни raw source bytes, match, excerpts, token/key/password value
+  не попадают в output, evidence или файл;
+- no code execution, credentials, model/provider calls, writes, PR, push or deploy;
+- evidence отдельно отмечает, что public API claim и heuristic scan не доказывают
+  authorship и отсутствие неизвестных secret formats.
+Проверки:
+- direct-egress diagnostic only (must not print response body):
+```bash
+curl -q --noproxy '*' --silent --show-error --max-time 15 --proto '=https' --tlsv1.2 --output /dev/null --write-out 'http_status=%{http_code}\n' 'https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/git/commits/2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e'
+```
+- Python TLS diagnostic only reads HTTP status, never response body; on failure
+  it emits the exception type only:
+```bash
+python3 - <<'PY'
+import http.client
+import ssl
+
+connection = http.client.HTTPSConnection(
+    "api.github.com", timeout=10, context=ssl.create_default_context()
+)
+try:
+    connection.request(
+        "GET",
+        "/repos/SoldatovAlexander/brainbooster_full_v11/git/commits/2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2026-03-10",
+            "User-Agent": "Agent00X-ReadOnly-Snapshot/1",
+        },
+    )
+    print("http_status=" + str(connection.getresponse().status))
+except Exception as error:
+    print("python_error_type=" + type(error).__name__)
+finally:
+    connection.close()
+PY
+```
+- выполнить дословно указанную read-only команду;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: prior attempts isolated and repaired a local Python CA
+trust mismatch, commit API route mismatch and line-wrapped base64 decoder gap.
+Follow-up EXP-426 succeeded: exact commit/tree matched and all 12 selected blobs
+passed bounded credential-pattern preflight. Only path/size/digest metadata was
+output; no source values, excluded blobs, credentials, code execution or writes.
+
+## EXP-418 — compose remote snapshot with existing local worker CLI
+Статус: ACCEPTED
+Цель: добавить отдельную callable CLI-layer composition для exact remote
+snapshot lease: сформировать bound `ExecutionRequest`, вызвать существующий
+executor с injected backend и закрыть caller-owned lease при всех исходах.
+Зависит от: EXP-416 ACCEPTED.
+Среда исполнения: local synthetic `GitHubSnapshotContents`, fake Worker,
+Verifier and backend only; no external access or target code execution.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `schemas/action-receipt.schema.json`
+- `schemas/actuator-request.schema.json`
+- `schemas/publish-pull-request-intent.schema.json`
+- `fixtures/valid/mvp-chain.json`
+- `fixtures/invalid/intent-arbitrary-operation.json`
+- `fixtures/invalid/intent-with-token.json`
+- `schemas/publish-pull-request-intent.schema.json`
+- `schemas/actuator-request.schema.json`
+- `schemas/action-receipt.schema.json`
+- `fixtures/valid/mvp-chain.json`
+- `fixtures/invalid/intent-arbitrary-operation.json`
+- `fixtures/invalid/intent-with-token.json`
+- `tests/test_worker_cli.py`
+- `tests/test_contracts.py`
+- `tests/test_local_publication_chain.py`
+- `tests/test_threat_corpus.py`
+Критерии приёмки:
+- новая функция принимает exact typed remote snapshot и явный task/process,
+  change-path, test-command и injected collaborator configuration; owner/repo,
+  base commit, content digest and workspace path берутся только из snapshot/lease;
+- Worker input/result retains API claim origin/digest; raw snapshot content не
+  попадает в CLI output/repr;
+- lease закрывается на success, worker failure, verifier failure и exception;
+- invalid args/selection fail before backend or Worker call; старый fixture demo
+  и default invocation остаются behavior-compatible;
+- tests prove call bindings, caller-owned cleanup and metadata-only output.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_worker_cli.py' -q`
+- `git diff --check`
+Вне scope: actual command-line remote parser, live API, model/provider call,
+credentials, target code execution, Docker, publication, commit/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added
+`run_remote_snapshot_execution()` as a local composition API. It binds
+repository/base commit/path only from the exact validated snapshot and owned
+lease, requires declared change paths to be sorted/unique and present in the
+snapshot, forwards only metadata-bound records to the executor, and closes the
+temporary lease after verified/failed/exception outcomes. Synthetic CLI tests:
+11 OK; full suite: 826 tests OK, 2 opt-in tests skipped; `git diff --check`
+passed. The existing command-line entry remains fixture-only; no network,
+live Worker/model, credentials, target-code execution, Docker, provider write,
+publication or commit. Batch AP: 3/5 accepted, 1 blocked, 1 draft.
+
+## EXP-419 — reproducible local end-to-end evidence for remote-input path
+Статус: DRAFT
+Цель: одна команда воспроизводимо связывает pin, selected contents, Worker,
+independent local verifier и approval digest только на фикстурах; результаты
+разделяют claims, assumptions и unverified production boundaries.
+Зависит от: EXP-417, EXP-418 ACCEPTED.
+Среда исполнения: local synthetic inputs and fake provider boundary only.
+Разрешённые пути, проверки и критерии: определяются отдельной карточкой перед
+READY; no live model/GitHub write, deployment, Docker, credentials or commit.
+Commit: DENIED.
+
+### Batch AQ — platform TLS trust и снятие сетевого blocker (5 задач)
+
+Цель batch: безопасно разобраться, почему direct curl к публичному GitHub
+получает HTTP 200, а Python `ssl.create_default_context()` отклоняет TLS chain;
+подготовить verified transport и затем повторить selected public read. Никакого
+TLS-verification bypass, proxy, credential, repository write, model call,
+target-code execution, Docker, testdev или deployment.
+
+#### Карточки Batch AQ (5 задач; 5 ACCEPTED)
+
+## EXP-420 — inspect local TLS trust availability without reading secrets
+Статус: ACCEPTED
+Цель: определить, доступны ли текущему Python runtime системные CA roots или
+уже установленные `certifi`/`truststore` библиотеки, не выводя значения env,
+сертификаты, proxy config или любые credentials.
+Исходные evidence: EXP-417 direct curl GET returned HTTP 200 with body discarded;
+Python `http.client` fails with `SSLCertVerificationError` before receiving body.
+Среда исполнения: local read-only Python introspection only; no network/package
+install, no config mutation.
+Разрешённые пути: none.
+Разрешённая команда (выводит только booleans и численность trust roots):
+```bash
+python3 - <<'PY'
+import importlib.util
+import os
+import ssl
+
+paths = ssl.get_default_verify_paths()
+print("default_cafile_present=" + str(bool(paths.cafile and os.path.isfile(paths.cafile))))
+print("default_capath_present=" + str(bool(paths.capath and os.path.isdir(paths.capath))))
+print("default_ca_count=" + str(len(ssl.create_default_context().get_ca_certs())))
+print("certifi_installed=" + str(importlib.util.find_spec("certifi") is not None))
+print("truststore_installed=" + str(importlib.util.find_spec("truststore") is not None))
+PY
+```
+Критерии приёмки: фиксированы только availability facts; stdout не содержит
+paths, subjects, proxy/env values or credentials; нет filesystem/network writes.
+Проверки:
+- выполнить дословно указанную команду;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Output: default cafile absent,
+capath absent, default CA count `0`; `certifi` installed and `truststore` absent.
+Only the permitted booleans/count were printed; no certificate, path, env value,
+proxy config or credential was read or emitted; no network/package install/file
+change performed.
+
+## EXP-421 — add verified platform-root context for anonymous GET transport
+Статус: ACCEPTED
+Цель: сохранить system-default verified SSL context и дополнить его публичным
+Mozilla CA bundle из уже установленного `certifi`, не отключая certificate или
+hostname verification; объявить runtime dependency.
+Зависит от: EXP-420 ACCEPTED.
+Среда исполнения: local unit tests with fake connections; no network/live GET,
+repository code execution, credential or installation.
+Разрешённые пути:
+- `src/app_contracts/github_http_transport.py`
+- `tests/test_github_http_transport.py`
+- `pyproject.toml`
+Критерии приёмки:
+- context starts from `ssl.create_default_context()` and loads the installed
+  `certifi.where()` bundle via `load_verify_locations`; hostname checking stays
+  enabled and `verify_mode` remains `CERT_REQUIRED`;
+- missing/broken CA bundle fails closed with stable sanitized transport error;
+- no `CERT_NONE`, unverified context, proxy, environment auth or custom host;
+- fake tests assert exact verified-context configuration without network;
+- `certifi` is declared as a project dependency; do not install/update packages.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_http_transport.py' -q`
+- parse `pyproject.toml` with `tomllib` and verify dependency declaration;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. The transport now starts with
+Python's verified default SSL context, loads the existing certifi CA bundle and
+asserts hostname verification + `CERT_REQUIRED` + non-empty trust store. Broken
+CA configuration fails closed before connection creation; no TLS bypass or
+proxy support. `certifi` is declared in `pyproject.toml`, package was not
+installed/updated. Targeted transport suite: 6 tests OK; TOML dependency check
+passed; full suite: 827 tests OK, 2 opt-in tests skipped; `git diff --check`
+passed. No live GET or code execution.
+
+## EXP-422 — fake-test TLS trust success and fail-closed behavior
+Статус: ACCEPTED
+Цель: исправить рассогласование GitHub commit API route и response parser,
+которое остановило EXP-423 после получения commit metadata response.
+Зависит от: EXP-421 ACCEPTED.
+Среда исполнения: local fake transport only; no live requests/source content.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `src/app_contracts/github_http_transport.py`
+- `tests/test_github_snapshot.py`
+- `tests/test_github_http_transport.py`
+Критерии приёмки:
+- pinned commit reader использует repository endpoint
+  `/repos/{owner}/{repo}/commits/{full_sha}` compatible with `parse_github_commit`;
+- transport accepts only exact fixed commit path grammar plus existing fixed
+  recursive git-tree grammar, GET, HTTPS, exact host and no redirects;
+- fake fixtures prove valid repository-commit response binds requested OID/tree;
+  wrong route/shape/OID fail closed before any blob GET;
+- no auth, proxy, network, content output, provider write, target execution,
+  deployment or package install.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_http_transport.py' -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. The snapshot reader now calls
+`/repos/{owner}/{repo}/commits/{sha}`, matching the parser's response shape;
+transport allowlist admits that exact commit route plus only the existing
+recursive tree route and rejects `/git/commits`. Fake reader/transport suites:
+36 and 6 tests OK; full suite: 827 tests OK, 2 opt-in tests skipped;
+`git diff --check` passed. No live source contents fetched or code executed.
+
+## EXP-423 — retry exact pinned anonymous selected-source GET
+Статус: ACCEPTED
+Цель: повторить EXP-417 exact allowlist fetch после локальной TLS правки, с
+metadata-only output and content preflight.
+Зависит от: EXP-421 ACCEPTED; exact target/paths remain those of EXP-417.
+Среда исполнения: anonymous public read-only HTTPS GET only through
+`GitHubAnonymousSnapshotTransport`; no auth, code execution, model or Docker.
+Разрешённая цель: `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, expected tree
+`2007066217aadafd9887fb3e3069220333b4fddb`.
+Разрешённые blobs: exact 12-path allowlist in EXP-417; no other blobs.
+Разрешённая команда (metadata/digests only; preflight blocks matched content):
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0,"src"); from app_contracts.github_snapshot import GitHubSnapshotRequest,read_github_snapshot_contents; from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport; paths=("backend/__init__.py","backend/database.py","backend/logic.py","backend/main.py","backend/routes.py","frontend/game.html","frontend/index.html","frontend/level.html","frontend/result.html","run.py","static/script.js","static/style.css"); request=GitHubSnapshotRequest(owner="SoldatovAlexander",repository="brainbooster_full_v11",commit_oid="2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e",include_paths=paths); snapshot=read_github_snapshot_contents(request,GitHubAnonymousSnapshotTransport()); print("commit_sha="+snapshot.claim.commit_oid); print("tree_sha="+snapshot.claim.tree_oid); print("content_digest="+snapshot.claim.content_digest); print("selected_count="+str(len(snapshot.files))); [print(blob.path+" size="+str(blob.size)+" digest="+blob.content_digest) for blob in snapshot.files]'
+```
+Критерии приёмки:
+- commit/tree exactly match pin and all 12 blobs returned through content
+  preflight; output contains metadata and digest only;
+- no `.env`, config, secret, binary, CI, Docker, push-to-GitHub or README blobs;
+- no source content, values, excerpts or code execution; if preflight rejects,
+  record only stable sanitized error and stop.
+Проверки:
+- execute exact command above;
+- `git diff --check`.
+Вне scope: credentials, model calls, target-code execution, writes, PR/push/deploy,
+testdev, Docker or package install.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED via EXP-426 on 2026-10-06. The exact same
+commit/tree/12-path allowlist completed after EXP-425 added verified LF/CRLF
+base64 decoding. The full chain returned commit/tree match, aggregate digest and
+12 per-file path/size/digest records; no content, match, excerpt or secret-like
+value was emitted. No target code execution, credentials or writes.
+
+## EXP-424 — allow bounded Git blob reads for selected pinned paths
+Статус: ACCEPTED
+Цель: дополнить фиксированный anonymous transport единственным необходимым
+endpoint `GET /repos/{owner}/{repo}/git/blobs/{full_sha}` для содержания только
+blob SHA, выбранных exact-path snapshot reader-ом.
+Зависит от: EXP-421, EXP-422 ACCEPTED; EXP-423 establishes this route mismatch.
+Среда исполнения: local fake transport only; no live GET, target contents,
+credentials, model, Docker or code execution.
+Разрешённые пути:
+- `src/app_contracts/github_http_transport.py`
+- `tests/test_github_http_transport.py`
+Критерии приёмки:
+- accept only exact HTTPS host and grammar for pinned commit, recursive tree,
+  and Git blob SHA routes; method GET, exact headers, redirect disabled;
+- reject arbitrary paths, unsafe host, query/fragment, auth headers, POST or
+  malformed OID before connection factory call;
+- fake responses cover bounded `limit + 1` reads, cleanup and no redirects;
+- no new content output/logging and no TLS verification downgrade.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_http_transport.py' -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Anonymous transport now allows
+only the repository commit route, recursive Git tree route, and exact Git blob
+SHA route; blob requests retain HTTPS host/method/header/timeout/body limits,
+TLS verification and redirect opt-out. Fake transport suite: 7 tests OK; full
+suite: 828 tests OK, 2 opt-in tests skipped; `git diff --check` passed. No live
+blob response or content was accessed.
+
+### Batch AR — bounded Git blob decode и safe source intake (5 задач)
+
+Цель batch: обработать реальный GitHub blob response format без ослабления
+content digest/OID checks, затем повторить только pinned allowlist read и
+подготовить task-specific product slice. Любой source value остаётся hidden;
+никаких credentials, code execution, model calls или writes.
+
+#### Карточки Batch AR (5 задач; 5 ACCEPTED)
+
+## EXP-425 — accept line-wrapped base64 from Git blob responses
+Статус: ACCEPTED
+Цель: поддержать GitHub blob JSON `content` с LF/CRLF line wrapping, сохранив
+strict base64 validation, content size limits и Git blob SHA verification.
+Зависит от: EXP-414, EXP-415, EXP-416 ACCEPTED; EXP-423 confirmed real response
+shape rejection but emitted no source content.
+Среда исполнения: local synthetic JSON fixtures only; no network/source fetch.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `tests/test_github_snapshot.py`
+Критерии приёмки:
+- compact, LF-wrapped and CRLF-wrapped base64 decode to identical bytes and
+  pass size/SHA/content-digest checks;
+- non-ASCII, spaces/tabs, malformed padding, invalid characters, over-limit
+  wire/content and wrong SHA remain fail-closed;
+- errors, repr and test output never contain source bytes/excerpts;
+- canonical snapshot digest remains based on decoded raw bytes, independent of
+  JSON line wrapping.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q`
+- `git diff --check`
+Вне scope: live blob GET, model, credentials, target-code execution, Docker,
+provider writes, branch/PR/push/deploy.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Blob decoder now accepts LF/CRLF
+line wrapping (including one trailing newline), strips only line breaks, then
+retains strict base64 validation, declared/aggregate bounds, Git SHA, and raw-byte
+digest checks. Spaces, tabs and malformed encoding remain rejected. Targeted
+`test_github_snapshot.py`: 37 tests OK; full suite: 829 tests OK, 2 opt-in tests
+skipped; `git diff --check` passed. Synthetic fixtures only; no live source data.
+
+## EXP-426 — retry the exact pinned public source allowlist
+Статус: ACCEPTED
+Цель: повторить EXP-417/423 после EXP-425; показать только commit/tree/count,
+path, size and digest after content preflight.
+Зависит от: EXP-425 ACCEPTED.
+Точная цель/commit/path allowlist: EXP-417/423; anonymous GET only.
+Среда исполнения: anonymous HTTPS GET through verified
+`GitHubAnonymousSnapshotTransport`; no auth, model, code execution or writes.
+Разрешённые paths: only the same exact 12 blobs listed in EXP-417/423.
+Разрешённая команда (metadata/digests only; preflight blocks matches):
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0,"src"); from app_contracts.github_snapshot import GitHubSnapshotRequest,read_github_snapshot_contents; from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport; paths=("backend/__init__.py","backend/database.py","backend/logic.py","backend/main.py","backend/routes.py","frontend/game.html","frontend/index.html","frontend/level.html","frontend/result.html","run.py","static/script.js","static/style.css"); request=GitHubSnapshotRequest(owner="SoldatovAlexander",repository="brainbooster_full_v11",commit_oid="2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e",include_paths=paths); snapshot=read_github_snapshot_contents(request,GitHubAnonymousSnapshotTransport()); print("commit_sha="+snapshot.claim.commit_oid); print("tree_sha="+snapshot.claim.tree_oid); print("content_digest="+snapshot.claim.content_digest); print("selected_count="+str(len(snapshot.files))); [print(blob.path+" size="+str(blob.size)+" digest="+blob.content_digest) for blob in snapshot.files]'
+```
+Критерии приёмки: response commit/tree match the exact pin; all 12 selected
+blobs pass bounded credential-pattern preflight; output contains no content,
+matches, excerpts or secret values; no excluded or unselected blob request.
+Проверки:
+- execute exact command above;
+- `git diff --check`
+Вне scope: credentials, model/provider, code execution, Docker, writes, branch,
+PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Exact anonymous command returned
+commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, aggregate content digest
+`sha256:b43955fcc3b54d819805a52179ef4561d188971ac3fa8496a5a71c31cb573499`,
+and 12/12 selected files with size/content-digest metadata. All passed the
+bounded credential-shaped-content heuristic; output contained no source bytes
+or excerpts. No excluded/unselected blob requests, code execution, credentials,
+model, Docker, provider write or commit.
+
+## EXP-427 — select one bounded product change from inspected source
+Статус: ACCEPTED
+Цель: построить structural backend inventory (classes/functions/imports only)
+из повторно fetched pinned source, чтобы выбрать полезный repository-change
+candidate без вывода literals/comments/source excerpts.
+Зависит от: EXP-426 ACCEPTED.
+Среда исполнения: exact anonymous read-only pinned fetch; local `ast.parse`, no
+repository code execution, credentials, model, Docker or writes.
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (symbol metadata only).
+Разрешённые source paths: `backend/__init__.py`, `backend/database.py`,
+`backend/logic.py`, `backend/main.py`, `backend/routes.py` at exact EXP-426 pin.
+Разрешённая команда:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import ast
+import re
+import sys
+sys.path.insert(0, "src")
+from app_contracts.github_snapshot import GitHubSnapshotRequest, read_github_snapshot_contents
+from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
+
+paths = ("backend/__init__.py", "backend/database.py", "backend/logic.py", "backend/main.py", "backend/routes.py")
+request = GitHubSnapshotRequest(owner="SoldatovAlexander", repository="brainbooster_full_v11", commit_oid="2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e", include_paths=paths)
+snapshot = read_github_snapshot_contents(request, GitHubAnonymousSnapshotTransport())
+if snapshot.claim.commit_oid != request.commit_oid or snapshot.claim.tree_oid != "2007066217aadafd9887fb3e3069220333b4fddb":
+    raise SystemExit("snapshot pin mismatch")
+safe_name = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
+for blob in snapshot.files:
+    tree = ast.parse(blob.content.decode("utf-8"))
+    symbols = sorted(node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and safe_name.fullmatch(node.name))
+    modules = sorted({node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module and safe_name.fullmatch(node.module.split(".")[0])} | {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names if safe_name.fullmatch(alias.name.split(".")[0])})
+    print(blob.path + " lines=" + str(len(blob.content.splitlines())) + " symbols=" + ",".join(symbols) + " imports=" + ",".join(modules))
+PY
+```
+Критерии приёмки: commit/tree match the pin; only filtered identifiers, paths,
+and line counts emitted; no literals, comments, docstrings, source lines, code
+execution or file writes; credential-pattern preflight succeeds before parsing.
+Проверки: выполнить дословную команду; `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Pinned five-file backend fetch
+passed the heuristic scan and pin checks. Safe structural output identified
+SQLite persistence, random example generation, FastAPI app setup, and task/session
+routes using only filtered function/class/import names and line counts. No source
+literals/comments/lines, code execution, credentials or writes.
+
+## EXP-428 — derive redacted backend control-flow skeleton
+Статус: ACCEPTED
+Цель: inspect selected backend control flow with all source literals, comments,
+docstrings and numbers replaced/omitted, so Control Plane can define one useful
+task without exposing original source values or line excerpts.
+Зависит от: EXP-426, EXP-427 ACCEPTED.
+Среда исполнения: exact anonymous read-only fetch of three pinned backend Python
+files; local AST transform only, never execute repository code.
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (redacted AST skeleton only).
+Разрешённые source paths: `backend/logic.py`, `backend/routes.py`, `backend/main.py`
+at exact EXP-426 pin.
+Разрешённая команда:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import ast
+import sys
+sys.path.insert(0, "src")
+from app_contracts.github_snapshot import GitHubSnapshotRequest, read_github_snapshot_contents
+from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
+
+paths = ("backend/logic.py", "backend/main.py", "backend/routes.py")
+request = GitHubSnapshotRequest(owner="SoldatovAlexander", repository="brainbooster_full_v11", commit_oid="2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e", include_paths=paths)
+snapshot = read_github_snapshot_contents(request, GitHubAnonymousSnapshotTransport())
+if snapshot.claim.commit_oid != request.commit_oid or snapshot.claim.tree_oid != "2007066217aadafd9887fb3e3069220333b4fddb":
+    raise SystemExit("snapshot pin mismatch")
+class RedactLiterals(ast.NodeTransformer):
+    def visit_Constant(self, node):
+        value = node.value
+        if type(value) is str:
+            replacement = ast.Constant(value="<REDACTED>")
+        elif type(value) is bytes:
+            replacement = ast.Constant(value=b"<REDACTED>")
+        elif type(value) is bool:
+            replacement = ast.Constant(value=False)
+        elif value is None:
+            replacement = ast.Constant(value=None)
+        elif type(value) in {int, float, complex}:
+            replacement = ast.Constant(value=0)
+        else:
+            replacement = ast.Constant(value=None)
+        return ast.copy_location(replacement, node)
+for blob in snapshot.files:
+    tree = ast.parse(blob.content.decode("utf-8"))
+    redacted = RedactLiterals().visit(tree)
+    ast.fix_missing_locations(redacted)
+    print("--- " + blob.path + " (all literals redacted) ---")
+    print(ast.unparse(redacted))
+PY
+```
+Критерии приёмки: pin match; output is AST-derived with every source string,
+bytes and numeric literal replaced by a fixed type-preserving redaction marker,
+booleans generalized to false, and comments/docstrings omitted or redacted; no
+raw source lines; never execute code or write files; preflight before parsing.
+Проверки: выполнить дословную команду; `git diff --check`.
+Commit: DENIED.
+
+Результат Control Plane: ACCEPTED 2026-10-06. Exact anonymous fetch matched
+commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and expected tree. AST
+transformation ran only on the three selected files, emitted a redacted
+control-flow skeleton, and did not execute target code or write files. Source
+strings/bytes/numbers were generalized; output contained no original source
+lines or comments. `git diff --check` passed. First invocation failed locally
+before network access due to a manually mistyped OID; corrected invocation
+completed successfully.
+
+## EXP-429 — bind complete remote snapshot provenance into publication seed
+Статус: ACCEPTED
+Цель: дать только полностью выбранному GitHub REST snapshot путь к
+digest-only `PublicationSeed`, сохранив связь между repository/commit,
+snapshot-content digest, remote claim digest и прошедшим verifier result.
+Зависит от: EXP-426 и EXP-428 ACCEPTED.
+Среда исполнения: local synthetic snapshots only; no network, target-code
+execution, Docker, model/provider, credentials or writes.
+Разрешённые пути:
+- `src/app_contracts/publication_seed.py`
+- `tests/test_publication_seed.py`
+- `tests/test_executor.py` (update the prior remote-rejection expectation)
+Критерии приёмки:
+- `PublicationSeed` can represent `github_rest_api_claim` and an optional
+  canonical `snapshot_claim_digest`, without adding content, prompt, output,
+  approval or credential fields;
+- remote seed construction requires `request.remote_snapshot`, exact matching
+  `owner/repository`, commit OID, full-snapshot claim, claim content digest,
+  result origin, claim digest and a verified result bound to that snapshot;
+- selected/partial snapshot (`full_snapshot=false`), altered/missing claim
+  digest, mismatched commit/repository/tree/origin, failed verification or
+  unpinned local input fails closed before any collaborator/effect;
+- existing `local_git_commit` seed behavior remains compatible and carries no
+  remote claim digest; `unverified_local_test` remains ineligible for seed
+  construction;
+- malformed-input errors do not echo supplied identifiers/digests; tests cover
+  positive remote-full and local-pinned cases plus negative binding cases.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_publication_seed.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Вне scope: HTTP/provider writes, branch/PR/push/deployment, credentials, live
+model, executing target repository source, Docker and changing other modules.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. `PublicationSeed` now carries a
+digest-only GitHub snapshot claim identity. Seed construction accepts a verified
+full remote snapshot only when repository, commit, content digest, origin and
+claim digest all match; selected/partial snapshots fail closed. Local Git pin
+behavior remains unchanged. Synthetic full-snapshot execution through the
+executor and verifier produced a bound seed; tampered bindings and absent claim
+digests were rejected. Targeted suite: 32 tests OK; full suite: 833 tests OK,
+2 opt-in Docker tests skipped; `git diff --check` passed. This is synthetic
+local evidence, not an authenticated remote provenance chain or real verifier.
+
+### Batch AS — remote verification → approval bridge (5 tasks; 5 ACCEPTED)
+
+Назначение: довести полный synthetic remote pin через отдельный replay,
+subprocess verifier и digest-bound mock approval bridge. Не выполнять target
+repository code, Docker, live model/provider или external write; эти ограничения
+оставляют production gates открытыми.
+
+#### EXP-430 — replay a full remote snapshot before independent verification
+Статус: ACCEPTED
+Цель: дать remote `GitHubSnapshotContents` тот же fail-closed второй fresh
+sandbox replay, который уже требуется для локального Git pin, и включить
+полученный digest в bound `VerifierInput`.
+Зависит от: EXP-426, EXP-429 ACCEPTED.
+Среда исполнения: local synthetic one-file full snapshot and fake sandbox only;
+no network, target repository code, Docker, credentials, model/provider or writes.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `tests/test_executor.py`
+Критерии приёмки:
+- remote execution starts a second distinct sandbox session from the exact
+  materialized snapshot, checks the tree/content binding, applies only the
+  prepared in-scope contents and re-runs the exact allowlisted command;
+- replay failure blocks before verifier invocation; source/replay leases close
+  on success and all failures;
+- replay digest binds repository ID, commit OID, snapshot content digest,
+  remote claim digest, command, timeout, verified-content digest and successful
+  result; the verifier input carries it unchanged;
+- existing local Git pinned replay behavior stays compatible; unpinned local
+  execution still has no replay claim;
+- tests prove two non-aliased sessions, exact replay input, failure ordering,
+  cleanup and no raw output/content in returned result.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Вне scope: verifier command/container runtime, target-source execution,
+approval/publication, CLI, network, credentials and commit.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Remote snapshot execution now
+replays the exact content in a second non-aliased sandbox session before calling
+the verifier. The replay digest binds repository, commit, remote content and
+claim digests, allowlisted command, timeout, verified-content digest and result.
+Replay failure is fail-closed before verifier invocation; both sessions close
+and returned metadata excludes child stdout/stderr. Targeted `test_executor.py`:
+48 tests OK; `test_publication_seed.py`: 32 tests OK; full suite: 834 tests OK,
+2 opt-in Docker tests skipped; `git diff --check` passed. Only local synthetic
+snapshot/fake sandbox evidence; no target code, Docker, provider or external
+write.
+
+#### EXP-431 — exercise the remote replay through the subprocess verifier
+Статус: ACCEPTED
+Цель: одной локальной командой провести synthetic full remote snapshot через
+bounded fake Responses Worker, свежий executor replay, настоящий отдельный
+`verifier_container_entrypoint` subprocess, digest-only publication seed и
+seed-bound publication intent.
+Зависит от: EXP-429, EXP-430 ACCEPTED.
+Среда исполнения: only `fixtures/repository/project/calculator.py` copied to a
+synthetic remote claim; fake model channel; `LocalProcessSandboxBackend` and
+verified bounded subprocess verifier. No network, target-repository code,
+Docker, credentials, live model/provider or publication.
+Разрешённые пути:
+- `tests/test_remote_snapshot_pipeline.py`
+Критерии приёмки:
+- one test constructs a full synthetic GitHub snapshot, materializes a lease,
+  invokes `OpenAIProposalWorker` through fake Responses channel and runs the
+  exact fixed test command in the source sandbox, fresh replay session and
+  verifier subprocess;
+- actual child response is typed/bound by `SubprocessVerifier`, has a passing
+  verdict and non-empty replay digest, and preserves the remote claim binding;
+- `build_publication_seed()` and `derive_publication_intent()` carry the same
+  exact staged digest; the test output/reprs expose metadata only;
+- all temporary snapshot/workspaces are closed on success; failure cases remain
+  fail-closed in the already-covered executor/verifier suites;
+- evidence calls this a local process-boundary prototype, not Docker/kernel
+  isolation, authenticated GitHub provenance, live LLM or provider publication.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_pipeline.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. One exact unittest command passed
+the synthetic full snapshot through fake `OpenAIProposalWorker` channel, local
+fresh replay, and the actual verifier entrypoint in a bounded child process. The
+child independently replayed the fixed calculator test and returned a typed
+bound PASS; the resulting seed and intent retained the same staged digest and
+claim binding. The materialized snapshot lease was closed and its path removed.
+Targeted test: 1 OK; full suite: 835 tests OK, 2 opt-in Docker tests skipped;
+`git diff --check` passed. This is process separation on the current host, not
+Docker/kernel isolation or an authenticated GitHub/live model/publication proof.
+
+#### EXP-432 — bind the remote seed to local mock approval/publication
+Статус: ACCEPTED
+Цель: довести remote full-snapshot result, прошедший subprocess verifier,
+через digest-only seed/intent, точное synthetic approval, deterministic
+Policy/Gateway/Broker gates и только существующий `MockGitHubEndpoint`.
+Зависит от: EXP-429—431 ACCEPTED.
+Среда исполнения: synthetic fixture snapshot; fake Responses channel; настоящий
+local subprocess verifier; test-only staged object capture; fake in-memory
+broker/gateway; file-backed temporary SQLite journal; mock endpoint only.
+Без network, target repository code, Docker, credentials, live model/provider,
+реального staging store или external writes.
+Разрешённые пути:
+- `tests/test_remote_snapshot_pipeline.py`
+Критерии приёмки:
+- positive path uses the exact `staged_change_digest` from verified remote
+  execution for both intent and explicitly constructed test approval, passes
+  all existing gates and returns one matching mock receipt;
+- test-only loader returns the captured stage object; its digest is rechecked
+  by existing policy/publication boundary; no stage body enters logs/reprs;
+- altered approval digest fails before Gateway, Broker, journal or mock endpoint
+  side effect; errors reveal no raw values;
+- test labels the object capture as fixture glue, not durable production stage
+  retrieval, user UI/approval or target-repository publication.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_pipeline.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. The actual remote execution
+result's staged digest flowed unchanged through full-snapshot seed, derived
+intent, explicit test approval, deterministic policy, slow-allow Gateway,
+test-only Broker, temporary SQLite journal and one `MockGitHubEndpoint` receipt.
+An altered approval digest was denied before Gateway/Broker/journal/mock side
+effects; stable error output did not expose digest values. The staged object was
+captured only by a test wrapper around `prepare_change`; this is not durable
+production staging or a user preview. Targeted test: 2 OK; full suite: 836 tests
+OK, 2 opt-in Docker tests skipped; `git diff --check` passed. No network,
+credentials, target-repository code or provider write.
+
+#### EXP-433 — add a reproducible synthetic remote-run CLI demonstration
+Статус: ACCEPTED
+Цель: одна явная команда воспроизводимо проходит fixture-only full snapshot →
+fake Worker → текущий local replay → subprocess verifier → digest-only
+publication preview, не создавая approval и не выполняя публикацию.
+Зависит от: EXP-431, EXP-432 ACCEPTED.
+Среда исполнения: локальная synthetic fixture и child process verifier;
+никакого network, target repository source, credentials, live model/provider,
+Docker, real stage store или external write.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+Критерии приёмки:
+- отдельный `--remote-fixture-preview` режим не меняет имеющийся no-argument
+  local demo и rejects unknown/extra arguments до любых execution effects;
+- режим строит deterministic full snapshot только из тестового calculator
+  fixture, запускает fake Responses worker, remote replay и существующий
+  bounded subprocess verifier; никаких HTTP calls или пользовательских
+  параметров;
+- после `VERIFIED` строятся существующие `PublicationSeed` и
+  `PublicationIntent`; stdout ровно одна JSON line с bounded status,
+  evidence-origin marker, repository/commit identifiers и digest fields,
+  без content/prompt/output, credentials, approval, stage retrieval или receipt;
+- command and tests label result as local synthetic preview, explicitly not
+  target-repository execution, user approval, durable staging, secure sandbox,
+  independent production verifier or provider publication;
+- failures emit stable sanitized metadata only.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_worker_cli.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. The explicit command
+`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m app_contracts.worker_cli --remote-fixture-preview`
+emitted one sanitized JSON metadata record after the fixed synthetic full
+snapshot passed fake Responses Worker, fresh local replay and the existing
+bounded verifier child process; it produced a digest-only seed/intent preview
+and stated `publication=not_attempted`. No network, credentials, target
+repository code, durable stage, approval or provider write was used. Targeted
+suite: 12 tests OK; full suite: 837 tests OK, 2 opt-in Docker tests skipped;
+`git diff --check` passed. This is synthetic local evidence, not a GitHub-input
+CLI or production trust/isolation proof.
+
+#### EXP-434 — reconcile Batch AS and update the MVP exit matrix
+Статус: ACCEPTED
+Цель: compare reproducible evidence with each R2 Thin Vertical Slice criterion;
+write a compact evidence/remaining-proof matrix and an honest stage decision.
+Зависит от: EXP-430—433 ACCEPTED.
+Среда исполнения: local evidence and project docs only; no network, target
+repository, credentials, Docker, live model/provider or external write.
+Разрешённые пути:
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `README.md`
+Критерии приёмки:
+- matrix separates demonstrated synthetic/local evidence from the exact
+  missing production/user-facing proof for each R2 gate;
+- records the four upstream Batch AS cards and this reconciliation as 5/5
+  accepted, plus the current full-suite result without implying batch
+  completion is MVP completion;
+- lists the concrete exit condition for R2: end-to-end selected repository
+  change from fixed remote commit through real Worker, bounded isolated test,
+  trusted verification, durable digest-bound human approval and controlled PR
+  publication, with sanitized recoverable evidence;
+- stage remains OPEN while any required gate is unmet, and names no unsafe
+  shortcut or credential access as an acceptance path.
+Проверки:
+- `git diff --check`
+- manually cross-check the matrix against Batch AR/AS accepted evidence and
+  the R2 definition in docs/24-mvp-final-plan.md
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Cross-checked Batch AR/AS
+acceptance evidence, the synthetic remote pipeline/CLI and the R2 scope in
+docs/24 against the exit matrix in docs/27. The matrix distinguishes all six
+gates and names the missing selected-repository provenance, live Worker,
+enforced sandbox, trusted verifier, durable user-approved staging and real
+controlled PR/recovery evidence. It keeps R2 OPEN despite 5/5 Batch AS cards.
+Current suite baseline recorded as 837 passed, 2 opt-in Docker skips;
+`git diff --check` passed. No network, credentials, Docker run, target code or
+external write was involved.
+
+### Batch AT — selected repository full-snapshot readiness (5 tasks; 5 ACCEPTED)
+
+Назначение: безопасно перейти от синтетического preview к выбранному публичному
+репозиторию: подтвердить возможность полного snapshot на закреплённом commit,
+затем определить предметный change и минимальный проверяемый путь. Только
+анонимные read-only GET; target code не исполнять до отдельной sandbox card.
+
+#### EXP-435 — fetch metadata for the complete selected-repository snapshot
+Статус: ACCEPTED
+Цель: получить полный bounded snapshot по точному существующему commit и
+подтвердить tree/content bindings и возможность дальнейшего локального
+fixture/execution, выводя только path/size/digest metadata.
+Зависит от: EXP-426 ACCEPTED; Batch AS 5/5 ACCEPTED.
+Внешняя цель: публичный `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, ожидаемый tree
+`2007066217aadafd9887fb3e3069220333b4fddb`.
+Среда: только анонимные HTTPS GET через `GitHubAnonymousSnapshotTransport`;
+нет credentials, live model/provider, code execution, Docker или writes.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+Точная команда:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import sys
+sys.path.insert(0, "src")
+from app_contracts.github_snapshot import GitHubSnapshotRequest, read_github_snapshot_contents
+from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
+
+request = GitHubSnapshotRequest(owner="SoldatovAlexander", repository="brainbooster_full_v11", commit_oid="2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e")
+snapshot = read_github_snapshot_contents(request, GitHubAnonymousSnapshotTransport())
+if snapshot.claim.commit_oid != request.commit_oid or snapshot.claim.tree_oid != "2007066217aadafd9887fb3e3069220333b4fddb" or not snapshot.claim.full_snapshot:
+    raise SystemExit("full snapshot pin mismatch")
+print("commit=" + snapshot.claim.commit_oid)
+print("tree=" + snapshot.claim.tree_oid)
+print("files=" + str(len(snapshot.files)))
+print("content_digest=" + snapshot.claim.content_digest)
+for blob in snapshot.files:
+    print(blob.path + " size=" + str(blob.size) + " digest=" + blob.content_digest)
+PY
+```
+Если штатный reader остановится на объявленном blob-size limit, разрешённый
+metadata-only fallback (никаких blob GET/content) для определения границы:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json
+import sys
+sys.path.insert(0, "src")
+from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
+from app_contracts.github_snapshot import GitHubCommitClaim, parse_github_tree
+from app_contracts.pinned_snapshot import MAX_SNAPSHOT_FILE_BYTES
+
+tree_oid = "2007066217aadafd9887fb3e3069220333b4fddb"
+url = "https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/git/trees/" + tree_oid + "?recursive=1"
+response = GitHubAnonymousSnapshotTransport()("GET", url, {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10"}, 5_000_000, allow_redirects=False)
+if response.get("status") != 200:
+    raise SystemExit("tree metadata request failed")
+claim = GitHubCommitClaim("SoldatovAlexander", "brainbooster_full_v11", "2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e", tree_oid)
+tree = parse_github_tree(claim, json.loads(response["body"]))
+blobs = [entry for entry in tree.entries if entry.entry_type == "blob"]
+oversized = [entry for entry in blobs if entry.size is not None and entry.size > MAX_SNAPSHOT_FILE_BYTES]
+print("tree=" + tree.tree_oid)
+print("blob_count=" + str(len(blobs)))
+print("oversized_count=" + str(len(oversized)))
+for entry in oversized:
+    print(entry.path + " size=" + str(entry.size))
+PY
+```
+Критерии приёмки:
+- report either complete full-snapshot metadata (exact commit/tree,
+  `full_snapshot=true`, every bounded validation passes) or a precise
+  metadata-only size-limit reason; do not silently downgrade a full snapshot
+  to a selected subset;
+- output contains only pinned identifiers, paths, sizes and SHA-256 digests;
+  no contents, excerpts, AST, prompt or code execution;
+- any mismatch, truncation, oversize or credential-shaped content fails closed
+  with no source output;
+- no files other than this evidence card/queue are changed; no commit.
+Проверки:
+- execute the exact full snapshot read-only command above;
+- if it fails on a bound, execute only the exact metadata-only fallback above;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06 as a bounded negative finding.
+The exact full-content command failed closed at the pre-fetch per-blob size
+gate. The authorized metadata-only fallback verified the pinned tree
+`2007066217aadafd9887fb3e3069220333b4fddb`: 23 blobs, one oversized path
+`static/logo.png` at 220064 bytes, greater than the current 100000-byte limit.
+No blob content was downloaded by the fallback, no source/content was printed,
+and no target code ran. The selected repository cannot produce a full snapshot
+under the existing per-file bound; EXP-436 addresses only this measured limit,
+while retaining the existing aggregate cap.
+
+#### EXP-436 — support bounded binary blobs in full-snapshot preflight
+Статус: ACCEPTED
+Цель: support the one measured 220064-byte public PNG in the complete snapshot
+while preserving byte-pattern credential scanning and strict resource bounds.
+Зависит от: EXP-435 ACCEPTED.
+Среда: local synthetic unit tests only; no network, target code, model,
+credentials, Docker or writes.
+Разрешённые пути:
+- `src/app_contracts/pinned_snapshot.py`
+- `src/app_contracts/github_snapshot.py`
+- `src/app_contracts/secret_scan.py`
+- `tests/test_pinned_snapshot.py`
+- `tests/test_github_snapshot.py`
+- `tests/test_secret_scan.py`
+Критерии приёмки:
+- raise only `MAX_SNAPSHOT_FILE_BYTES` to 262144 bytes; retain the 1000000-byte
+  aggregate snapshot ceiling, 10000-entry cap and existing bounded HTTP response;
+- boundary tests accept content at 262144 bytes and reject 262145 bytes;
+- declared oversize fails before a blob GET; decoded oversize, aggregate overflow,
+  invalid Git SHA, malformed base64 and credential-shaped content still fail
+  closed without echoing content;
+- credential-pattern preflight scans bounded arbitrary blob bytes directly
+  without requiring UTF-8 decoding; verify a known credential-shaped byte
+  pattern inside a non-UTF-8 binary sample is still rejected with a redacted
+  finding, while a clean binary sample passes the heuristic;
+- no schema, approval, sandbox or secret-scanning policy is weakened; no network
+  or target source is used in tests.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_pinned_snapshot.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_github_snapshot.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Raised the per-blob bound from
+100000 to 262144 bytes, retaining the 1000000-byte aggregate and 10000-file
+limits. Credential heuristics now scan arbitrary bounded bytes instead of
+requiring UTF-8, so a binary asset is not silently excluded; the regression
+test proves a token-shaped byte sequence in a non-UTF-8 blob is detected and
+never echoed. Targeted suites: pinned snapshot 33 OK, GitHub snapshot 38 OK,
+secret scan 19 OK. Full suite: 839 tests OK, 2 opt-in Docker tests skipped;
+`git diff --check` passed. No network, source fetch, target code or credentials.
+
+#### EXP-437 — re-fetch the exact pinned full snapshot after bound adjustment
+Статус: ACCEPTED
+Цель: prove exact full-snapshot commit/tree/content binding with metadata-only
+output under the retained per-blob and aggregate bounds; no code execution.
+Зависит от: EXP-436 ACCEPTED.
+Среда: anonymous HTTPS GET through verified `GitHubAnonymousSnapshotTransport`;
+same fixed public repository and commit/tree as EXP-435; no auth, model,
+target-code execution, Docker or writes.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+Команда: exact full-snapshot read-only command in EXP-435; print only commit,
+tree, content digest, path, size and per-file digest. No fallback to selected
+paths; any bounds failure remains a failed full-snapshot result.
+Критерии приёмки:
+- complete snapshot has exact commit/tree, `full_snapshot=true`, expected
+  bounded blob count and aggregate content digest;
+- all blobs pass SHA/digest and byte-pattern preflight; output has metadata
+  only and no source contents or excerpts;
+- no target code runs and no files except the task evidence are changed.
+Проверки:
+- execute the exact EXP-435 full-snapshot command;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Exact anonymous full-snapshot
+read matched commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, returned 23/23 blobs with
+`full_snapshot=true`, and content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+All files passed bounded Git SHA, SHA-256 and credential-pattern byte scans;
+output contained only paths/sizes/digests. The code was not executed, and the
+snapshot was not persisted. This proves read-only intake feasibility for this
+exact historical pin, not a live GitHub CLI or independent provenance.
+
+#### EXP-438 — select a useful target change from redacted pinned source
+Статус: ACCEPTED
+Цель: inspect only redacted AST/control-flow for the exact pinned backend and
+produce one bounded candidate change specification suitable for a later test.
+Зависит от: EXP-437 ACCEPTED.
+Внешняя цель: same public repository, exact EXP-435 commit/tree.
+Среда: anonymous GET of only three listed files; preflight and local AST
+transformation only; no source values emitted, no code execution/model/Docker.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+Разрешённые source paths:
+- `backend/logic.py`
+- `backend/main.py`
+- `backend/routes.py`
+Критерии приёмки:
+- exact commit and tree match the EXP-435 pin;
+- output stores no literals/comments/docstrings/source lines; report only
+  filtered symbol/control-flow names and yes/no facts derived from AST constants,
+  then record one candidate behavior, its
+  affected symbol/path, user-visible acceptance criteria and the safe test
+  strategy in this queue;
+- candidate must be useful, minimal, deterministic and testable without
+  credentials or external writes; code execution is not allowed in this task;
+- do not invent acceptance semantics when redacted evidence is insufficient;
+  in that case return a precise blocker and keep EXP-439 DRAFT.
+Проверки:
+- execute the redacted AST command already recorded under EXP-428 using only
+  the three exact paths above and the EXP-435 commit/tree;
+- AST-derived candidate check may print only whether a division expression node
+  occurs and whether any `random.randint` operand range includes zero; never print
+  literal/operator values or source excerpts;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Pinned, preflighted AST review
+of the three backend modules, followed by metadata-only AST property checks,
+confirmed that `generate_example` contains a division expression while no
+random integer operand range includes zero. The `save_session` route contains
+integer coercions and a DB execute in the same function, with no route-local
+exception handling or explicit HTTP error mapping. No literals/source lines
+were stored or emitted by the property checks; no code was executed.
+
+Candidate for EXP-439: malformed numeric session data should produce a stable
+client validation response (422) before any DB write, while valid requests
+preserve current behavior. This is an evidence-backed candidate, not a runtime-
+confirmed defect; implementation must test the exact current valid/invalid
+contract in a bounded environment before changing it. `git diff --check` passed.
+
+#### EXP-439 — prepare the exact bounded runtime card for the target change
+Статус: ACCEPTED
+Цель: inspect only pinned runtime/test metadata needed to prepare a runnable
+and safe follow-up card for the `save_session` validation candidate.
+Зависит от: EXP-438 ACCEPTED.
+Внешняя цель: `SoldatovAlexander/brainbooster_full_v11` at commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`; no GitHub writes.
+Среда: anonymous GET of the four exact public files below; metadata-only
+inspection; no code execution, Docker, model, credentials or writes.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+Разрешённые source paths:
+- `Dockerfile`
+- `.github/workflows/ci.yml`
+- `requirements.txt`
+- `backend/routes.py`
+Критерии приёмки:
+- exact commit/tree match and all four blobs pass bounded content preflight;
+- report only pinned path/digest metadata, configured Python/runtime image
+  identifier, declared dependency names/version constraints, and test/lint
+  command shape; never print source lines or raw file content;
+- record the exact image/test/dependency information needed for a future
+  implementation card and explicitly note if no pinned digest/runtime exists;
+- do not execute target code, build/pull an image, install dependencies, or
+  assert the 422 candidate as a proven defect.
+Проверки:
+- run one anonymous `read_github_snapshot_contents` request for the exact
+  repository/commit and the four allowed paths above; print only approved
+  metadata fields;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Exact pinned metadata fetch
+verified all four blobs. Runtime facts retained without source lines: Dockerfile
+uses an unpinned `python:3.11-slim`; dependencies are `fastapi`, `uvicorn`,
+`python-multipart` with no version constraints; CI builds a Docker image but
+does not run pytest, unittest or compileall. The target app has no pinned
+existing test image or usable declared test suite. This confirms EXP-439 must
+remain a later, explicitly sandboxed behavior check; no target code, image,
+dependencies or Docker daemon were run. `git diff --check` passed.
+
+### Batch AU — selected-repository CLI and bounded target verification (5 tasks; 1 ACCEPTED, 1 BLOCKED, 3 DRAFT)
+
+Назначение: проверить гипотезу о malformed numeric session input только в
+network-isolated container; не сохранять изменения в target repo и не
+публиковать. Для теста разрешён только точный digest-pinned project image;
+никакие другие образы или зависимости не загружать.
+
+#### EXP-440 — verify the already-available pinned sandbox image
+Статус: BLOCKED
+Цель: получить exact digest-pinned Python image из ссылки в доверенном verifier
+Dockerfile, затем проверить, что он поднимается в существующем ограниченном
+DockerSandboxBackend; target code не запускать.
+Зависит от: Batch AT 5/5 ACCEPTED.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Точный image: `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`
+Ожидаемый результат: digest-pinned image успешно загружен/присутствует; sandbox
+reports `network_isolated=true`, profile `container-network-none`; allowlisted
+`python3 --version` exits 0; container всегда удалён в cleanup.
+Среда: один temporary synthetic file, no target repo/code, no credentials,
+no network, no model/provider or external writes.
+Разрешённые пути: none (read-only diagnostic).
+Команды (first pull by immutable digest; then the synthetic sandbox smoke):
+```bash
+RUN_DOCKER_SANDBOX_TESTS=1 docker pull python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78
+```
+```bash
+RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import os
+import tempfile
+from pathlib import Path
+import sys
+sys.path.insert(0, "src")
+from app_contracts.sandbox import DockerSandboxBackend
+
+if os.environ.get("RUN_DOCKER_SANDBOX_TESTS") != "1":
+    raise SystemExit("docker opt-in is required")
+with tempfile.TemporaryDirectory(prefix="agent00x-image-smoke-") as temporary:
+    snapshot = Path(temporary) / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "probe.txt").write_text("synthetic only", encoding="utf-8")
+    backend = DockerSandboxBackend("python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78")
+    with backend.create(snapshot, {"python3"}) as sandbox:
+        result = sandbox.run(("python3", "--version"))
+        if result.returncode != 0 or not sandbox.network_isolated or sandbox.security_profile != "container-network-none":
+            raise SystemExit("pinned sandbox smoke failed")
+        print("image=present")
+        print("profile=" + sandbox.security_profile)
+        print("network_isolated=true")
+        print("python3_exit=0")
+PY
+```
+Проверки:
+- pull only the exact image digest above; do not pull or install any other image;
+- run the exact Docker opt-in smoke command above;
+- after an image-unavailable failure, run only this read-only daemon check:
+  `RUN_DOCKER_SANDBOX_TESTS=1 docker info --format '{{.ServerVersion}}'`;
+- `git diff --check`
+If the pinned image cannot be obtained or verified, stop and leave target code
+unexecuted. The pull is read-only from the public registry and changes only the
+local image cache; no image build or target dependency install.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-06. Docker daemon diagnostic returned
+server version 28.3.3, but `DockerSandboxBackend` found the exact digest-pinned
+image absent. One `docker pull` of only the exact authorized digest produced no
+output for about 2.5 minutes and was interrupted; a subsequent read-only image
+inspect still reported `No such image`. No target code ran and no image was
+verified. Do not retry, substitute another image or use host-process execution
+for the target route without a new evidence-backed card.
+
+#### EXP-441 — add the pinned full-snapshot metadata CLI
+Статус: ACCEPTED
+Цель: add a product CLI mode that performs exact pinned full-snapshot intake
+for the selected public repository and prints digest metadata only; no Worker,
+target-code execution, stage, approval or publication.
+Зависит от: EXP-437 ACCEPTED; independent of Docker blocker EXP-440.
+Среда: anonymous HTTPS GET through `GitHubAnonymousSnapshotTransport` only;
+exact public repo/commit/tree in EXP-435, no auth/model/provider/credentials.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+Команда:
+`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m app_contracts.worker_cli --remote-snapshot-metadata`
+Критерии приёмки:
+- exact flag takes no caller-selected URL, identity or commit; performs only
+  anonymous bounded GETs for `SoldatovAlexander/brainbooster_full_v11` at the
+  pinned commit and validates full commit/tree/content claim; if the API returns
+  a non-200 status, emits a stable sanitized failure record;
+- on successful fetch stdout is exactly one JSON metadata record containing
+  origin label, `authenticated=false`, repo/commit/tree/content digest, file
+  count and per-file path/size/digest; no blob content/source excerpt;
+- no Worker, test command, target code, Docker, approval, durable stage or
+  provider effect is invoked;
+- tests stub transport/snapshot and prove pin mismatch, fetch failure and
+  unknown arguments fail closed with sanitized errors and no content leakage.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_worker_cli.py' -q`
+- exact live read-only CLI command above;
+- if the CLI returns its sanitized failure, one direct reader retry may print
+  only the caught exception type and stable exception message; never print the
+  API response, request headers, body or blob content;
+- if the reader reports `snapshot response failed`, one direct commit-endpoint
+  GET may print HTTP status only to distinguish transient/anonymous API failure;
+  do not print or retain the body;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added fixed
+`--remote-snapshot-metadata` mode and offline positive/tamper/transport-failure
+tests. Targeted suite: 14 tests OK. Full suite: 841 tests OK, 2 opt-in Docker
+tests skipped; `git diff --check` passed. The live CLI attempt returned only
+`remote-snapshot-fetch-failed`; the one direct, body-redacted diagnostic
+reported HTTP 403. Therefore the current remote API call through this CLI is
+not yet proven successful. EXP-437 separately proves the same exact pin was
+retrievable through the reader. The CLI invoked no Worker, tests, target code,
+Docker, approval or publication.
+
+#### EXP-442 — implement only the confirmed input-validation correction
+Статус: DRAFT
+Цель: test and, only if confirmed, return stable 422 before DB side effect;
+valid input and response/persistence semantics must remain unchanged.
+Зависит от: EXP-438 ACCEPTED and EXP-440 ACCEPTED; exact patch/test paths and
+commands to be set READY. EXP-441 is the separate read-only snapshot CLI task.
+
+#### EXP-443 — bind the target change to remote replay and verifier evidence
+Статус: DRAFT
+Цель: reproduce the tested target change through remote snapshot replay and the
+current bounded verifier, with no live model or external write.
+Зависит от: EXP-442 ACCEPTED.
+
+#### EXP-444 — report the target slice and prepare the next MVP gate
+Статус: DRAFT
+Цель: record exact evidence/limits and prepare durable staging, Worker and
+approval cards; no provider writes.
+Зависит от: EXP-440—443 ACCEPTED.
+
+### Batch AV — DeepSeek-compatible Worker and next local MVP gate (5 tasks; 5 ACCEPTED)
+
+Цель: подключить выбранный DeepSeek Chat Completions wire contract к уже
+ограниченному Worker через opaque channel, не меняя старый Responses adapter;
+затем интегрировать только через fake channel и переоценить блокеры реального
+вертикального среза. Batch не разрешает live API, чтение credentials, Docker,
+запуск target-кода или внешние writes.
+
+#### EXP-445 — add a fake-channel DeepSeek Chat Completions Worker adapter
+Статус: ACCEPTED
+Цель: построить deterministic `WorkerInput` → Chat Completions payload → строго
+проверенный `WorkerProposal` adapter, готовый для будущей передачи через
+отдельный credential broker, но не содержащий HTTP, SDK, filesystem, environment
+или credential access.
+Зависит от: EXP-383—386 ACCEPTED; выбранный API/model contract указан выше в
+решении Control Plane Batch AL.
+Среда: local unit tests only; no network, provider, API key, Docker, target code
+or external write.
+Разрешённые пути:
+- `src/app_contracts/deepseek_worker.py` (new)
+- `tests/test_deepseek_worker.py` (new)
+Вне scope: modifying `openai_worker.py`, worker CLI, live credential channel,
+API request, retries, stage/approval/publication, task queue status other than
+this card evidence.
+Критерии приёмки:
+- fixed model `deepseek-flash`, `reasoning_effort=low`, `max_tokens=4096`,
+  `stream=false`, no tools, and JSON mode `response_format={"type":"json_object"}`;
+- exactly two messages: a fixed system instruction requiring JSON and showing
+  the proposal shape, then caller-bounded instruction/context only; no process,
+  repository or commit metadata is sent;
+- one opaque `create_chat_completion(payload, timeout_seconds=30.0)` channel
+  call, never retries; input byte bound 20,000 is enforced before the call;
+- accept exactly one assistant choice with `finish_reason="stop"`, non-empty
+  bounded `message.content`, and no tool calls/refusal; ignore and never log,
+  persist, or return `reasoning_content`;
+- parse content through the existing strict `parse_model_result` proposal
+  contract; malformed/duplicate-key/invalid JSON, empty or oversized content,
+  non-stop finish, extra choices, tool calls, and transport exceptions fail
+  closed with stable `ExecutionError` messages and no provider data leakage;
+- tests cover exact payload mapping, exactly-one-call behavior, all the above
+  rejection cases, bounds, and absence of HTTP/SDK/environment/filesystem
+  access; existing Responses adapter remains unchanged.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_deepseek_worker.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added a separate
+`DeepSeekProposalWorker` and normalized opaque Chat Completions channel without
+changing the existing Responses adapter. The fixed request is one non-streaming
+`deepseek-flash` call (`reasoning_effort=low`, `max_tokens=4096`, JSON mode,
+no tools) carrying only bounded instruction/context. Exactly one assistant
+choice with `finish_reason=stop` and bounded JSON content is accepted; the
+existing strict proposal parser enforces path/content scope. Invalid choices,
+refusal/tool calls, malformed JSON and transport errors fail closed with
+sanitized errors; reasoning content is not used or returned. Targeted tests:
+9 OK; full suite: 850 tests OK, 2 opt-in Docker tests skipped;
+`git diff --check` passed. No network, credentials, SDK, provider call, Docker,
+target code, external write or commit.
+
+#### EXP-446 — wire DeepSeek adapter into a synthetic remote pipeline
+Статус: ACCEPTED
+Цель: exercise `DeepSeekProposalWorker` in the existing synthetic full remote
+snapshot → fresh replay → subprocess verifier → digest-only seed/intent test.
+Зависит от: EXP-445 ACCEPTED.
+Среда: existing one-file fixture snapshot, fake Chat Completions channel,
+`LocalProcessSandboxBackend` and local verifier subprocess only; no network,
+provider, credentials, Docker, target code or publication.
+Разрешённые пути:
+- `tests/test_remote_snapshot_pipeline.py`
+Критерии приёмки:
+- add a separate positive integration case using a fixed fake Chat Completions
+  response and the new `DeepSeekProposalWorker`; preserve existing Responses tests;
+- exact remote snapshot claim remains bound through Worker execution, fresh
+  replay and verifier; result is VERIFIED and seed/intent retain the same
+  staged digest;
+- channel is called once with fixed DeepSeek JSON-mode payload; output/reprs
+  reveal neither proposal body nor reasoning content;
+- temporary workspace closes and is removed; no external effects.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_pipeline.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added an independent synthetic
+pipeline test using `DeepSeekProposalWorker` and a fixed fake channel. The exact
+one-file remote claim flowed through local materialization, Worker proposal,
+fresh replay, the bounded verifier subprocess, and digest-only publication
+seed/intent; the verifier returned VERIFIED and the staged digest remained
+identical. The test confirms one model-channel call and removes the temporary
+workspace. Targeted pipeline suite: 3 tests OK; full suite: 851 tests OK,
+2 opt-in Docker tests skipped; `git diff --check` passed. No live provider,
+credentials, Docker, target repository or publication.
+
+#### EXP-447 — add a fixed, sanitized CLI mode for synthetic Chat Completions
+Статус: ACCEPTED
+Цель: expose one exact CLI flag that runs the synthetic remote snapshot pipeline
+using only the fixed DeepSeek-shaped fake channel and emits digest metadata.
+Зависит от: EXP-446 ACCEPTED.
+Среда: local fixture snapshot, fake Chat Completions channel and current local
+process sandbox/verifier; no network, provider, credentials, Docker, target code
+or publication.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+Критерии приёмки:
+- one new exact argv flag selects the fixed synthetic DeepSeek fake run; no
+  caller-selectable model, URL, task, repository, command or file path;
+- normal CLI execution cannot inject a live channel or credentials; optional
+  Python collaborator injection remains available only to existing unit tests;
+- success output is a single JSON metadata line with fixed demo/origin labels,
+  snapshot identity and digests, and `publication=not_attempted`; no source,
+  prompt, proposal, reasoning or exception text;
+- any failure returns only stable sanitized status/code; unknown args remain
+  rejected; old default and OpenAI-shaped preview modes remain unchanged;
+- tests prove exact output allowlist, fake-only worker construction, and no
+  network/credential/file execution paths.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_worker_cli.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added the fixed
+`--deepseek-remote-fixture-preview` mode. It selects only the fixture snapshot,
+the fixed fake Chat Completions channel and local verifier composition; it has
+no caller-selected URL/model/task and cannot invoke the anonymous network
+reader. Success emits one allowlisted JSON metadata line with synthetic origin,
+fixed fixture identity, bound digests and `publication=not_attempted`; failures
+are sanitized. CLI suite: 16 tests OK; exact CLI command returned
+`preview_ready`; full suite: 853 tests OK, 2 opt-in Docker tests skipped;
+`git diff --check` passed. No live API, credentials, Docker, target code or
+publication.
+
+#### EXP-448 — verify Worker failure/timeout and output redaction end to end
+Статус: ACCEPTED
+Цель: verify a channel-reported timeout and malformed Worker result are
+sanitized and never retried through the fixture CLI; do not claim the adapter
+can interrupt a blocking channel.
+Зависит от: EXP-445—447 ACCEPTED.
+Среда: local fake channel and fixture CLI tests only; no provider, credentials,
+Docker, target code or publication.
+Разрешённые пути:
+- `tests/test_deepseek_worker.py`
+- `tests/test_worker_cli.py`
+Критерии приёмки:
+- `TimeoutError` from the opaque channel maps to the stable provider-request
+  failure and exactly one invocation; exception body is not returned;
+- the exact DeepSeek synthetic CLI branch with an injected test-only
+  `DeepSeekProposalWorker` reports only its fixed sanitized failure record;
+- test demonstrates caller-side collaborator injection is test API only and
+  cannot be selected through argv; existing unknown-argument behavior remains;
+- explicitly record that actual blocking-timeout enforcement belongs to a
+  future credential channel and remains an open MVP gate;
+- no production runtime files are changed by this test-only card.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_deepseek_worker.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_worker_cli.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. A channel `TimeoutError` is
+converted to the stable provider-request failure, with exactly one call and no
+exception text leakage. Through the synthetic DeepSeek CLI branch the same
+failure becomes only `deepseek-fixture-preview-failed`; argv cannot select an
+injected worker. Targeted suites: Worker 9 OK, CLI 17 OK; full suite: 854 tests
+OK, 2 opt-in Docker tests skipped; `git diff --check` passed. This confirms
+sanitized handling of a timeout reported by the channel, not interruption of a
+blocking call: enforced transport deadline remains an open MVP gate. No live
+provider, credentials, target code, Docker or publication.
+
+#### EXP-449 — reconcile R2 exit matrix and choose the next runnable external gate
+Статус: ACCEPTED
+Цель: reconcile the latest R2 progress in plan/status docs, count the current
+follow-up batch series and preserve every unclosed evidence/security gate.
+Зависит от: EXP-440—448 current evidence, including blocked/unverified results.
+Среда: local documentation only; no network, credentials, code execution,
+Docker, provider or external writes.
+Разрешённые пути:
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `README.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- record Batch AU and AV exact card counts/statuses, suite count and fixed
+  synthetic DeepSeek CLI command/result;
+- state explicitly that the Chat Completions adapter is fake-channel only and
+  that a channel-reported TimeoutError is not proof of enforced blocking timeout;
+- preserve as open gates: exact Docker image unavailability; target 422 behavior
+  unexecuted; anonymous snapshot CLI HTTP 403; safe credential channel and
+  account spend cap unavailable/unverified; independent production verifier/
+  isolation; durable stage/user digest approval; and real controlled GitHub PR
+  publication (no authorization);
+- state R2 remains open and count Batch AO—AV as 8 follow-up batches, without
+  treating the count or synthetic demo as stage completion;
+- no implementation status claim beyond reproducible local synthetic evidence.
+Проверки:
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Reconciled docs/24 and docs/27:
+Batch AO—AV is an 8-batch follow-up series; AU is 1 ACCEPTED / 1 BLOCKED /
+3 DRAFT and AV is 5/5 accepted. Recorded the fixed synthetic DeepSeek CLI
+evidence and all open gates: unavailable exact Docker image, unexecuted target
+422 hypothesis, remote metadata CLI 403, no safe credential channel or verified
+account spend cap, no enforced blocking timeout, no independently trusted
+production verifier/isolation, no durable stage/user approval, and no
+authorization for a real PR. R2 remains OPEN. `git diff --check` passed; no
+runtime checks, network, credentials, Docker, target code or external writes.
+
+### Batch AW — durable content-addressed stage and digest review (5 tasks; 5 ACCEPTED)
+
+Цель: заменить тестовый захват stage object на локальный content-addressed
+artifact, который можно повторно прочитать и сверить перед user approval. Это
+только local prototype: файловая база не считается production-secure, а CLI не
+получает автоматически capability публикации.
+
+#### EXP-450 — define a validated immutable staged artifact bundle
+Статус: ACCEPTED
+Цель: сформировать канонический, bounded и secret-preflighted artifact из
+подготовленного изменения и принятого verifier result до добавления дискового
+хранилища.
+Зависит от: Batch AV 5/5 ACCEPTED; existing `PublicationSeed` binding.
+Среда: local synthetic fixture/unit tests only; no network, target code,
+credentials, Docker or external writes.
+Разрешённые пути:
+- `src/app_contracts/durable_stage.py` (new)
+- `tests/test_durable_stage.py` (new)
+Критерии приёмки:
+- builder requires exact `ExecutionRequest`, `PreparedChange` and VERIFIED
+  `ExecutionResult`; reuses `build_publication_seed` so unpinned, incomplete,
+  failed or mismatched verification cannot produce a stage;
+- exact `staged_change_digest`, patch/evidence/verification digests and
+  `verified_contents_digest` are recomputed and compared before materializing
+  the artifact; staged metadata remains the approval-bound identity, and the
+  patch digest transitively binds the exact patch bytes;
+- stage payload contains only the seed, staged metadata, patch, bounded
+  evidence/verification records, source bytes for exactly the changed paths
+  with verified Git blob IDs, and sorted exact verified file contents; it has a
+  fixed schema version and immutable canonical JSON representation;
+- regenerate the canonical unified patch from stored base/new contents during
+  validation, and require byte-for-byte equality with the patch bound by the
+  staged metadata, so a later reader can detect content/patch substitution;
+- enforce existing proposal ceilings (20 files, 240 UTF-8 path bytes,
+  100000 bytes/file, 1000000 bytes total), bounded source bytes from the pinned
+  snapshot (262144 bytes/file, 1000000 bytes total), and an 8000000-byte
+  canonical artifact cap; patch is capped at 2100000 bytes and each evidence/
+  verification record at 256000 bytes before canonicalization. Run the existing
+  redacted credential-pattern byte scan on both source and proposed contents
+  before returning any persistable bundle;
+- tampering with contents, patch, evidence, verifier record or bindings fails
+  closed with stable payload-free errors; repr/error output contains no source,
+  patch, prompt or matched secret values;
+- this card is pure/local contract only: no filesystem, SQLite, executor
+  integration, approval, CLI or publication changes.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_durable_stage.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added an in-memory canonical
+`StagedArtifact` builder that requires a VERIFIED result tied by
+`build_publication_seed` to a complete remote snapshot. It stores the approval-
+bound staged metadata, patch, evidence, preparation-verification report,
+normalized verifier result, declared paths, exact changed base bytes/Git blob
+IDs and exact proposed contents. Validation recomputes all digests, the source
+blob IDs and canonical unified patch; it also enforces file/path/byte bounds and
+redacted credential-pattern scans over base and proposed content. Tampered
+content, patch, source, evidence, verifier result or binding fails closed;
+repr/errors do not expose payload. Targeted suite: 10 tests OK; full suite: 864
+tests OK, 2 opt-in Docker tests skipped; `git diff --check` passed. No database,
+filesystem, executor integration, approval, CLI, network, target code or
+external writes; this card establishes only the validated artifact contract.
+
+#### EXP-451 — persist and retrieve the artifact through SQLite
+Статус: ACCEPTED
+Цель: persist and retrieve a validated `StagedArtifact` by its approval-bound
+`staged_change_digest`, with reopen and corruption refusal evidence.
+Зависит от: EXP-450 ACCEPTED.
+Среда: temporary local SQLite DB and synthetic verified remote fixture only;
+no network, credentials, target code, Docker or external writes.
+Разрешённые пути:
+- `src/app_contracts/durable_stage.py`
+- `tests/test_durable_stage.py`
+Критерии приёмки:
+- explicit caller-supplied DB path only; create a SQLite WAL database with
+  `synchronous=FULL`; do not create parent directories or select a default path;
+- `save()` revalidates the artifact before write and inserts it transactionally
+  keyed by `staged_change_digest`; exact duplicate save is idempotent, but a
+  conflicting row fails closed without overwrite;
+- `load(expected_staged_digest)` validates syntax, primary-key binding, stored
+  artifact digest and every canonical bundle invariant before returning; missing
+  records and DB errors have stable payload-free errors;
+- close/reopen preserves the exact canonical payload; malformed bytes, altered
+  digest columns and altered serialized bundle fail closed without returning or
+  logging source, patch or exception text;
+- close is idempotent and use-after-close fails closed; context-manager cleanup
+  always closes; no automatic cleanup/deletion of user records;
+- tests cover fresh DB, reopen, idempotency, conflict, row tampering, missing
+  key, corrupt DB failure and cleanup in a temporary directory;
+- document/store are a local prototype only; no confidentiality, host-tamper
+  resistance, multi-process writer safety or production durability claim.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_durable_stage.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added explicit-path
+`SQLiteStagedArtifactStore` using WAL + `synchronous=FULL`, transactional
+insert-if-absent keyed by `staged_change_digest`, exact duplicate idempotency,
+and conflict refusal without overwrite. Readback revalidates primary key,
+stored artifact digest, canonical bundle and all stage bindings before returning
+any source or patch; corruption/SQLite errors are payload-free. Covered fresh
+DB, WAL/synchronous settings, save/reopen, idempotency, content-address conflict,
+tampered digest/payload, missing/bad key, corrupt database, context cleanup,
+idempotent close and use-after-close. Targeted suite: 15 tests OK; full suite:
+869 tests OK, 2 opt-in Docker tests skipped; `git diff --check` passed. DB was
+created only inside temporary test directories. No executor integration, user
+preview/approval, credentials, network, Docker, target code or external writes.
+This is a local SQLite prototype, not encrypted storage, host-tamper resistance,
+or verified production crash/multi-process durability.
+
+#### EXP-452 — integrate the durable stage sink after verifier PASS
+Статус: ACCEPTED
+Цель: integrate the durable stage store after accepted verifier PASS and refuse
+to return VERIFIED until exact-digest persistence and readback succeed.
+Зависит от: EXP-450—451 ACCEPTED.
+Среда: local synthetic full remote snapshot and temporary SQLite store only;
+no network, credentials, Docker, target repository, provider or external writes.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `tests/test_executor.py`
+- `tests/test_durable_stage.py`
+Критерии приёмки:
+- add an explicit optional stage sink to `run_local_execution`; when
+  `require_durable_stage=True`, reject a missing/malformed sink before Worker
+  invocation; preserve the existing no-sink test harness behavior by default;
+- after verifier PASS, build `StagedArtifact`, persist it by its exact
+  `staged_change_digest`, reload it by that same digest, and require exact
+  canonical payload plus artifact/verified-content digest equality before
+  returning VERIFIED;
+- any artifact build/save/load/readback mismatch fails closed with a stable
+  failure code and no source/patch/exception leakage; never retry a store effect;
+- every sandbox/workspace lease still closes on sink success and all failures;
+- tests prove ordering (verifier PASS precedes write, write/readback precede
+  VERIFIED), exact digest binding, zero Worker calls for required-but-missing
+  sink, tamper/failure denial, and cleanup; no default implicit DB path;
+- this remains a local SQLite prototype, not a production trust root or
+  externally trusted durable system.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_executor.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_durable_stage.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. `run_local_execution` now accepts
+an explicit stage sink and optional required-stage mode; required missing or
+malformed sinks fail before Worker. Following verifier PASS, the executor builds
+the canonical artifact, saves by the exact staged digest, reloads by that same
+digest, and withholds VERIFIED unless type, digest and canonical payload match.
+Persistence exceptions and mismatch return stable `stage-persistence-failed`
+without exception/payload leakage or retry. Tests prove worker→verifier→save→load
+ordering, exact digest binding, required-sink preflight, save/readback denial,
+and sandbox cleanup on success/failure. Targeted suites: 66 tests OK; full suite:
+872 tests OK, 2 opt-in Docker tests skipped; `git diff --check` passed. Only
+temporary SQLite files and synthetic snapshots were used. No network,
+credentials, Docker, target repository, provider or external writes. The caller
+still owns the remote snapshot lease; this gate proves executor sandbox cleanup
+and local SQLite readback only, not production durability or user approval.
+
+#### EXP-453 — add a read-only user preview bound to the stored stage digest
+Статус: ACCEPTED
+Зависит от: EXP-451—452 ACCEPTED; no approval or publication side effect.
+Среда: temporary local SQLite stage and synthetic content only; no network,
+credentials, Docker, target repository, provider or external writes.
+Разрешённые пути:
+- `src/app_contracts/durable_stage.py`
+- `src/app_contracts/stage_preview.py` (new)
+- `tests/test_durable_stage.py`
+- `tests/test_stage_preview.py` (new)
+Критерии приёмки:
+- add a read-only SQLite connection path using quiescent-file checks, SQLite
+  `mode=ro&immutable=1` and `query_only`; refuse live WAL/SHM sidecars, must not
+  create a missing DB, alter schema, set journal mode, or allow `save()`;
+  preserve existing writable-store default behavior;
+- formatter/CLI requires an explicit existing regular DB path and exact
+  `staged_change_digest`, then validates the loaded row and artifact before
+  presenting anything; reject symlink and missing DB without creating files;
+- deterministic preview is visibly bound to the staged/artifact/verified
+  content digests and contains repository/base/process identifiers, changed paths,
+  verifier identity/verdict and exact unified patch; exclude prompts, raw
+  evidence, source outside the patch, and credential-like values as already
+  enforced by artifact validation;
+- label approval as absent and publication as not attempted; preview must not
+  call approval, policy, gateway, broker or provider code;
+- CLI prints bounded deterministic JSON on success, stable sanitized error and
+  nonzero status on refusal; tests cover exact digest binding, missing/bad key,
+  corrupt artifact, read-only/no-write behavior, symlink/missing DB, no approval
+  or publication side effects, and output redaction;
+- no default database path and no mutation to stored stage; local prototype
+  only, not a trusted user interface or production storage claim.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_durable_stage.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_stage_preview.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-06. Added a `mode=ro&immutable=1`
+SQLite reader with `query_only`, rejecting missing/symlink paths and active
+WAL/SHM sidecars without creating files or changing the DB. `stage_preview`
+loads only the exact requested digest through full artifact validation, then
+prints deterministic bounded JSON with the three stage/content digests, bound
+repository/base/process identifiers, paths, verifier result and exact unified
+patch; it explicitly labels approval `not_created` and publication
+`not_attempted`. Prompts/raw evidence are absent, and the module imports no
+approval/policy/gateway/broker/provider code. Targeted suites: 22 tests OK; full
+suite: 877 tests OK, 2 opt-in Docker tests skipped; `git diff --check` passed.
+Tests prove missing/symlink DB refusal, no DB/sidecar changes, live-WAL refusal,
+read-only save denial, missing/bad digest, corrupted-row refusal, deterministic
+CLI output and sanitized error. Only temporary SQLite and synthetic data were
+used. No network, credentials, Docker, target repository or external writes.
+Preview is a local CLI surface, not an authenticated/secure UI; explicit
+approval remains absent.
+
+#### EXP-454 — accept explicit local digest approval and exercise mock gates
+Статус: ACCEPTED
+Зависит от: EXP-453 ACCEPTED.
+Среда: synthetic fixture and temporary local SQLite journal only; no network,
+credentials, Docker, target repository, provider or external writes.
+Разрешённые пути:
+- `src/app_contracts/stage_approval.py` (new)
+- `tests/test_stage_approval.py` (new)
+- `tests/test_remote_snapshot_pipeline.py`
+Критерии приёмки:
+- add a local command that loads the exact stored stage read-only, displays its
+  deterministic preview, and requires the operator to type the exact full
+  `staged_change_digest`; absent, malformed or mismatched confirmation stops
+  before policy, gateway, broker or endpoint invocation;
+- derive publication intent only from the revalidated artifact seed and an
+  explicit `agent/` branch; create an ephemeral approval bound to the canonical
+  engine-intent digest and exact staged digest with a short (<=300s) expiry;
+  never persist or print a reusable approval record, and do not claim operator
+  identity/authentication or production replay resistance;
+- after exact local confirmation, exercise existing policy → gateway →
+  in-memory broker → temporary journal → `MockGitHubEndpoint` path; construct
+  these mock-only collaborators internally, accept no injectable/real provider
+  and emit an explicit `external_write=false` receipt summary;
+- use one-shot ephemeral approval only for this mock call, and test its exact
+  engine-intent digest binding and <=300-second expiry; mismatch/cancel,
+  malformed stage and invalid branch tests prove the mock publication route is
+  not invoked; retain the existing expiry/policy/gateway/broker denial matrix;
+- test that the mock receipt binds the same staged digest returned by preview,
+  DB content is unchanged, and confirmation/output contains no raw approval,
+  credentials or exception text;
+- document boundary: this exercises local typed-digest confirmation and mock
+  gates only; it is not authenticated production user approval or a real PR.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_stage_approval.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_remote_snapshot_pipeline.py' -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added a CLI that opens the
+persisted stage read-only, shows the bound stage digests/patch plus the exact
+requested `agent/` branch and mock-only destination, then requires typing the
+full staged digest. Only an exact match creates a one-shot, <=300-second
+approval in memory and enters the internally constructed deterministic policy,
+gateway, in-memory broker, temporary SQLite journal and `MockGitHubEndpoint`
+path. The CLI reports the matching mock receipt, `approval_record_persisted=false`
+and `external_write=false`; it never prints a reusable approval record. Tests
+cover mismatch/cancel/missing DB/invalid branch/tampered artifact denial before
+the publication route and a matching receipt. The remote-snapshot integration
+test now persists and reloads its exact artifact before the mock approval path.
+Targeted suites: 8 tests OK; full suite: 882 tests OK, 2 opt-in Docker tests
+skipped; `git diff --check` passed. All inputs were synthetic; no network,
+credentials, Docker, target repository or external writes. This is a local
+typed-digest confirmation exercise, not authenticated production user approval,
+replay resistance, or a real PR. Batch AW is complete (5/5); R2 remains OPEN.
+
+### Batch AX — revalidate the selected public repository intake (1 task; 1 ACCEPTED)
+
+Цель: perform one fresh anonymous, product-CLI full-snapshot metadata intake for
+the exact pinned public repository after the prior 2026-10-06 HTTP 403. This is
+read-only network evidence only; it executes no repository code and has no
+provider-write capability.
+
+#### EXP-455 — revalidate exact pinned full-snapshot intake through the CLI
+Статус: ACCEPTED
+Цель: determine whether the fixed product CLI can now complete the exact full
+snapshot metadata intake for the selected public commit/tree.
+Внешняя цель: `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`.
+Среда: one anonymous HTTPS run through the fixed-host GitHub transport only;
+no credentials, Worker/model/provider, test execution, Docker, target code or
+external writes.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+Точная команда (ровно один запуск):
+`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m app_contracts.worker_cli --remote-snapshot-metadata`
+Критерии приёмки:
+- if successful, record only the sanitized JSON metadata and verify exact repo,
+  commit, tree, 23-file count, full-snapshot CLI contract and
+  `authenticated=false`; do not print or store blob content;
+- if the CLI returns `remote-snapshot-fetch-failed`, record that one status and
+  stop; do not retry, run direct HTTP diagnostics, inspect response bodies or
+  read request/environment data;
+- this is evidence of one API intake only, not signature/authorship proof or
+  successful target-code execution;
+- no files other than this task card/result are changed; no commit.
+Проверки:
+- exact command above, one invocation;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The single exact anonymous CLI
+invocation returned `snapshot_ready`, `authenticated=false`, repository
+`SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, all 23 files and full content
+digest `sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Output contained only path/size/SHA-256 metadata; no source excerpt or code was
+executed. `git diff --check` passed. No credentials, Worker, Docker, target-code
+execution or external writes. This proves one anonymous GitHub REST API intake,
+not authenticated provenance, signature/authorship, executable sandbox or a
+product change. No retry was made. Sanitized per-file metadata is recorded below.
+
+| Path | Size (bytes) | SHA-256 content digest |
+|---|---:|---|
+| `.dockerignore` | 92 | `sha256:d17bea96d6a182df36df25207d911f8b5e30e18710648220b91cced6fc536ced` |
+| `.github/workflows/ci.yml` | 639 | `sha256:2344f50540565cd1594635106b4a6bdcdc7c455927e37193d7ffa26f25a754e0` |
+| `.gitignore` | 178 | `sha256:3aa7307c0fa3f63b3823b75e9020f751cc0953e0fb88d1f2e837506a12c917da` |
+| `Dockerfile` | 256 | `sha256:989c98a3290a38c83832fbe7ce64d52b26f02cd1d250f7066fb887858bddb25f` |
+| `FILE_TREE.txt` | 707 | `sha256:34f5dfbfb60fd8891d2ebd8cff8ef9b3a55a84173d1e12fb6396a5bf7bbe5542` |
+| `README.md` | 1321 | `sha256:ea5f91584bc40c1bbc0b9b94e752aa5b4316f9bf6c63ad072dc08f71994bcb32` |
+| `backend/__init__.py` | 0 | `sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `backend/database.py` | 314 | `sha256:9f04e8eed6b3d139bbd2914a476d1515b5fc30227a3e6d1d6d1a63cb9dddb4e7` |
+| `backend/logic.py` | 2027 | `sha256:5c760f37d77b0a10fdd724e3fd6ba3f3f027d5edbb70f986632419847e474e3e` |
+| `backend/main.py` | 412 | `sha256:99701c88519975a1f9776944ae095baad6721ac376d4d4f70b8882b648a509a2` |
+| `backend/routes.py` | 826 | `sha256:32847307337ab9e9f02bec60c69ed1b581206f453f6d6f59ef6ea15938de1cf7` |
+| `docker-compose.yml` | 137 | `sha256:9c4d724ae8f64d57682719400357dc66cdc292c75dc77d52570f55ce6fa3815f` |
+| `frontend/game.html` | 705 | `sha256:9b7bf9d90acf82cedb2ef5f9145c42db9ef883971580fdedc972787d307c90b2` |
+| `frontend/index.html` | 706 | `sha256:4606d43157af326fc44c25c1e7af348bd81107c3974822c68c749dc7c4d728b2` |
+| `frontend/level.html` | 1104 | `sha256:c12e7e09f86a811c109f0349784a977e78bd45be86a525245d33652c4723b082` |
+| `frontend/result.html` | 1243 | `sha256:0cb9dd40e3e6617d1647fa5374d83c40abea26fbcc5ac4c7b275a54df7858511` |
+| `push_to_github.sh` | 463 | `sha256:03696454a75bec6864e4c1275ebc335b1ee7acc5d16eb10b787147dc8a74727d` |
+| `requirements.txt` | 33 | `sha256:832774ecca7ca993d686ecfb408d648184b725b8dc3db64ae1c2fd443391ff1f` |
+| `run.py` | 119 | `sha256:4b1442f4225a9105ade4ef6c2d4c79486ccde991e436a1b94bbf43d270a5f0de` |
+| `static/favicon.ico` | 68 | `sha256:2e32e11c282ff13a751906255ddd2fe45e2bb51a66ad46613ab9dd17838759a1` |
+| `static/logo.png` | 220064 | `sha256:c76f176c8c578bc139498e2953eb5c193b6368e6c1536dbe8ed749a99fed7fdd` |
+| `static/script.js` | 6974 | `sha256:78e5f755870b2cb0e29b2d1c1c77b93663dd2777ac87b34f29af258fb04eb905` |
+| `static/style.css` | 1902 | `sha256:6070c7901478d8dbedc6757ebbc5df764f839b806b0906769d112bc965667f2b` |
+
+### Batch AY — bounded target-sandbox availability gate (1 task; 1 ACCEPTED)
+
+Цель: resolve the exact-image availability blocker with one digest-pinned local
+Docker probe before authorizing any selected target code execution.
+
+#### EXP-456 — revalidate and smoke-test the exact pinned sandbox image
+Статус: ACCEPTED
+Зависит от: EXP-440 BLOCKED; fresh retry is limited to the exact same pinned image.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Точный image: `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Ожидаемый результат: exact image ID is available; bounded backend reports
+`network_isolated=true`, profile `container-network-none`, and allowlisted
+`python3 --version` exits 0; temporary container is cleaned up.
+Среда: local Docker image cache and one temporary synthetic file only; no target
+repo/code, credentials, model/provider, dependency install or external writes.
+Разрешённые пути: none (read-only diagnostics and local image cache only).
+Команды:
+1. First inspect only the exact image; if present, skip pull:
+   `RUN_DOCKER_SANDBOX_TESTS=1 docker image inspect --format '{{.Id}}' python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`
+2. Only if absent, make one exact-digest pull attempt:
+   `RUN_DOCKER_SANDBOX_TESTS=1 docker pull python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`
+3. Only if inspect/pull verifies the exact image, run the synthetic smoke:
+```bash
+RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import os
+import tempfile
+from pathlib import Path
+import sys
+sys.path.insert(0, "src")
+from app_contracts.sandbox import DockerSandboxBackend
+
+if os.environ.get("RUN_DOCKER_SANDBOX_TESTS") != "1":
+    raise SystemExit("docker opt-in is required")
+image = "python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78"
+with tempfile.TemporaryDirectory(prefix="agent00x-image-smoke-") as temporary:
+    snapshot = Path(temporary) / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "probe.txt").write_text("synthetic only", encoding="utf-8")
+    backend = DockerSandboxBackend(image)
+    with backend.create(snapshot, {"python3"}) as sandbox:
+        result = sandbox.run(("python3", "--version"))
+        if result.returncode != 0 or not sandbox.network_isolated or sandbox.security_profile != "container-network-none":
+            raise SystemExit("pinned sandbox smoke failed")
+        print("image=present")
+        print("profile=" + sandbox.security_profile)
+        print("network_isolated=true")
+        print("python3_exit=0")
+PY
+```
+Ограничения:
+- only one pull invocation, exact image digest, no tag substitution or image build;
+- if pull makes no progress for 180 seconds or fails, stop; do not retry or run
+  the synthetic smoke; record sanitized outcome and leave target code unexecuted;
+- do not run target code or Docker integration suite in this card;
+- no commit.
+Проверки:
+- exact inspect / at-most-one pull / exact smoke sequence above;
+- `git diff --check`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Exact-image inspect first returned
+`No such image`; one subsequent pull of only the immutable digest completed in
+3.2 seconds and reported the exact requested digest up to date. The specified
+synthetic `DockerSandboxBackend` smoke then passed: image present,
+`container-network-none`, `network_isolated=true`, `python3 --version` exit 0;
+temporary sandbox cleanup completed. No target repository/code, dependencies,
+credentials or provider were involved. `git diff --check` passed. This verifies
+one local profile/image configuration only; it is not an adversarial isolation
+attestation and does not prove the target application behavior. The image is
+now available in the local Docker cache, an expected effect of this card.
+
+### Batch AZ — target-code behavior probe (1 task)
+
+Цель: впервые исполнить выбранный target-файл только в уже проверенном
+network-isolated Docker профиле и проверить гипотезу обработки malformed session
+input без записи в базу.
+
+#### EXP-457 — probe pinned `save-session` input handling in Docker
+Статус: BLOCKED
+Зависит от: EXP-455 ACCEPTED; EXP-456 ACCEPTED.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Точный image:
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Target pin: `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`.
+Разрешённые target-файлы: только `backend/routes.py` (826 bytes,
+`sha256:32847307337ab9e9f02bec60c69ed1b581206f453f6d6f59ef6ea15938de1cf7`).
+Target bytes получать только anonymous bounded GitHub GET через точный commit pin;
+перед помещением в sandbox сверить blob SHA/content digest с pin и известным
+EXP-455 inventory. Исполнять только указанный blob из read-only snapshot в
+`DockerSandboxBackend`; не запускать target-код на host.
+
+Проверка: в изолированном `python3` загрузить точный `backend/routes.py` с
+минимальными synthetic stubs для FastAPI router и backend imports; вызвать
+`save_session` с нечисловым `level`, проверить исключение до вызова cursor
+`execute`/connection `commit`, затем вызвать валидный случай и проверить один
+`execute` и один `commit`. Не устанавливать зависимости, не запускать приложение,
+не запускать target test commands, не выполнять запросы к внешним сервисам из
+контейнера. Зафиксировать observed exception class и коды sandbox/network profile.
+
+Ожидаемо: malformed input отвергается до DB side effect; valid synthetic input
+сохраняет прежнее поведение. Эта узкая проверка не утверждает HTTP status 422,
+production runtime compatibility или adversarial container isolation.
+
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (card/evidence only).
+Другие файлы неизменны. Публичный GET — read-only. Без credentials, provider,
+GitHub write/branch/PR, push, deployment и commit. При pin/digest mismatch,
+неожиданной ошибке/сетевом поведении — stop, BLOCKED, без fallback/retry.
+
+Проверки:
+- выполнить только эту bounded Docker probe с `RUN_DOCKER_SANDBOX_TESTS=1`;
+- `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. Exact pinned GET и content digest
+прошли preflight, но orchestration передала в `DockerSandboxBackend` путь,
+принадлежавший уже освобождённому temporary lease; backend остановился на
+`snapshot must be a directory` до проверки образа/создания контейнера. Target-код
+не исполнялся, внешних операций не было. Карточку не повторять; follow-up должен
+явно удерживать materialized snapshot lease на всё время `backend.create/run`.
+
+### Batch BA — исправление lifecycle target probe (1 task)
+
+#### EXP-458 — retain exact snapshot lease throughout Docker probe
+Статус: ACCEPTED
+Зависит от: EXP-457 BLOCKED; причина ограничена orchestration lifecycle.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Точный image, target commit/tree, единственный разрешённый файл, content digest,
+synthetic probe, acceptance criteria и ограничения — те же, что в EXP-457.
+Изменение harness: получать snapshot через bounded anonymous GET, затем держать
+объект `MaterializedGitHubSnapshot` в активном `with`-контексте до завершения
+`DockerSandboxBackend.create`, `sandbox.run` и cleanup. До container creation
+проверить наличие snapshot directory и содержимое единственного разрешённого
+файла совпадает с pinned digest. Изменять или retry-ить EXP-457 запрещено.
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (card/evidence only).
+Без зависимостей, target test command, host execution, credentials, внешних
+запросов из контейнера, provider writes, branch/PR, push, deployment и commit.
+При повторном lifecycle/digest/image/network сбое остановиться и оставить
+EXP-458 BLOCKED без автоматической новой попытки.
+Проверки: один точный bounded Docker probe по обновлённому lease lifecycle;
+`git diff --check`.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Anonymous bounded GET вернул
+только pinned `backend/routes.py`; commit/tree, 826 bytes и content digest
+совпали с EXP-455 inventory. Материализованный snapshot lease оставался активен
+на всём интервале проверки файла и `DockerSandboxBackend.create/run/close`.
+Sandbox probe прошёл с `container-network-none`, `network_isolated=true`:
+`save_session({"level":"not-an-int"})` выбросил `ValueError`, cursor execute=0,
+connection commit=0; валидный synthetic input вернул status=ok, execute=1,
+commit=1. Зависимости не устанавливались; только указанный target-файл исполнен
+в Docker, не на host. Это подтверждает ранний отказ без DB side effect, но не
+HTTP 422 (и не HTTP status вообще), target runtime compatibility, application
+integration или adversarial isolation. EXP-457 остаётся исторически BLOCKED.
+
+### Batch BB — HTTP-level target runtime probe (1 task)
+
+#### EXP-459 — exercise exact pinned app over local HTTP in network-none Docker
+Статус: BLOCKED
+Зависит от: EXP-455, EXP-456, EXP-458 ACCEPTED; EXP-457 исторически BLOCKED.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Точный platform image для локального `linux/arm64` Docker daemon:
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+Это exact Python 3.11.16 image для target Dockerfile `FROM python:3.11-slim`,
+закреплённый на момент probe; Debian tag/OS drift остаётся открытым.
+Точный target: `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, полный 23-file bounded snapshot.
+
+Зависимости: только binary wheels, фиксированные прямые версии
+`fastapi==0.142.2`, `uvicorn==0.54.0`, `python-multipart==0.0.32`; скачать
+через `https://pypi.org/simple` для CPython 3.11 Linux aarch64 в отдельный
+temporary wheelhouse. Разрешить транзитивные зависимости только wheels,
+применив `--only-binary=:all:` (без sdist/build); каждый скачанный wheel сверить
+по точному filename и SHA-256 с PyPI JSON API (`https://pypi.org/pypi/{name}/{version}/json`).
+Записать полный package/version/filename/hash inventory в evidence. Если любой
+wheel отсутствует для target platform, hash не совпадает или dependency resolve
+не проходит — остановиться BLOCKED без source fallback.
+
+До container create сверить полный pinned snapshot metadata/content digest и
+каждый файл с bounded API claim; сохранить точный target tree неизменённым,
+добавить verified wheelhouse как отдельный временный test input. Если exact image
+отсутствует: одна попытка pull только полного digest выше; при ошибке/timeout
+остановиться. Далее установить exact verified wheelhouse только через
+`python3 -m pip install --no-index --find-links ...` внутри Docker; не запускать
+pip/install target commands на host. Запустить настоящий `uvicorn backend.main:app`
+в контейнере, вызвать `/save-session` через loopback HTTP: malformed numeric
+`level` ожидаемо даёт HTTP 500 до DB write (сначала проверить count=0); затем
+валидный JSON ожидаемо даёт HTTP 200 и ровно одну DB row. Сервер остановить в
+`finally`, контейнер и временные файлы очистить. Никакого outbound из контейнера.
+
+Этот probe только устанавливает базовое HTTP/runtime поведение на pinned code;
+он не вносит полезный change, не доказывает production runtime reproducibility
+(requirements проекта unpinned) или adversarial isolation.
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (card/evidence only); все
+source/wheelhouse/temp inputs вне worktree. Без credentials/model/provider,
+GitHub write/branch/PR, push, deployment или commit.
+Проверки: одна exact-image inspect/at-most-one pull; bounded offline HTTP probe;
+`git diff --check`.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. Exact Python 3.11.16 arm64 image
+был отсутствующим и затем загружен по одному разрешённому digest-pinned pull.
+15 CPython 3.11 Linux aarch64 wheels для зафиксированных FastAPI/Uvicorn/
+python-multipart и транзитивных зависимостей скачаны только из PyPI и сверены по
+SHA-256 с PyPI JSON API (inventory приведён в evidence follow-up). Первый
+standard CA-store запрос отказал TLS verification; повторная проверка с
+проектным `certifi` CA bundle прошла без отключения TLS. Один full-snapshot GET
+остановился на `snapshot response failed` до materialization/container creation;
+неизвестно, какой blob/status вызвал отказ. Target app/container не запускались,
+wheelhouse не устанавливался. Локально остались только ожидаемые image cache и
+temporary wheelhouse `/tmp/agent00x-exp459-wheels.ciCftS`. Карточку не повторять;
+follow-up с явно ограниченным минимальным HTTP source set может переиспользовать
+эти проверенные wheels и тот же image, но не вправе утверждать full-snapshot proof.
+
+### Batch BC — минимальный pinned HTTP integration probe (1 task)
+
+#### EXP-460 — test selected API modules over HTTP with pinned minimal source set
+Статус: BLOCKED
+Зависит от: EXP-459 BLOCKED до container run; pinned exact image и 15-wheel
+hash inventory уже локально подготовлены.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Image: `python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`
+(уже загружен ровно по digest; не pull повторно).
+Target pin тот же; разрешены только `backend/main.py` (412 bytes,
+`sha256:99701c88519975a1f9776944ae095baad6721ac376d4d4f70b8882b648a509a2`),
+`backend/routes.py` (826 bytes, `sha256:32847307337ab9e9f02bec60c69ed1b581206f453f6d6f59ef6ea15938de1cf7`),
+`backend/database.py` (314 bytes,
+`sha256:9f04e8eed6b3d139bbd2914a476d1515b5fc30227a3e6d1d6d1a63cb9dddb4e7`)
+и `backend/logic.py` (2027 bytes,
+`sha256:5c760f37d77b0a10fdd724e3fd6ba3f3f027d5edbb70f986632419847e474e3e`; bounded
+anonymous GET and exact commit/tree pin, Git blob SHA-1 and SHA-256 must match the
+EXP-455 inventory before materialization). Создать только пустые synthetic `static/`
+и `frontend/` dirs для удовлетворения mount declarations `main.py`; не выдавать
+их за pinned source.
+Переиспользовать exact image и 15-wheel inventory/sha256 из EXP-459; проверить
+wheelhouse снова локально по SHA без сетевого повтора, установить только
+`--no-index` в Docker. Не запрашивать остальные target blobs и не выполнять full
+snapshot claim в этом follow-up.
+Ожидаемый настоящий local HTTP результат: `POST /save-session` с
+`{"level":"not-an-int"}` даёт HTTP 500 и SQLite count остаётся 0; затем валидный
+synthetic payload даёт HTTP 200 и ровно одну строку с ожидаемыми значениями.
+FastAPI/Uvicorn, целевые 4 Python modules и loopback HTTP исполняются только в
+точно pinned `container-network-none`, `network_isolated=true`; ни одного
+container outbound запроса. В `finally` остановить Uvicorn, закрыть SQLite и
+удалить контейнер/temporary files.
+Это минимальный source slice со synthetic empty static dirs, не full repository
+runtime test, not a code change, не production reproducibility и не adversarial
+isolation proof. При GET/digest/dependency/startup/status/DB/cleanup ошибке
+остановиться BLOCKED без retry/fallback.
+Разрешённые пути: `.opencode/tasks/WORK_QUEUE.md` (card/evidence only); source,
+test wheelhouse и app DB — только temporary inputs. No credentials, model,
+provider writes, branch/PR, push, deployment or commit.
+Проверки: один exact bounded HTTP probe; `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. Local wheel inventory/hashes matched
+the already verified PyPI responses, but the single bounded anonymous GitHub API
+request for exact selected files failed at commit lookup with sanitized
+`snapshot response failed`; no target bytes materialized and no container was
+created. Do not retry EXP-460 or substitute an API transport under this card.
+
+### Batch BD — bounded raw-content verification and HTTP probe (1 task)
+
+#### EXP-461 — verify allowlisted raw files against accepted full-snapshot digests and test HTTP
+Статус: BLOCKED
+Зависит от: EXP-455 accepted full API metadata/digest inventory; EXP-459/460
+historically BLOCKED before target execution; EXP-456 exact image smoke accepted.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Image: `python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`
+(exact image already in cache; no pull).
+Read only these exact pinned raw URLs at commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, host exactly
+`raw.githubusercontent.com`, HTTPS certificate validation on, redirects off:
+`backend/database.py` (314 bytes,
+`sha256:9f04e8eed6b3d139bbd2914a476d1515b5fc30227a3e6d1d6d1a63cb9dddb4e7`),
+`backend/logic.py` (2027 bytes,
+`sha256:5c760f37d77b0a10fdd724e3fd6ba3f3f027d5edbb70f986632419847e474e3e`),
+`backend/main.py` (412 bytes,
+`sha256:99701c88519975a1f9776944ae095baad6721ac376d4d4f70b8882b648a509a2`),
+`backend/routes.py` (826 bytes,
+`sha256:32847307337ab9e9f02bec60c69ed1b581206f453f6d6f59ef6ea15938de1cf7`).
+Bound each response to 8192 bytes; require status 200, exact expected length and
+SHA-256 match before any target execution. Compare with EXP-455 accepted full-tree
+inventory; a match confirms exact bytes for this bounded source slice, not a new
+full-tree/provenance claim. No redirects, alternate host, fallback or retry.
+
+Reuse EXP-459's 15 exact package wheels and verify each cached filename/hash
+against the explicit inventory immediately above. No network package lookup,
+installer or package-code execution on host. Add only empty synthetic `static/`
+and `frontend/` dirs (clearly labelled) needed by pinned `main.py`; keep all
+source/wheelhouse inputs in a private temporary dir. In the pinned Docker
+container, install only those wheels with `--no-index`, run Uvicorn and test
+loopback `POST /save-session`: malformed `level` -> HTTP 500 with DB rows=0;
+then valid payload -> HTTP 200 with exact single row. Stop server and clean DB,
+container, wheelhouse and temporary inputs in `finally`. Container has no network.
+If any GET, digest, image, dependency, HTTP, DB or cleanup check fails, stop and
+leave BLOCKED without retry.
+
+Result scope: minimal 4-file API slice and synthetic static dirs, not full app
+runtime, change proposal, production reproduction or adversarial isolation proof.
+No credentials/model/provider, GitHub writes/branch/PR, push, deployment or
+commit. Allowed worktree path: `.opencode/tasks/WORK_QUEUE.md` only.
+Checks: exact 4 bounded HTTPS GETs; hash checks; exact image offline HTTP probe;
+`git diff --check`.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. All four exact raw HTTPS GETs
+returned status 200, no redirects; file sizes and SHA-256 matched the previously
+accepted inventory. The exact image and all 15 PyPI wheel hashes matched.
+Offline dependency installation into `/tmp/exp461-site` succeeded, but Python
+could not load the Pydantic native extension because DockerSandbox deliberately
+mounts `/tmp` with `noexec`; Uvicorn exited before ready. Target application
+routes were not imported, no HTTP/DB assertion ran, no network was available in
+the container, and cleanup completed. Do not repeat EXP-461. Follow-up must put
+the offline package target on the writable `/workspace` bind mount; preserve the
+intentional `/tmp` noexec security setting.
+
+### Batch BE — native dependency placement under noexec policy (1 task)
+
+#### EXP-462 — run pinned HTTP probe with packages installed on writable workspace mount
+Статус: ACCEPTED
+Зависит от: EXP-461 BLOCKED before app startup; image, verified wheel hashes and
+reason are known.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Image: same exact Python 3.11.16 arm64 digest as EXP-461; already cached, no pull.
+Повторить только bounded raw.githubusercontent.com read за четырьмя ровно
+перечисленными в EXP-461 Python-файлами на pinned commit, без redirects и только
+если все bytes снова проходят expected size/SHA-256 checks. Повторно проверить
+15 wheel files against EXP-459 explicit filename/hash inventory; no PyPI call.
+Внутри того же `container-network-none` установить зависимости offline через
+`python3 -m pip install --no-index --find-links /snapshot/test-wheelhouse
+--target /workspace/.exp462-site ...`; сохранить `/tmp` как noexec. Перед app
+import добавить `/workspace/.exp462-site` в `sys.path`; выполнять Uvicorn,
+HTTP loopback и SQLite assertions ровно по EXP-461: malformed -> 500/0 rows,
+valid -> 200/1 exact row. Empty synthetic `static/`, `frontend/` dirs остаются
+явно непроверенной подменой содержимого.
+Ожидаемый Docker профиль `container-network-none`, `network_isolated=true`; не
+добавлять mount/capability/network, не менять runner security flags. На любую
+GET/digest/hash/install/startup/HTTP/DB/cleanup ошибку остановиться BLOCKED,
+без retries/fallback. Server, container, target copy, wheelhouse и DB cleanup
+обязательны.
+No credentials/model/provider; no GitHub write/branch/PR, push, deploy or
+commit. Worktree scope: `.opencode/tasks/WORK_QUEUE.md` only; inputs temporary.
+Checks: exact 4 bounded raw GETs; offline hash-verified wheel installation into
+workspace mount; HTTP/DB assertions; `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Four exact pinned raw files
+returned HTTP 200/no redirect and matched inventory bytes/digests. Exact arm64
+image id: `sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+The 15 wheels had been downloaded using `--only-binary=:all:` from the explicit
+PyPI index and every local SHA-256 matched that exact filename's official PyPI
+JSON digest; one initial TLS check with host CA failed, then certifi TLS
+verification succeeded. EXP-461 proved the intentional `/tmp` noexec constraint;
+EXP-462 installed into `/workspace/.exp462-site`, leaving the security flags
+unchanged. Actual Uvicorn app ran in Docker `container-network-none`,
+`network_isolated=true`: malformed request returned HTTP 500 with DB rows=0;
+valid request returned HTTP 200 and exactly one row
+`("synthetic-probe",2,1,0,1,250)`. Server, DB, container and all temporary
+source/wheelhouse files were cleaned; verified wheelhouse was removed. Image
+cache remains as the explicit Docker prerequisite. This is an API behavior
+baseline, not a fix, live Worker run, full repository reproducibility claim or
+adversarial isolation attestation.
+
+Verified PyPI wheel inventory (name/version, exact artifact, SHA-256):
+- annotated-doc 0.0.5 — `annotated_doc-0.0.5-py3-none-any.whl` — `117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101`
+- annotated-types 0.8.0 — `annotated_types-0.8.0-py3-none-any.whl` — `f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0`
+- anyio 4.15.1 — `anyio-4.15.1-py3-none-any.whl` — `6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101`
+- click 8.5.0 — `click-8.5.0-py3-none-any.whl` — `255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360`
+- fastapi 0.142.2 — `fastapi-0.142.2-py3-none-any.whl` — `bd5f4d81f1e93a88bcd77caf4dfe3c2dbffc3805407a0007e9a114c18b3a670b`
+- h11 0.16.0 — `h11-0.16.0-py3-none-any.whl` — `63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86`
+- idna 3.20 — `idna-3.20-py3-none-any.whl` — `ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c`
+- opentelemetry-api 1.45.1 — `opentelemetry_api-1.45.1-py3-none-any.whl` — `b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb`
+- pydantic 2.13.5 — `pydantic-2.13.5-py3-none-any.whl` — `346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73`
+- pydantic-core 2.46.5 — `pydantic_core-2.46.5-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl` — `4f8507560a9284e1370bb048ed4282012fbef4e8d109875b95e884d228552061`
+- python-multipart 0.0.32 — `python_multipart-0.0.32-py3-none-any.whl` — `ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23`
+- starlette 1.7.0 — `starlette-1.7.0-py3-none-any.whl` — `67f8e99895493dd2911a03f11314af6ceebeae4e704bb9f43dfc6a9db151c93e`
+- typing-extensions 4.16.0 — `typing_extensions-4.16.0-py3-none-any.whl` — `481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8`
+- typing-inspection 0.4.4 — `typing_inspection-0.4.4-py3-none-any.whl` — `65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147`
+- uvicorn 0.54.0 — `uvicorn-0.54.0-py3-none-any.whl` — `505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf`
+
+### Batch BF — candidate 422 validation experiment (1 task)
+
+#### EXP-463 — test a control-plane-proposed pre-write 422 patch in the isolated target workspace
+Статус: ACCEPTED
+Зависит от: EXP-462 ACCEPTED; observed baseline is HTTP 500 / zero writes for
+malformed input and HTTP 200 / one exact row for valid input.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Image: same cached exact `python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+do not pull again.
+Fetch only the exact four raw target modules and verify EXP-455 SHA-256/size
+before any execution. Rebuild a temporary offline wheelhouse with the 15
+EXACT package versions, filenames and SHA-256 values listed in EXP-462 evidence;
+no new resolution or PyPI lookup. Run only PyPI binary wheel download for these
+exact artifacts and fail if any digest differs. Install inside Docker at
+`/workspace/.exp463-site`, preserving `/tmp` `noexec` and all Docker security
+flags.
+
+In the Docker writable target copy only (never the host source tree), apply this
+fixed Control Plane candidate to `backend/routes.py`: import `HTTPException`;
+wrap all five existing numeric `int(...)` conversions (`level`, `correct`,
+`wrong`, `total`, `time_ms`) in one `try`; catch `OverflowError`, `TypeError`,
+`ValueError`; raise `HTTPException(status_code=422, detail="numeric session
+fields must be integers") from None` before the first cursor execute. Do not
+change other behavior. This is a manually proposed candidate, not a Worker/LLM
+proposal and not a patch to the GitHub repository.
+
+Start actual `uvicorn backend.main:app` loopback in `container-network-none`.
+Verify each numeric field separately with a non-integer value returns 422 and
+leaves DB row count at zero; verify an overflow float input is also rejected
+without a write; finally valid input returns 200 and creates exactly one
+expected row. Stop server, close DB, destroy container and all temporary source,
+wheelhouse and DB inputs. Keep synthetic empty `static/` and `frontend/` dirs
+explicitly identified.
+
+No credentials, model/provider call, remote write, branch/PR, push, deployment or
+commit. Allowed worktree path: `.opencode/tasks/WORK_QUEUE.md` only; all
+experimentation in temporary inputs and the bounded container. Any source/hash,
+wheel, patch-application, HTTP/DB or cleanup failure stops this card as BLOCKED;
+no retry/fallback.
+Checks: exact four raw GETs; all 15 wheel hashes; actual HTTP/DB assertions;
+container `network_isolated=true`; `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Four pinned raw source modules
+passed status/size/SHA-256 checks; cached full target sources, installed packages
+and credentials were not used. All 15 EXP-462 wheels were reacquired at exact
+recorded versions and hashes, then installed offline into
+`/workspace/.exp463-site`; exact Python 3.11.16 image/profile remained
+`container-network-none`, `network_isolated=true`, `/tmp` stayed noexec. A fixed
+Control Plane proposal (not live Worker output) changed only the disposable
+container workspace copy of `backend/routes.py`; candidate file SHA-256:
+`a14092ed533c14cdd15cf39b1dfb3b67f3b953c7101836223413f9a9b78b4d2b`.
+Real Uvicorn loopback checks: each of five malformed numeric fields -> HTTP 422,
+zero SQLite rows; overflow float -> 422, zero rows; valid payload -> HTTP 200,
+one exact row `("synthetic-probe",2,1,0,1,250)`. Server, DB, container, source
+copy and wheelhouse cleaned. Candidate is only experiment evidence: it was not
+written to the user repository or GitHub, was not generated by Worker, and has
+not been independently reviewed or passed through the MVP publication chain.
+
+### Batch BG — DeepSeek credential-safe HTTP channel (1 task)
+
+#### EXP-464 — implement fixed-endpoint bounded DeepSeek transport behind the existing channel interface
+Статус: ACCEPTED
+Зависит от: Batch AV fake-only `DeepSeekProposalWorker` contract; latest official
+DeepSeek Chat Completions docs checked 2026-10-07.
+Изменить только `src/app_contracts/deepseek_http_channel.py`,
+`tests/test_deepseek_http_channel.py`, `docs/27-implementation-status.md`.
+Implement `DeepSeekChatCompletionsChannel` with fixed HTTPS host
+`api.deepseek.com` and path `/chat/completions`, TLS hostname/certificate
+verification, no redirects/retries, bounded request/response bytes, mandatory
+finite timeout from caller (`0 < timeout <= 30s`), and a narrow injected opaque
+API-key provider callback. Read its token only inside the transport call; never
+put it into payload, result, exception text, repr, logs, filesystem or environment
+lookup. Never expose body/error response content; only return parsed
+`ChatCompletionsModelResult` accepted by existing worker. Do not make any actual
+network request or provider call in this task. Fixed model/JSON payload must
+remain compatible with the current worker contract. Add fake-transport tests for
+request host/path/method/headers/payload, key-provider single invocation,
+timeout, TLS setup, error sanitization, body limits, malformed/redirect/status
+responses, and no retries. Explicitly document that a callback within one Python
+process is an API boundary, not adversarial process isolation.
+
+No API token, environment read, `.env` access, provider spend, external write,
+target repo access, GitHub write, branch/PR, push, deployment or commit. No broader
+worker/policy/sandbox changes. Commands:
+`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_deepseek_http_channel -q`
+and full suite `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`;
+then `git diff --check`. Preserve unrelated worktree changes.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added fixed-host/path HTTPS
+transport with verified TLS+certifi, request/response bounds, one injected key
+provider invocation, bounded socket timeout, no redirect/retry, strict JSON
+response parsing and sanitized failures. Provider reasoning is discarded;
+channel repr/result/exception paths do not expose the synthetic key or response
+error body. Eleven offline fake-only tests pass (request contract, TLS/timeout,
+errors, bounds, malformed/duplicate JSON, no retries, source boundary). Full
+suite was recorded as 893 total tests with 2 opt-in Docker tests skipped; the
+raw unittest summary was not retained, so the historical pass count is
+unconfirmed. `git diff --check` passed. No
+real API/key/provider request occurred. The callback remains an in-process API
+boundary, not adversarial isolation; no credential source/account spend cap or
+live model evidence is configured.
+
+### Batch BH — durable stage integration for remote executions (1 task)
+
+#### EXP-465 — require exact-readback durable stage in remote snapshot composition
+Статус: ACCEPTED
+Зависит от: Batch AW durable-stage sink, Batch BG DeepSeek channel contract.
+Изменить только `src/app_contracts/worker_cli.py`,
+`tests/test_worker_cli.py`, `tests/test_remote_snapshot_pipeline.py`,
+`docs/27-implementation-status.md`, this queue evidence.
+Extend `run_remote_snapshot_execution` with `stage_sink` and
+`require_durable_stage` (default `True` for remote snapshot execution); reject
+missing/invalid sink before workspace creation/worker call, and forward both
+values to `run_local_execution`. Synthetic fixture preview must opt out
+explicitly and remain visibly fixture-only. Add an integration test through
+`run_remote_snapshot_execution` using the synthetic calculator snapshot, fake
+DeepSeek Worker, local sandbox, bounded subprocess verifier and temporary
+`SQLiteStagedArtifactStore`; assert exact stage readback, preview, typed digest
+and only `run_local_mock_publication` receipt share the same digest. Add
+fail-closed tests proving absent sink prevents execution and lease cleanup is
+preserved. Do not claim this synthetic source or subprocess is production or
+independently trusted evidence.
+No network, target repo, model/provider call, credentials, GitHub write, branch,
+PR, push, deployment or commit. No change to executor public behavior beyond the
+existing stage parameters and no changes outside the listed files.
+Commands:
+`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_snapshot_pipeline tests.test_worker_cli -q`
+and full suite `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`;
+then `git diff --check`. Preserve all preexisting unrelated worktree changes.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `run_remote_snapshot_execution`
+now defaults to durable staging, rejects missing/invalid sinks before workspace
+creation, and forwards `stage_sink` plus `require_durable_stage` to the executor.
+The fixture preview explicitly opts out. A synthetic end-to-end test used the
+fake DeepSeek channel, local sandbox, bounded subprocess verifier and temporary
+SQLite stage store; exact artifact readback, read-only preview and local
+mock-publication receipt shared one staged digest. Missing/invalid sink tests
+prove no materialization or executor call; existing lease cleanup checks pass.
+Targeted suite: 22 tests passed. Full suite: 895 tests ran, 893 passed, and 2
+opt-in Docker tests were skipped; `git diff --check` passed. This remains synthetic/local evidence, not
+live Worker output or an independently trusted verifier. No target repo/network,
+credentials, provider writes, publication, deployment or commit occurred.
+The full-suite run emitted non-fatal `ResourceWarning`s for unclosed SQLite
+connections in the existing suite; this card did not trace or remediate them.
+
+### Batch BI — pinned target candidate through isolated verification and staging (1 task)
+
+#### EXP-466 — compose the 422/no-write candidate through the full local approval chain
+Статус: BLOCKED
+Зависит от: EXP-455 full snapshot inventory, EXP-463 HTTP behavior candidate,
+Batch AW durable stage, Batch AM Docker verifier, Batch BH remote composition.
+Использовать только публичный read-only snapshot
+`SoldatovAlexander/brainbooster_full_v11` at commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, expected full content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`
+and 23 blobs. One full bounded anonymous GET per fixed-pinned reader; no retry.
+
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Execution image:
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+Verifier base:
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Build one fresh local verifier image from the exact base, current allowlisted
+verifier sources and `containers/verifier/Dockerfile`, with Docker pull disabled
+and build network none; derive and use its immutable image ID and exact context
+code digest. No tag-only identity may enter verifier config. Target code runs
+only in the two configured Docker containers (`network=none`): the declared
+route behavior test uses standard-library synthetic FastAPI/database stubs.
+Do not import or execute target modules on the host. The candidate is generated
+by a deterministic fake Chat Completions channel from the fixed EXP-463
+Control Plane hypothesis; it is not a live Worker/model proposal. Expected
+candidate bytes SHA-256: `500746474ee6118783975cbb8aee4d0eeed5fcb9a3b4ff66cffcd855cf96485c`.
+
+Run `run_remote_snapshot_execution` with the exact full snapshot, only declared
+path `backend/routes.py`, `DockerSandboxBackend` using the exact execution image,
+`DockerContainerVerifier` using the fresh immutable verifier image/code pair,
+and temporary `SQLiteStagedArtifactStore`. Both executor replay and independent
+container verifier must prove malformed numeric input raises HTTP-exception
+status 422 before cursor execute/connection commit, and a valid payload retains
+exactly one execute/commit. Then exact-readback the stage, render its read-only
+preview, and call only `run_local_mock_publication` with the exact staged digest.
+Assert snapshot pin/content digest, candidate file digest, trusted verifier
+image/code identity, durable artifact digest, preview digest, and mock receipt
+digest/repository all match their expected bindings. Always clean temporary DB,
+snapshot leases, sandboxes and stopped verifier containers.
+
+Allowed worktree paths: `tests/test_remote_target_stage_pipeline.py` (new),
+`docs/27-implementation-status.md`, and this queue evidence. No source files in
+the target repository are written. No API key, model/provider call, GitHub write,
+branch, PR, push, deployment or commit. Do not represent the fake proposal,
+stubbed route dependencies, or same-Docker-daemon verifier as a live Worker,
+full application test, independent kernel/daemon attestation, or production
+security proof. If the pin, Docker profile, candidate digest or cleanup differs,
+stop and record BLOCKED without retry.
+
+Checks: one opt-in test command
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`;
+then `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q` and
+`git diff --check`. Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. The one permitted opt-in invocation
+successfully built a fresh verifier image offline from the pinned cached base;
+image ID `sha256:f44e93faf9c93e233a3789a392a8528f55f8e72589b11e7273d5b722b97125e8`,
+verifier context code digest
+`sha256:bdbbb7ce12135e43d9672bc2b4a61748786c185fb55ad28796a932c417bdcb41`.
+The first public GitHub commit request returned only the sanitized stable error
+`github snapshot: snapshot response failed`; the card forbids retries, so no
+retry was made. No full snapshot/blob content was obtained; no proposal was
+generated, no target code/container verifier ran, and no stage/preview/mock
+approval was created. `docker ps` showed no running containers. The new local
+verifier image remains cached. Reopen this experiment only after an external
+state change permits one new authorized read; do not repeat it against the
+unchanged state.
+Offline full suite after recording the failure: 896 tests ran, 893 passed, and
+3 opt-in Docker tests were skipped; existing non-fatal SQLite `ResourceWarning`s were emitted.
+`git diff --check` passed. The opt-in command is recorded as one failed attempt,
+not retried.
+
+### Batch BJ — reconcile the MVP plan with the current R2 evidence (1 task)
+
+#### EXP-467 — update the plan checkpoint without changing the exit bar
+Статус: ACCEPTED
+Зависит от: current evidence in `docs/27-implementation-status.md` and the
+Batch AN—BI records in this queue.
+Изменить только `docs/24-mvp-final-plan.md` and this queue evidence.
+Update the R2 checkpoint date and factual status through Batch BI: full pinned
+snapshot intake is evidenced; target HTTP baseline and one disposable
+Control-Plane candidate experiment are bounded evidence; BG/BH local worker,
+transport, stage and mock integrations are fake/synthetic; BI stopped before
+snapshot acquisition after one read failure. Record current local suite as
+896 passed, 3 opt-in Docker skips. Preserve the unchanged MVP exit requirements
+from this plan, especially a useful live-Worker proposal, verified network-
+isolated execution, independently trusted verifier, authenticated exact-digest
+approval, durable recovery and controlled PR publication. Preserve R3—R5 and
+do not claim R2 or MVP complete.
+No code, network, credentials, Docker, target reads, provider calls/writes,
+branch, PR, push, deployment or commit. Commit: DENIED.
+Checks: compare the edited checkpoint against `docs/27-implementation-status.md`
+and the queue evidence; `git diff --check`. Preserve unrelated worktree changes.
+Результат Control Plane: ACCEPTED 2026-10-07. Replaced the stale 2026-09-30
+R2 checkpoint in `docs/24-mvp-final-plan.md` with evidence current through
+Batch BI: fixed remote pin and API-claim limitation; target baseline and
+disposable candidate results; fake-only Worker/HTTP channel; durable SQLite
+stage and mock approval; one blocked intake attempt; current 896/3 suite status.
+Preserved R2 as open, retained the full live Worker / sandbox / trusted verifier /
+approval / recovery / controlled PR exit bar, and left R3—R5 unchanged.
+`git diff --check` passed. No code, network, credentials, Docker, external write
+or commit.
+
+### Batch BK — enforce an abortable DeepSeek transport deadline (R2 execution batch 22; 1 task)
+
+#### EXP-468 — abort an in-flight fixed-endpoint HTTPS request at its deadline
+Статус: ACCEPTED
+Зависит от: Batch BG fake-tested DeepSeek channel; EXP-448 timeout boundary.
+Изменить только `src/app_contracts/deepseek_http_channel.py`,
+`tests/test_deepseek_http_channel.py`, `docs/24-mvp-final-plan.md`,
+`docs/27-implementation-status.md` and this queue evidence.
+Start one request-wide deadline for the network phase after successful opaque
+key-provider return. A one-shot watchdog must close the single fixed HTTPS
+connection at expiry so a blocked request/header/body read is interrupted;
+check timeout state after each operation and cancel/join or safely retire the
+watchdog before response parsing. Emit one stable sanitized timeout error, close
+the connection, do not retry, and never include request/response/key contents.
+Add fake-connection tests that block inside request and response read until
+closed, advance across the deadline, assert prompt unblocking, one call, cleanup,
+and redaction. Retain TLS, byte caps, fixed endpoint and current normal behavior.
+No live provider/API call or credentials in this task.
+
+Precisely document residuals: synchronous key-provider callback occurs before
+the network watchdog; operating-system DNS resolution and OS/kernel scheduling
+are not independently cancellable or attested; a same-process timer/socket-close
+is an abort mechanism, not process isolation or proof of a real provider's
+billing/cancellation behavior. Therefore improve the bounded transport, but do
+not claim full end-to-end runtime cancellation or close the R2 timeout gate.
+Commands: targeted `tests.test_deepseek_http_channel`, then full suite and
+`git diff --check`. No external writes, target repo access, credentials,
+provider request, branch/PR, push, deployment or commit. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The fixed HTTPS channel now starts
+one request-wide deadline immediately after the opaque key callback, spanning
+local TLS/connection setup and transport; a one-shot same-process watchdog
+closes the connection while request or response-body read blocks, and checks
+the deadline between transport operations.
+After the bounded body read the watchdog is cancelled and joined before parsing;
+finally also retires it and closes the connection. Timeout errors are stable and
+sanitized, and no retries were added. Added two fake-only blocked-I/O tests that
+assert unblocking under one second, one provider/factory call, and connection
+cleanup. Targeted suite: 13 passed. Full suite: 898 ran, 895 passed, 3 opt-in
+Docker tests skipped; non-fatal SQLite ResourceWarnings appeared. `git diff
+--check` passed. No provider/API call, credentials, external writes, Docker,
+commit or publication occurred. This does not prove DNS/key-callback deadlines,
+process isolation, real provider cancellation/billing behavior or close the R2
+timeout gate.
+
+### Batch BL — prove deadline interruption on real local sockets (R2 execution batch 23; 1 task)
+
+#### EXP-469 — interrupt a blocked standard-library socket read on loopback
+Статус: ACCEPTED
+Зависит от: Batch BK / EXP-468 watchdog and fake blocked-I/O tests.
+Изменить только `src/app_contracts/deepseek_http_channel.py`,
+`tests/test_deepseek_http_channel.py`, `docs/24-mvp-final-plan.md`,
+`docs/27-implementation-status.md` and this queue evidence.
+Replace connection close-only abort with a fail-safe attempt to shutdown the
+active socket (`SHUT_RDWR`) before closing it; tolerate connection fakes or
+socket objects without shutdown. Add a loopback-only test harness whose injected
+connection factory uses real `http.client.HTTPConnection` and `socket`, always
+targets `127.0.0.1`, and never resolves or contacts an external host. Prove a
+server withholding response headers and a server sending headers plus a partial
+body both unblock promptly as the stable sanitized deadline error, with one
+request, closed connection and cleaned-up server threads/sockets. Keep fake
+tests. No external network, DeepSeek/GitHub request, credentials, Docker,
+target repository operation or commit.
+Precisely limit the claim: this validates active plain-HTTP loopback socket
+interruption through stdlib `HTTPConnection`, not HTTPS/TLS handshake, DNS,
+provider behavior, OS variants or isolation. Preserve R2 timeout gate as open.
+Commands: targeted channel tests, full suite, `git diff --check`. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The deadline abort path now
+attempts `shutdown(socket.SHUT_RDWR)` on the active connection socket before
+`close()`, while retaining compatibility with fakes or sockets without
+`shutdown`. Added loopback-only integration tests using the real stdlib
+`HTTPConnection` and actual TCP sockets pinned directly to `127.0.0.1`: one
+server withholds response headers and one sends headers plus a partial body.
+Both unblock within one second with the fixed sanitized timeout error; exactly
+one key-provider call and connection occur, and server threads/socket cleanup
+complete. Targeted suite: 14 passed. Full suite: 899 ran, 896 passed, 3 opt-in
+Docker tests skipped; non-fatal SQLite ResourceWarnings appeared. `git diff
+--check` passed. No external network, credentials, Docker, target repository
+operation, provider call, external write, commit or publication. This proves
+only active plain-HTTP stdlib socket interruption on this host; it does not
+prove HTTPS/TLS handshake behavior, DNS cancellation, cross-OS behavior,
+provider behavior or isolation, so the R2 timeout gate stays open.
+
+### Batch BM — verify active TLS socket interruption locally (R2 execution batch 24/24; 1 task)
+
+#### EXP-470 — prove response-read cancellation over loopback HTTPS
+Статус: ACCEPTED
+Зависит от: Batch BL / EXP-469 active plain-HTTP socket interruption.
+Изменить только `src/app_contracts/deepseek_http_channel.py`,
+`tests/test_deepseek_http_channel.py`, `docs/24-mvp-final-plan.md`,
+`docs/27-implementation-status.md` and this queue evidence.
+Extend the local socket harness to a real loopback TLS server and actual
+`http.client.HTTPSConnection`/`ssl.SSLSocket` for host name `api.deepseek.com`,
+with connection routing pinned directly to `127.0.0.1` by the test factory.
+Generate a short-lived synthetic self-signed certificate and key in a private
+temporary directory (never print or retain either); add that certificate only
+to the test's injected SSL context, preserving hostname and certificate checks.
+Prove blocked HTTPS response-header and partial-body reads unblock promptly with
+the stable sanitized timeout error, one request, and full thread/socket/temp
+cleanup. If `openssl` is unavailable, mark the HTTPS-only tests skipped and
+record why; do not substitute external network. Keep all current fake and plain
+HTTP loopback coverage. Do not extend the claim to blocked TLS handshake,
+provider behavior, DNS, other OSes or isolation. No external requests,
+credentials, Docker, target writes, commit or publication. Commands: targeted
+channel tests, full suite, `git diff --check`. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added a loopback TLS server and
+actual `http.client.HTTPSConnection`/`ssl.SSLSocket` path. LibreSSL/OpenSSL tool
+generated a one-day synthetic self-signed certificate with
+`DNS:api.deepseek.com` SAN and key only in a temporary directory; the injected
+client context trusted that certificate while hostname checking remained on.
+The client connection factory routes directly to `127.0.0.1`, with no external
+DNS/network. Both a blocked response-header read and a partial-body read returned
+the fixed sanitized deadline error in under one second; each used one provider
+call/connection and cleaned server threads, sockets and temporary files.
+Targeted suite: 15 passed. Full suite: 900 ran, 897 passed, 3 opt-in Docker
+tests skipped; non-fatal SQLite ResourceWarnings appeared. `git diff --check`
+passed. No real credentials, external provider call, Docker, target operation,
+external write, commit or publication. This covers only active HTTPS request
+and read phases on this host, not a blocked TLS handshake, DNS cancellation,
+other OSes, provider cancellation/billing behavior or isolation; R2 stays open.
+
+### Batch BN — verify stalled TLS handshake cancellation (R2 execution batch 25/25; 1 task)
+
+#### EXP-471 — interrupt a loopback peer that stalls TLS negotiation
+Статус: ACCEPTED
+Зависит от: Batch BM / EXP-470 active HTTPS response-read interruption.
+Изменить только `src/app_contracts/deepseek_http_channel.py`,
+`tests/test_deepseek_http_channel.py`, `docs/24-mvp-final-plan.md`,
+`docs/27-implementation-status.md` and this queue evidence.
+Add a local TCP peer pinned to `127.0.0.1` that accepts a real
+`http.client.HTTPSConnection` TCP connect and deliberately withholds the TLS
+ServerHello. Prove the in-progress HTTPS handshake is interrupted within one
+second by the configured deadline, returning only the stable sanitized timeout
+error, with one key-provider/factory call and complete socket/thread cleanup.
+Use the real verified context from the channel; no certificate, proxy, external
+DNS, outside network, provider or credentials. Keep existing fake, HTTP and
+HTTPS response-read tests. If close/shutdown cannot interrupt the handshake,
+make the smallest in-scope production fix and repeat the local test.
+Do not claim OS-wide, DNS, provider behavior, billing or process isolation.
+Commands: targeted channel tests, full suite, `git diff --check`. No target repo,
+Docker, external write, commit or publication. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. A plain local TCP peer bound to
+`127.0.0.1` accepted the real `HTTPSConnection` connect and withheld any TLS
+ServerHello. With the real verified channel context and no certificate or DNS,
+the active raw socket was interrupted within one second; caller received only
+`deepseek channel: provider request timed out`. Exactly one credential callback
+and connection factory ran, and the peer thread/socket exited cleanly. This
+confirms cancellation of a stalled TLS handshake on this host in addition to
+loopback HTTPS response reads. Targeted suite: 16 passed. Full suite: 901 ran,
+898 passed, 3 opt-in Docker tests skipped; non-fatal SQLite ResourceWarnings
+appeared. `git diff --check` passed. No external network, real credentials,
+provider call, Docker, target operation, external write, commit or publication.
+DNS resolution/cancellation, key callback cancellation, cross-platform behavior,
+provider-side cancellation/billing, and process isolation remain unproven; R2
+timeout gate stays open.
+
+### Batch BO — prove deadline interruption during request upload (R2 execution batch 26/26; 1 task)
+
+#### EXP-472 — abort a blocked local request-body send
+Статус: ACCEPTED
+Зависит от: Batch BN / EXP-471 stalled TLS handshake interruption.
+Изменить только `src/app_contracts/deepseek_http_channel.py`,
+`tests/test_deepseek_http_channel.py`, `docs/24-mvp-final-plan.md`,
+`docs/27-implementation-status.md` and this queue evidence.
+Add a loopback-only TCP peer that accepts the channel's injected stdlib
+`HTTPConnection` and deliberately does not read its request. Constrain test
+socket send/receive buffers and use a valid request close to the channel's
+existing maximum, so `HTTPConnection.request()` blocks while sending the body.
+Assert the watchdog's socket shutdown unblocks this active write within one
+second as the sanitized timeout error, `request()` did not finish, exactly one
+provider/factory call occurred, and both sides clean up. The factory and peer
+must route exclusively to `127.0.0.1`; no DNS, HTTPS provider, credentials,
+external network, Docker, target reads/writes or commit. Preserve all prior
+fake/TCP/TLS tests. If the write cannot be reliably blocked across platforms,
+skip only the narrowly unsupported socket test with explicit reason rather than
+claiming upload interruption. Commands: targeted channel tests, full suite,
+`git diff --check`. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07 with the card's explicit
+unsupported-platform skip. The local peer was pinned to `127.0.0.1`, stopped
+reading, and set a 1-KiB receive buffer before `listen`; the injected stdlib
+client socket likewise requested a 1-KiB send buffer before `connect`. The test
+sent the largest safe synthetic request tried (127,500-byte message content).
+On this macOS loopback stack, `HTTPConnection.request()` still completed before
+the deadline because the bounded upload fit in kernel buffering; timeout then
+occurred while waiting for a response. The narrow test asserts that behavior
+and calls `skipTest` with the observed reason rather than mislabeling the read
+timeout as blocked-upload evidence. Existing fake blocked-request coverage and
+HTTP/HTTPS header/body plus stalled-handshake loopback evidence remain intact.
+Targeted suite: 17 tests, 16 passed and 1 explicitly skipped. Full suite: 902
+ran, 898 passed, 4 skipped (3 opt-in Docker, 1 loopback upload backpressure);
+non-fatal SQLite ResourceWarnings appeared. `git diff --check` passed. No
+external requests, credentials, Docker, target operation, external write,
+commit or publication. Real network upload backpressure remains unproven and
+must not be inferred from this skip.
+
+### Batch BP — compose DeepSeek Worker with a real local HTTPS channel (R2 execution batch 27/27; 1 task)
+
+#### EXP-473 — round-trip one synthetic proposal over loopback TLS
+Статус: ACCEPTED
+Зависит от: Batch BG DeepSeek Worker/channel contracts; Batch BM verified local
+HTTPS request/response harness.
+Изменить только `tests/test_deepseek_http_channel.py`,
+`docs/24-mvp-final-plan.md`, `docs/27-implementation-status.md` and this queue
+evidence. Add an integration test wiring `DeepSeekProposalWorker` to the actual
+`DeepSeekHTTPChannel` and the existing local TLS server. Generate a temporary
+SAN-matching certificate as in EXP-470; the injected verified SSL context trusts
+only that synthetic local certificate and the connection routes directly to
+`127.0.0.1`. The server returns one fixed synthetic Chat Completions JSON body;
+assert the actual request method/path/body contract, opaque synthetic bearer
+header, strict valid `WorkerProposal`, one callback/request, no retries, and
+that the key/reasoning never enter proposal or sanitized errors. This is a
+wire/adapter composition test, not a live LLM call, useful generated change,
+remote snapshot, sandbox/verifier/stage/approval chain, or provider evidence.
+No external network, real credentials, Docker, target read/write, commit or PR.
+Commands: targeted channel tests, full suite, `git diff --check`. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The actual `DeepSeekProposalWorker`
+called the production `DeepSeekHTTPChannel` over a verified local TLS session
+to `127.0.0.1`; the hostname/SAN check stayed enabled. The peer returned one
+fixed synthetic Chat Completions response. The outgoing request used the fixed
+`POST /chat/completions` contract, model/reasoning mode, JSON response format
+and one opaque synthetic bearer header; the key was absent from the request
+body and proposal. The Worker returned exactly the declared-path
+`WorkerProposal`, and provider reasoning content did not enter its representation.
+One callback and one connection were observed. The one-day certificate/key were
+temporary and deleted after test cleanup. Targeted suite: 18 tests, 17 passed
+and the documented loopback upload-backpressure test skipped. Full suite: 903
+ran, 899 passed, 4 skipped (3 opt-in Docker, 1 upload backpressure); non-fatal
+SQLite ResourceWarnings appeared. `git diff --check` passed. This is synthetic
+local wire/adapter composition only—not live inference, a useful target change,
+or the sandbox/verifier/stage/approval/publication chain. No external request,
+credentials, Docker, external write, target operation, commit or publication.
+
+### Batch BQ — portable credential-source contract (R2 execution batch 28/28; 1 task)
+
+#### EXP-474 — define a platform-neutral single-credential source contract
+Статус: ACCEPTED
+Цель: закрепить существующую callback boundary как portable contract для
+будущих OS-vault adapters, не реализуя и не эмулируя конкретное системное
+хранилище внутри production-кода.
+Зависит от: EXP-464, EXP-473 ACCEPTED.
+Среда исполнения: local synthetic credential only; fake or loopback test paths;
+no external provider/network request.
+Разрешённые пути:
+- `src/app_contracts/credential_source.py`
+- `src/app_contracts/deepseek_http_channel.py`
+- `tests/test_deepseek_http_channel.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- `CredentialSource` is a runtime-checkable callable protocol for one opaque
+  credential and imports no platform-specific APIs, environment, filesystem or
+  vault implementation;
+- the DeepSeek channel accepts that protocol without changing lookup timing,
+  request behavior, or secret-handling semantics;
+- the existing synthetic in-memory test provider conforms to the protocol and
+  tests retain the no-leak/single-call properties;
+- documentation says this is an interface + synthetic conformance test only;
+  no macOS Keychain, Linux Secret Service, Windows Credential Manager, live
+  credential or production-safe store is claimed;
+- targeted and full offline tests pass, then `git diff --check` passes.
+Вне scope: reading/requesting real credential values, `.env`, environment lookup,
+OS keychain/vault adapters, real DeepSeek request, spend, Docker, GitHub, target
+repo, provider writes, commit or publication.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `CredentialSource` is a
+runtime-checkable, platform-neutral single-credential callable protocol; the
+DeepSeek HTTPS channel now types its existing injected callback against it
+without changing runtime lookup or transport behavior. Existing synthetic
+`KeyProvider` conforms and is checked by an offline test. Targeted channel suite:
+19 tests, 18 passed and 1 upload-backpressure test skipped. Full suite: 904
+tests, 900 passed and 4 skipped (3 opt-in Docker, 1 upload backpressure).
+`git diff --check` passed. Non-fatal SQLite ResourceWarnings appeared during
+the full suite. No real credential, environment, vault, external network or
+provider call was used. This does not implement or prove a secure OS credential
+store; macOS/Linux/Windows adapters are planned separately after MVP.
+
+### Batch BR — sanitized GitHub snapshot failure diagnostics (R2 execution batch 29/29; 1 task)
+
+#### EXP-475 — retain bounded HTTP status in anonymous snapshot failures
+Статус: ACCEPTED
+Цель: различать безопасные HTTP failure classes GitHub snapshot reader без
+вывода ответа сервера и без повторных запросов.
+Зависит от: EXP-412, EXP-466 BLOCKED.
+Среда исполнения: local fake transport only; no external requests.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `tests/test_github_snapshot.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- HTTP status is accepted only as a non-boolean integer in 100..599;
+- non-200 failures expose only the numeric HTTP status in a stable diagnostic;
+  response body, headers, URL, credentials and remote text remain absent;
+- fake tests cover 403, 404, 429, 500 and out-of-range statuses, and prove one
+  transport invocation with no retry;
+- documentation records this as diagnostic support, not a retry or successful
+  intake; all offline tests and `git diff --check` pass.
+Вне scope: network, credentials, live snapshot, retry, blob access, Docker,
+provider calls/writes, target execution, commit or publication.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The snapshot reader now rejects
+non-integer/boolean/out-of-range HTTP statuses and preserves only the numeric
+status in non-200 diagnostics. Fake cases for 403/404/429/500 prove the body
+canary is not included and exactly one transport call occurs; 99 and 600 fail
+as invalid transport results. Targeted reader suite: 38 tests passed. Full suite:
+904 tests, 900 passed, 4 skipped (3 opt-in Docker, 1 upload backpressure).
+`git diff --check` passed; non-fatal SQLite ResourceWarnings occurred in the
+full run. No external request or credential was used. This improves diagnosis
+only; the blocked full snapshot intake was not retried and no target pipeline ran.
+
+### Batch BS — surface sanitized snapshot status in CLI evidence (R2 execution batch 30/30; 1 task)
+
+#### EXP-476 — expose typed anonymous HTTP status as a safe CLI failure code
+Статус: ACCEPTED
+Цель: сохранить полезную HTTP status диагностику через минимальный CLI, не
+выводя исключения, remote response content или другие данные запроса.
+Зависит от: EXP-475 ACCEPTED.
+Среда исполнения: local synthetic exceptions/fake transports only; no network.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- non-200 `GitHubSnapshotError` carries validated optional numeric `http_status`;
+- `--remote-snapshot-metadata` maps it only to a bounded
+  `remote-snapshot-http-NNN` failure code; errors without typed status retain
+  the generic stable failure code;
+- tests prove remote body text and raw exception details are never printed;
+- targeted CLI/snapshot tests, full offline suite and `git diff --check` pass.
+Вне scope: public network retry, snapshot/blob intake, credentials, model call,
+Docker, target execution, provider writes, commit or publication.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `GitHubSnapshotError` now carries
+an optional validated HTTP status; the pinned metadata CLI emits only
+`remote-snapshot-http-NNN` for that typed failure and preserves its generic code
+for other errors. A canary embedded in the exception message did not appear in
+stdout/stderr. Combined targeted reader/CLI suite: 57 tests passed. Full suite:
+905 tests, 901 passed and 4 skipped (3 opt-in Docker, 1 upload backpressure).
+`git diff --check` passed; non-fatal SQLite ResourceWarnings appeared. No
+network, credential, snapshot read, target code, Docker, or external write was
+used. This is diagnostic/evidence behavior only; EXP-466 remains BLOCKED and was
+not retried.
+
+### Batch BT — anonymous GitHub rate-limit readiness check (R2 execution batch 31/31; 1 task)
+
+#### EXP-477 — inspect only public unauthenticated GitHub rate-limit headers
+Статус: ACCEPTED
+Цель: проверить, разрешает ли текущее anonymous GitHub API state один новый
+bounded read-only snapshot intake после исторического sanitized non-200.
+Зависит от: EXP-466 BLOCKED, EXP-475, EXP-476 ACCEPTED.
+Среда исполнения: one unauthenticated verified-TLS GET to exactly
+`https://api.github.com/rate_limit`; no repository contents or other endpoint.
+Разрешённая команда:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import http.client
+import re
+import ssl
+
+import certifi
+
+context = ssl.create_default_context()
+context.load_verify_locations(cafile=certifi.where())
+if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+    raise SystemExit("tls_verification_unavailable")
+connection = http.client.HTTPSConnection("api.github.com", timeout=8, context=context)
+status = remaining = reset = None
+try:
+    connection.request("GET", "/rate_limit", headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-ReadOnly-Snapshot/1",
+    })
+    response = connection.getresponse()
+    status = response.status
+    remaining = response.getheader("X-RateLimit-Remaining")
+    reset = response.getheader("X-RateLimit-Reset")
+    response.close()
+except Exception as exc:
+    print("transport_error_type=" + type(exc).__name__)
+    raise SystemExit(1)
+finally:
+    connection.close()
+for label, value in (("rate_remaining", remaining), ("rate_reset_unix", reset)):
+    if value is not None and (len(value) > 12 or re.fullmatch(r"[0-9]+", value) is None):
+        value = "unavailable"
+    print(label + "=" + (value if value is not None else "unavailable"))
+print("http_status=" + (str(status) if status is not None else "unavailable"))
+PY
+```
+Критерии приёмки:
+- exactly one GET to the fixed rate-limit endpoint, no auth headers, proxy,
+  retry, repo/blob request, credential/config reads or writes;
+- response body is not consumed/emitted; only HTTP status and validated numeric
+  rate-limit remaining/reset headers are reported;
+- if headers indicate no available budget or transport fails, stop and do not
+  retry; a later exact snapshot card is required;
+- `git diff --check` passes.
+Вне scope: commit/tree/blob reads, actual snapshot intake, target code, Docker,
+credentials, model/provider requests, writes, branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. One verified-TLS anonymous GET
+returned HTTP 200, `rate_remaining=60`, and numeric reset timestamp; response
+body was not consumed. No repository content was requested.
+
+### Batch BU — retry the pinned local pipeline after API readiness evidence (R2 execution batch 32/32; 1 task)
+
+#### EXP-478 — run the pinned candidate pipeline once after positive rate-limit preflight
+Статус: BLOCKED
+Цель: после свежего anonymous rate-limit result (`HTTP 200`, `remaining=60`)
+один раз пройти exact pinned snapshot через локальную sandbox, verifier, durable
+stage, preview и mock-only receipt.
+Зависит от: EXP-463, EXP-466 BLOCKED, EXP-477 HTTP 200.
+Внешняя цель: only public read-only
+`SoldatovAlexander/brainbooster_full_v11` at commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Exactly one opt-in pipeline invocation; if intake fails, record only sanitized
+HTTP status and do not retry. No credentials or provider calls.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Execution image:
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+Verifier base:
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`;
+build a fresh verifier image offline, pull disabled, use only immutable image ID
+and exact verifier code digest.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- reader verifies exact commit/tree/content digest and all 23 blobs;
+- fixed synthetic candidate digest is exactly
+  `sha256:500746474ee6118783975cbb8aee4d0eeed5fcb9a3b4ff66cffcd855cf96485c`;
+- both target sandbox and Docker verifier use `network=none`; only declared
+  `backend/routes.py` is executed in the disposable target container;
+- malformed numeric fields produce 422 before writes and valid input retains
+  exactly one expected row in both checks;
+- stage save/readback, preview and mock receipt bind the exact digest/repository;
+- always clean stage DB, source lease and containers; no provider write, branch,
+  PR, push, deployment, real Worker, or claim of independent Docker-daemon trust;
+- after this single attempt do not repeat regardless of outcome.
+Проверка:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`
+then full suite and `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07 after the one authorized run. The
+public rate-limit preflight had returned HTTP 200 with 60 remaining. The exact
+23-blob pinned intake succeeded and commit/tree/full content digest matched.
+The run stopped at the pre-execution candidate digest assertion: the test added
+`sha256:` to `sha256_bytes()` even though that helper already returns a prefixed
+digest, and its expected digest was stale. The observed raw candidate digest is
+`sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`.
+No target code/sandbox/verifier ran; no stage, preview or mock receipt was made.
+The fresh verifier image is cached; no running containers remained. EXP-478 is
+closed as a failed one-shot and must not be rerun. A separately scoped follow-up
+may fix the assertion and authorize one new bounded attempt.
+
+### Batch BV — correct and revalidate pinned candidate staging (R2 execution batch 33/33; 1 task)
+
+#### EXP-479 — fix the synthetic candidate digest and run the chain once
+Статус: BLOCKED
+Цель: correct the demonstrated double-prefix/stale expected digest, then make
+one new exact-pin attempt through sandbox, verifier, durable stage, preview and
+mock receipt.
+Зависит от: EXP-478 BLOCKED with exact snapshot intake accepted, EXP-477 HTTP 200.
+Before the pipeline, issue exactly one anonymous `/rate_limit` GET; proceed only
+if HTTP 200 and `rate_remaining >= 25`, otherwise record output and stop. This is
+readiness gating only; do not retry the rate check.
+External target and output limits remain those of EXP-478 (the exact fixed
+`brainbooster_full_v11` commit/tree/content digest, 23 blobs, no content output).
+Docker opt-in and pinned images are identical to EXP-478; no pull, provider
+call, credentials or external write. One pipeline invocation only; on failure,
+record safe failure evidence and do not retry.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- candidate digest is computed once using `sha256_bytes` and matches
+  `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`;
+- fresh exact snapshot matches all EXP-478 pins and 23 content blobs;
+- target sandbox and container verifier run network-isolated and confirm 422
+  before writes for malformed values and one exact write for valid input;
+- durable stage/readback, preview and local mock receipt bind the same digest;
+- cleanup completes; all limitations (fake Worker, same Docker TCB,
+  programmatic mock approval, no real PR) remain explicit;
+- targeted one-shot command, full suite and `git diff --check` pass.
+Проверка: `RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`; full suite; `git diff --check`.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. Corrected the stale expected value
+and removed the duplicate `sha256:` prefix. The no-opt-in targeted invocation
+imports successfully and skips the Docker case as designed; the full local suite
+passes (905 tests, 4 skipped), and `git diff --check` passes. The card's one-shot
+rate-limit preflight was invoked, but its tool output was lost to output
+truncation, so HTTP status and remaining budget cannot be confirmed. To honor the
+single-check gate, the pipeline was not invoked and the preflight was not
+repeated within this card. No container, network pipeline, stage, preview or
+receipt was created. A separately scoped preflight card is required.
+
+### Batch BW — fresh anonymous readiness gate (R2 execution batch 34/34; 1 task)
+
+#### EXP-480 — read the public GitHub rate-limit headers once
+Статус: ACCEPTED
+Цель: obtain visible, fresh readiness evidence before creating a new one-shot
+pipeline card; this card makes no repository-content request.
+Внешняя цель: exactly one unauthenticated verified-TLS GET to
+`https://api.github.com/rate_limit`. Do not read or emit the response body.
+Разрешённая команда: the exact EXP-477 command above, with the same fixed
+endpoint, headers, timeout and sanitized numeric-only output. No retry, proxy,
+credentials, repository/blob request, Docker or other network call.
+Критерии приёмки:
+- visible output contains numeric HTTP status and validated numeric remaining
+  and reset headers (or explicit `unavailable`);
+- proceed only if status is 200 and remaining is at least 25; otherwise stop;
+- no response body, repository contents, secrets or writes are accessed;
+- `git diff --check` passes.
+Вне scope: snapshot intake, target code, Worker/model, Docker, stage, approval,
+branch, PR, push or deployment. A positive result only authorizes preparation
+of a separate pipeline card; it does not authorize the pipeline itself.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. One verified-TLS anonymous GET
+returned HTTP 200, `rate_remaining=35`, and numeric reset timestamp; body was
+not consumed. Gate `remaining >= 25` passed. No repository contents were read.
+
+### Batch BX — corrected pinned candidate pipeline (R2 execution batch 35/35; 1 task)
+
+#### EXP-481 — execute the corrected pinned candidate chain once
+Статус: BLOCKED
+Цель: verify one exact pinned public snapshot and drive the fixed synthetic
+candidate through the local network-isolated target/verifier/stage/preview/mock
+receipt chain. This is not a Worker proposal or real publication.
+Зависит от: EXP-479 code correction locally verified; EXP-480 ACCEPTED with
+HTTP 200 and `rate_remaining=35`.
+Внешняя цель: only public read-only
+`SoldatovAlexander/brainbooster_full_v11` at the EXP-478 commit/tree/content
+pins and 23 blobs. Do not print repository contents.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Execution image:
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+Verifier base:
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`;
+build verifier offline, pull disabled, then use only exact image ID and verifier
+code digest. No credentials, provider call or external write.
+Разрешённая команда:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`
+Критерии приёмки:
+- fresh snapshot matches exact commit/tree/content digest and all 23 blobs;
+- `sha256_bytes(candidate.encode("utf-8"))` equals exactly
+  `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`;
+- target sandbox and Docker verifier both use `network=none`, execute only the
+  declared route, and prove 422-before-write plus valid one-row behavior;
+- durable stage/readback, preview and mock receipt bind the same digest;
+- cleanup completes; if any step fails, record safe evidence and do not repeat;
+- then run full suite and `git diff --check`.
+Вне scope: real Worker/model, credential reads, live inference, GitHub writes,
+branch, PR, push, deployment, production durability, or claim of independent
+Docker-daemon trust. One pipeline invocation only.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07 after the one authorized invocation.
+The exact 23-blob snapshot intake and digest check succeeded. Execution stopped
+while constructing `ExecutionRequest`: the behavior probe constant ends with a
+newline, while request validation requires every command argument to be trimmed.
+The exception was `execution request: test command is invalid`. Target code was
+not executed; no stage/preview/receipt was created. `docker ps -a` showed no
+containers. The verifier image may remain cached. The test now strips the
+trailing newline; this syntactic correction is not evidence of a successful
+pipeline and EXP-481 must not be repeated. After the correction, the non-opt-in
+targeted test skipped as designed, the full local suite passed (905 tests, 4
+skipped), and `git diff --check` passed.
+
+### Batch BY — readiness check after failed one-shot pipeline (R2 execution batch 36/36; 1 task)
+
+#### EXP-482 — inspect anonymous rate budget before preparing a new attempt
+Статус: ACCEPTED
+Цель: determine whether one new exact pinned snapshot pipeline attempt remains
+within the anonymous API budget after EXP-481's successful 23-blob intake.
+Внешняя цель: exactly one unauthenticated verified-TLS GET to
+`https://api.github.com/rate_limit`; never consume or emit the response body.
+Разрешённая команда: the exact bounded command in EXP-477, with no auth/proxy,
+retry, repository/blob request, credential/config read, Docker or other network.
+Критерии приёмки:
+- output contains numeric HTTP status and validated numeric remaining/reset
+  headers (or explicit `unavailable`);
+- if status is not 200 or remaining is below 25, stop; a positive result only
+  permits a separate pipeline card;
+- no body, repository contents, secrets or writes are accessed;
+- `git diff --check` passes.
+Вне scope: snapshot intake, target code, Worker/model, Docker, stage, approval,
+branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. One verified-TLS anonymous GET
+returned HTTP 200, `rate_remaining=10`, reset `2026-10-06 23:59:23 UTC`; the body
+was not consumed. Because remaining budget is below 25, stop and do not prepare
+or run another snapshot pipeline until after reset and a new separately scoped
+positive readiness check.
+
+### Batch BZ — enforce one live provider attempt per channel instance (R2 execution batch 37/37; 1 task)
+
+#### EXP-483 — reject duplicate DeepSeek channel calls before credential lookup
+Статус: ACCEPTED
+Цель: enforce at most one provider attempt per `DeepSeekHTTPChannel` instance,
+including concurrent calls and retries after any first-attempt failure.
+Зависит от: EXP-464/473 and EXP-474 accepted; local-only while anonymous GitHub
+budget recovers.
+Среда исполнения: local fake channel/connection only; no provider request.
+Разрешённые пути:
+- `src/app_contracts/deepseek_http_channel.py`
+- `tests/test_deepseek_http_channel.py`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- malformed timeout/payload still fail before reserving a provider attempt;
+- a lock-protected one-shot gate allows at most one valid call to invoke the
+  credential source and connection factory, even under concurrent callers;
+- a second attempt after either success or failure is rejected with one stable,
+  sanitized call-limit error before credential lookup/network;
+- tests assert a credential canary is absent from errors/repr and that no retry
+  or second factory invocation occurs;
+- targeted channel tests, full offline suite and `git diff --check` pass;
+- documentation states this is a per-instance guard, not an account-level spend
+  cap or isolation boundary.
+Вне scope: real credentials, environment/files/keychain access, provider calls,
+spend estimates, GitHub, Docker, target snapshot, external writes or commits.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added an atomic per-instance
+one-attempt gate after timeout/payload validation but before credential lookup.
+Invalid requests do not consume the allowance; the first valid attempt consumes
+it even if credential retrieval fails, and later/concurrent calls fail with the
+sanitized `deepseek channel: call limit exceeded` message before key lookup or
+network. Targeted channel tests: 23, 22 passed and 1 platform upload-backpressure
+skip. Full suite: 909 tests, 905 passed and 4 skipped. `git diff --check` passed.
+No credentials, provider calls, network or commits. This per-object guard is not
+an account-level spend cap and can be bypassed by constructing another channel.
+
+### Docs-only checkpoint CA — reconcile MVP plan with BZ evidence (not an R2 execution batch)
+
+#### EXP-484 — update the plan's continuation count and latest test evidence
+Статус: ACCEPTED
+Цель: keep the plan checkpoint consistent with accepted execution batches and
+the latest verified local suite.
+Зависит от: EXP-483 ACCEPTED.
+Среда исполнения: local documentation only.
+Разрешённые пути:
+- `docs/24-mvp-final-plan.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- R2 continuation lists 37 execution batches through BZ and excludes docs-only
+  checkpoints from that count;
+- latest suite reports 909 tests, 905 passed and 4 skipped;
+- per-instance provider attempt guard is documented as not an account-level
+  spend cap;
+- remaining MVP gates are not reduced or declared complete;
+- `git diff --check` passes.
+Вне scope: source code, API credentials, network, Docker, provider calls or
+external writes.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Document 24 now counts 37 R2
+execution batches through BZ and lists BJ/CA as docs-only checkpoints; the latest
+suite is 909 total, 905 passed, 4 skipped. The per-instance provider guard is
+explicitly distinguished from an account-level spend cap, and R2 remains open.
+`git diff --check` passed; no code/network/credential action was performed.
+
+### Batch CB — regression guard for the pinned pipeline command contract (R2 execution batch 38/38; 1 task)
+
+#### EXP-485 — assert the route probe's command shape before an external run
+Статус: ACCEPTED
+Цель: prevent a repeat of EXP-481's pre-execution failure without invoking the
+external snapshot pipeline.
+Зависит от: EXP-481 BLOCKED; probe command has already been corrected.
+Среда исполнения: local/offline only.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- a request using the original trailing-newline probe is rejected by
+  `ExecutionRequest` with the stable command-shape error;
+- the exact stripped probe command constructs a valid request;
+- the test runs without Docker opt-in, credentials or external network;
+- full suite and `git diff --check` pass;
+- docs retain the fact that EXP-481 itself failed and was not retried.
+Вне scope: public GitHub, Docker, target execution, model, credentials, stage,
+approval, publication, branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The new non-opt-in test proves
+the original multiline probe with trailing newline fails at `ExecutionRequest`
+validation and the stripped command succeeds. Targeted file: 2 tests, 1 passed
+and the actual Docker case skipped as designed; direct regression test: 1 passed.
+Full suite: 910 tests, 906 passed and 4 skipped. `git diff --check` passed. No
+Docker, network, credentials or external writes were used; EXP-481 remains
+BLOCKED and was not repeated.
+
+### Batch CC — cleanup regression for pre-execution request rejection (R2 execution batch 39/39; 1 task)
+
+#### EXP-486 — prove invalid command input releases the snapshot workspace
+Статус: ACCEPTED
+Цель: verify that the exact request-shape failure observed in EXP-481 closes
+the temporary pinned-snapshot lease before returning.
+Зависит от: EXP-485 ACCEPTED.
+Среда исполнения: local synthetic snapshot only; no external reads.
+Разрешённые пути:
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- a command argument with trailing whitespace raises the stable
+  `ExecutionRequest` validation error;
+- `run_local_execution` is not invoked;
+- the materialized workspace lease is closed and its temporary path removed;
+- targeted and full offline tests pass; no Docker/network/provider access;
+- docs preserve EXP-481's blocked status and state that this test proves cleanup,
+  not a successful pipeline.
+Вне scope: provider/model, GitHub, Docker, target execution, stage, approval,
+branch, PR, push, deployment or credentials.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. New synthetic regression proves
+the trailing-whitespace command raises `execution request: test command is
+invalid`, never invokes `run_local_execution`, closes the materialized snapshot
+lease and removes the temporary workspace. Targeted worker CLI tests: 20 passed.
+Full suite: 911 tests, 907 passed and 4 skipped; `git diff --check` passed. No
+network, Docker, credentials or external writes. EXP-481 remains blocked and
+was not repeated; this only proves cleanup on pre-execution rejection. The plan
+and status now explicitly identify the incomplete full pinned remote execution
+CLI/evidence command path as an open MVP gate.
+
+### Batch CD — wire pinned execution into the CLI boundary (R2 execution batch 40/40; 1 task)
+
+#### EXP-487 — add an explicit pinned remote-execution CLI mode
+Статус: ACCEPTED
+Цель: expose the existing full-snapshot composition through an explicit,
+fail-closed CLI mode that returns sanitized, digest-bound evidence metadata.
+Среда исполнения: local synthetic tests only; no live network or Docker run.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- `--remote-snapshot-execute` requires an explicitly injected immutable runtime
+  profile containing a Worker, verifier, sandbox, durable stage sink and the
+  Control Plane-approved task fields; missing/invalid profile fails before any
+  network request or credential callback;
+- the CLI itself requests only the fixed full snapshot owner/repository/commit,
+  verifies exact commit/tree/content digest and 23-blob count, and maps only
+  declared path content into Worker context;
+- it invokes `run_remote_snapshot_execution` with no caller-selected host,
+  repository, paths, commands or arbitrary argv; no credentials are read by
+  this CLI layer;
+- output is a bounded JSON evidence summary (identity/digests/verdict/stage ID,
+  external_write=false) or a sanitized stable failure code; source text,
+  prompts, raw model output and provider bodies are never emitted;
+- synthetic tests cover missing runtime/no-network, exact request/profile binding,
+  successful evidence output and failure redaction; no actual pinned API request
+  or Docker invocation occurs during this card;
+- targeted and full offline suites plus `git diff --check` pass.
+Вне scope: live Worker/API key, account spend cap, provider calls, authenticated
+approval, GitHub writes, branch/PR/push/deployment, independent verifier claims.
+Commit: DENIED.
+Риски: the CLI must be invoked by a trusted outer runtime that constructs the
+dependency profile; without that integration a bare module invocation fails
+closed. This card does not close the live MVP or provider-write gates.
+Результат Control Plane: ACCEPTED 2026-10-07. `--remote-snapshot-execute`
+requires an injected runtime profile, pins the fixed 23-blob snapshot, maps
+only declared paths, invokes the existing bounded execution composition, and
+emits digest/verdict-only evidence with `external_write=false`. Targeted CLI
+tests: 24 passed. Full offline suite: 916 tests, 912 passed and 4 skipped;
+`git diff --check` passed. Synthetic evidence only: no live API, Worker,
+credentials, Docker, stage publication or external write was used. The
+standalone runtime-profile factory/production wiring remains an open MVP gate.
+
+### Batch CE — fresh anonymous readiness gate after rate reset (R2 execution batch 41/41; 1 task)
+
+#### EXP-488 — recheck only GitHub's public rate-limit headers
+Статус: ACCEPTED
+Цель: determine whether a new, separately carded pinned-pipeline attempt may
+be prepared after EXP-482's reset; this task does not read repository contents.
+Зависит от: EXP-482 ACCEPTED (`rate_remaining=10`, reset at
+`2026-10-06 23:59:23 UTC`); do not execute before that timestamp.
+Внешняя цель: exactly one anonymous verified-TLS GET to
+`https://api.github.com/rate_limit`, using the exact bounded command in EXP-477.
+Критерии приёмки:
+- expose only numeric HTTP status and validated numeric remaining/reset
+  headers, or safe `unavailable`; do not consume or emit the response body;
+- make exactly one request, with no auth, proxy, retry, repository/blob request,
+  credential/config read or write;
+- if status is not 200 or remaining is below 25, stop; otherwise the result
+  permits only preparation of a separate pipeline task card;
+- `git diff --check` passes.
+Вне scope: snapshot intake, target code, model/provider calls, Docker, stage,
+approval, branch, PR, push, deployment or external writes.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. One verified-TLS anonymous GET
+to `https://api.github.com/rate_limit` after the recorded reset returned
+`http_status=200`, `rate_remaining=60`, and numeric `rate_reset_unix=1791334779`.
+The response body was not consumed; this authorized only preparation of a
+separate pipeline task card.
+
+### Batch CF — corrected exact-pin local pipeline attempt (R2 execution batch 42/42; 1 task)
+
+#### EXP-489 — rerun the pinned synthetic candidate pipeline once after fresh readiness
+Статус: BLOCKED
+Цель: after EXP-488's positive fresh readiness result, execute the corrected
+fixed candidate through pinned snapshot intake, isolated target/verifier,
+durable stage/readback, preview and mock-only receipt in one attempt.
+Зависит от: EXP-488 ACCEPTED, HTTP 200, `rate_remaining=60` at
+`2026-10-06 23:59:27 UTC`; run immediately while this one-shot readiness remains
+fresh. This card authorizes exactly one pipeline invocation.
+Внешняя цель: anonymous read-only content from exactly
+`SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, full content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`,
+23 blobs. Target work is disposable/local only.
+Runtime: opt-in `RUN_DOCKER_SANDBOX_TESTS=1`; execution image
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Verifier image must be built offline with pull disabled; both target and verifier
+containers use `network=none`.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- exact snapshot identity, commit, tree, content digest and 23 blobs validate;
+- candidate digest is the raw single-prefix
+  `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`;
+- run only declared `backend/routes.py` in the disposable target container;
+  malformed numeric inputs return 422 with zero writes, valid input returns
+  200 and one expected write in both sandbox and verifier;
+- stage save/readback, preview and local mock receipt bind the exact repository
+  and digest; temporary DB, snapshot lease and containers are cleaned;
+- targeted opt-in test, full offline suite and `git diff --check` pass;
+- if any assertion, request, build or runtime step fails, capture sanitized
+  evidence and stop; no retry or fallback request.
+Проверка (run exactly once):
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`;
+then full suite without Docker opt-in and `git diff --check`.
+Вне scope: credentials, Worker/provider call, model spend, real approval,
+GitHub writes, branch, PR, push, deployment, verifier-daemon trust or a claim
+that this Control Plane candidate came from the Worker.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07 after the one authorized attempt.
+The exact pinned snapshot and 23-blob content digest validated, and the fixed
+synthetic candidate digest matched EXP-479. The Docker sandbox was created with
+`network=none`, but executor snapshot validation stopped with the sanitized
+`execution snapshot: claim mismatch` before Worker invocation, target test
+execution, verifier, stage, preview or mock receipt. The sandbox is closed in
+the executor `finally` path; the materialized snapshot and temporary stage
+directory are lease/context-managed. Full offline suite: 916 tests, 912 passed,
+4 skipped; `git diff --check` passed. No credentials, model/provider call or
+external write occurred. No retry is authorized. Source inspection points to
+the Docker read-only snapshot copy clearing executable file bits; a separate
+local-only regression/fix card is required before any newly authorized run.
+
+### Batch CG — preserve pinned file modes in Docker snapshot copies (R2 execution batch 43/43; 1 task)
+
+#### EXP-490 — keep Git executable mode while making Docker snapshot files read-only
+Статус: ACCEPTED
+Цель: fix the snapshot-claim mismatch observed in EXP-489 by preserving each
+copied file's executable/non-executable mode while removing write permissions.
+Зависит от: EXP-489 BLOCKED; inspected `DockerSandboxBackend.create` copies the
+snapshot and `_make_tree_read_only` currently chmods every file to `0400`, which
+erases Git executable mode `100755` before executor revalidation.
+Среда исполнения: local synthetic filesystem tests only; no Docker, network,
+credentials, public snapshot intake or provider calls.
+Разрешённые пути:
+- `src/app_contracts/sandbox.py`
+- `tests/test_sandbox.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- read-only copy retains executable-vs-regular-file classification from its
+  source while removing all write bits (`0500` for executable files,
+  `0400` for regular files, or an equally strict mode preserving Git `100755`);
+- a local regression uses synthetic executable and non-executable files and
+  proves the read-only conversion preserves verifier snapshot tree digest and
+  leaves both files non-writable;
+- existing writable workspace behavior remains unchanged;
+- targeted and full offline suites plus `git diff --check` pass;
+- documents state EXP-489 stopped before target execution and that this fix is
+  only local evidence; it does not authorize retrying that card.
+Вне scope: Docker daemon, external snapshot/API, model/provider, credentials,
+approval, publication, branch, PR, push, deployment or retry of EXP-489.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `_make_tree_read_only` now keeps
+Git executable classification while dropping all file write bits: executable
+files become `0500`, regular files `0400`. A fake-Docker local regression with
+synthetic executable and regular files proves the copied tree digest is
+unchanged, snapshot files are not writable, and the separate workspace remains
+writable. Targeted test: 1 passed; sandbox suite: 17 tests, 16 passed and 1
+opt-in Docker test skipped. Full suite: 917 tests, 913 passed and 4 skipped;
+`git diff --check` passed. No Docker daemon, network, credentials, API, provider
+call or external write was used. This removes the identified mode-mismatch
+cause locally but does not authorize retrying EXP-489 or prove remote execution.
+
+### Batch CH — fresh readiness check before another exact-pin attempt (R2 execution batch 44/44; 1 task)
+
+#### EXP-491 — inspect only public GitHub rate-limit headers after the local fix
+Статус: BLOCKED
+Цель: determine whether the anonymous API budget can support one newly carded
+pipeline attempt after EXP-490; this task does not read repository contents.
+Зависит от: EXP-490 ACCEPTED; EXP-489 remains BLOCKED and must not be repeated.
+Внешняя цель: exactly one anonymous verified-TLS GET to
+`https://api.github.com/rate_limit`, using the exact bounded command in EXP-477.
+Критерии приёмки:
+- report only HTTP status and validated numeric remaining/reset headers (or
+  safe `unavailable`); never consume or emit the response body;
+- no auth, proxy, retry, repository/blob request, credential/config read,
+  Docker, or write;
+- if HTTP status is not 200 or `rate_remaining < 25`, stop; positive evidence
+  permits only preparation of a separate new pipeline card;
+- `git diff --check` passes.
+Вне scope: snapshot intake, target execution, verifier, stage, approval,
+provider call, branch, PR, push, deployment or any write.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. One verified-TLS anonymous GET
+to `https://api.github.com/rate_limit` returned `http_status=200`,
+`rate_remaining=60`, and numeric `rate_reset_unix=1791374831`; the response body
+was not consumed. This permits only preparation of a separate pipeline card.
+
+### Batch CI — retry exact-pin pipeline after local mode fix (R2 execution batch 45/45; 1 task)
+
+#### EXP-492 — run the corrected pinned synthetic pipeline once
+Статус: BLOCKED
+Цель: validate the EXP-490 executable-mode fix in one new bounded run from the
+fixed GitHub snapshot through isolated target/verifier, exact-digest stage,
+preview and mock-only receipt.
+Зависит от: EXP-490 ACCEPTED; EXP-491 ACCEPTED with HTTP 200 and
+`rate_remaining=60` at approximately `2026-10-07 11:07 UTC`. This card
+authorizes exactly one invocation; do not repeat EXP-489.
+Внешняя цель: anonymous read-only content from exactly
+`SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, full content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`,
+23 blobs. Target work is disposable/local only.
+Runtime: opt-in `RUN_DOCKER_SANDBOX_TESTS=1`; execution image
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24b1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Build the verifier image offline with pulls disabled; both target and verifier
+containers must use `network=none`.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- exact snapshot identity, commit, tree, content digest and 23 blobs validate;
+- candidate digest is the single-prefix
+  `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`;
+- Docker's read-only snapshot copy preserves Git executable mode so executor
+  claim validation passes; only declared `backend/routes.py` runs in the target;
+- malformed numeric inputs produce 422 with zero writes and valid input produces
+  200 with one expected write in both sandbox and verifier;
+- stage save/readback, preview and local mock receipt bind the same repository
+  and digest; temporary DB, snapshot lease and containers are cleaned;
+- targeted opt-in test, full offline suite and `git diff --check` pass;
+- on any failure, emit sanitized evidence and stop without retry/fallback.
+Проверка (run exactly once):
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`;
+then full suite without Docker opt-in and `git diff --check`.
+Вне scope: credentials, Worker/provider call, model spend, real approval,
+GitHub writes, branch, PR, push, deployment, verifier-daemon trust or claiming
+this Control Plane candidate came from the Worker.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07 after the one authorized attempt.
+The exact pin and 23-blob digest and candidate digest validated, but the run
+again failed at `executor.py` snapshot-claim validation with the sanitized
+`execution snapshot: claim mismatch` before Worker invocation. The new file-mode
+regression did not resolve this exact remote case. Target command/verifier,
+stage, preview and mock receipt did not run; the executor `finally` closed its
+network-isolated sandbox and the snapshot lease/temp stage context cleaned up.
+Full offline suite: 917 tests, 913 passed and 4 skipped; `git diff --check`
+passed. No credentials or writes. No retry is authorized. The traceback locates
+the generic exception at the bounded remote file-comparison block but does not
+distinguish digest mismatch from verifier-input size limits; this uncertainty
+must be narrowed with offline synthetic evidence before another intake.
+
+### Batch CJ — synthetic remote claim revalidation through Docker copy (R2 execution batch 46/46; 1 task)
+
+#### EXP-493 — preserve executable mode through Docker snapshot and replay copies
+Статус: ACCEPTED
+Цель: isolate the remaining snapshot mismatch without remote data or a Docker
+daemon by exercising the actual executor and replay checks against a synthetic
+GitHub claim with both regular and executable files copied by the Docker backend.
+Зависит от: EXP-490 ACCEPTED; EXP-492 BLOCKED before Worker invocation.
+Среда исполнения: local synthetic only; patch Docker subprocess calls, no daemon,
+network, public API, credentials, provider call or external write.
+Разрешённые пути:
+- `tests/test_remote_snapshot_pipeline.py`
+- `src/app_contracts/sandbox.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- construct a bounded synthetic `GitHubSnapshotContents` containing one
+  `100755` file and one `100644` file with a valid canonical content digest;
+- make both the read-only snapshot copy and owner-writable replay copy preserve
+  Git executable-vs-regular classification while applying their respective
+  strict modes (`0500`/`0400` read-only, `0700`/`0600` writable);
+- execute `run_local_execution` against a fake-launched `DockerSandboxBackend`
+  whose Docker subprocess is patched, proving source, snapshot and initial
+  workspace tree digests agree and Worker/verifier are reached only after the
+  claim and replay checks;
+- assert copied snapshot retains Git mode and the same
+  `verifier_snapshot_tree_digest`;
+- no test can resolve a host or call real Docker/network; all temp workspaces and
+  fake sessions are cleaned;
+- targeted/full offline tests and `git diff --check` pass; docs preserve that
+  EXP-492 is blocked and synthetic passing evidence is not a remote retry.
+Вне scope: API readiness, commit/tree/blob request, Docker daemon, target repository
+content, provider/model, credentials, approval, publication, branch, PR, push,
+deployment or retrying EXP-492.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The synthetic executor path with
+a regular file and a `100755` file now passes source/sandbox claim comparison,
+replay workspace digest validation, one synthetic Worker call and one synthetic
+Verifier PASS. `_make_tree_read_only` preserves mode with `0500`/`0400`, while
+`_make_tree_owner_writable` preserves it with `0700`/`0600`; both fake Docker
+sessions were closed and their temporary roots removed. Targeted file suite:
+5 passed. Full suite: 918 tests, 914 passed and 4 skipped; `git diff --check`
+passed. Docker daemon, network, API, credentials and external writes were not
+used. This proves the synthetic copy/replay path only; exact EXP-492 remains
+BLOCKED and is not retried.
+
+### Batch CK — make remote metadata CLI actually metadata-only (R2 execution batch 47/47; 1 task)
+
+#### EXP-494 — stop fetching blob contents for pinned snapshot metadata
+Статус: ACCEPTED
+Цель: make `--remote-snapshot-metadata` perform only commit and recursive-tree
+GETs, accurately distinguish metadata claims from blob-content digests, and
+provide bounded file-size aggregates useful for diagnosing the executor's
+pre-Worker claim failure.
+Зависит от: EXP-492 BLOCKED before Worker invocation; EXP-493 ACCEPTED synthetic
+copy/replay path. Metadata currently calls `read_github_snapshot_contents` and
+therefore downloads every blob despite the CLI mode name.
+Среда исполнения: offline fake transports only; no public network or Docker.
+Разрешённые пути:
+- `src/app_contracts/github_snapshot.py`
+- `src/app_contracts/worker_cli.py`
+- `tests/test_github_snapshot.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- a metadata reader validates the exact commit/tree chain and complete,
+  non-truncated tree using exactly two GETs, with no blob endpoint;
+- CLI output contains only bounded identity and numeric file-size/mode
+  aggregates; no path list, blob content, blob digest or response body is emitted;
+- tests prove exactly two GETs, zero blob requests, exact pin validation,
+  response/body redaction and truthful API-claim provenance;
+- targeted/full offline suites and `git diff --check` pass;
+- docs explain that tree/blob metadata do not prove snapshot-content digest or
+  provenance; any public metadata probe requires a new separate task card.
+Вне scope: public network, blob/content fetch, Docker, model/provider, credentials,
+approval, publication, branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added
+`read_github_snapshot_metadata`, which validates the exact commit and complete
+recursive tree with exactly two GETs and never requests blob objects. The pinned
+metadata CLI now reports only identity, blob count, aggregate/max bytes,
+executable count and verifier-size-bound flags; it emits no paths, blob SHA,
+content digest or response body, and explicitly says blob contents were not
+fetched/content not verified. Tests assert exactly two fake GETs, no blob GET,
+redaction, fixed-pin validation and safe status-only failures. Targeted
+GitHub/CLI suites: 64 passed. Full suite: 919 tests, 915 passed and 4 skipped;
+`git diff --check` passed. No public network or Docker was used. This improves
+metadata evidence only and does not resolve the exact EXP-492 claim mismatch.
+
+### Batch CL — read pinned size metadata without fetching blobs (R2 execution batch 48/48; 1 task)
+
+#### EXP-495 — run the metadata-only CLI once after a small readiness gate
+Статус: ACCEPTED
+Цель: inspect only the exact pinned commit/tree size metadata to determine
+whether the pre-Worker claim failure aligns with the verifier's per-file/total
+input limits; do not fetch blobs or retry either blocked pipeline card.
+Зависит от: EXP-494 ACCEPTED; EXP-492 remains BLOCKED.
+Внешние запросы: first exactly one anonymous verified-TLS GET to
+`https://api.github.com/rate_limit` using the exact bounded command in EXP-477;
+consume/emit no body. Proceed only for HTTP 200 and numeric remaining >= 3.
+Then run exactly once:
+`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m app_contracts.worker_cli --remote-snapshot-metadata`
+That CLI makes exactly two fixed anonymous GETs (the pinned commit and its
+recursive tree); it does not request blob endpoints. If readiness fails, stop
+without running the CLI. No retry/fallback.
+Разрешённые пути:
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- output confirms exact pinned commit/tree and 23 blob metadata entries;
+- record only bounded numeric size aggregates/limit flags, no path list, SHA,
+  body, blob content or secrets;
+- use `blobs_over_verifier_file_limit` and `total_over_verifier_limit` to assess
+  whether current verifier bounds explain the claim failure; distinguish this
+  as diagnostic inference, not proof of the exact internal branch;
+- no blob GET, Docker, credentials, model/provider or writes; `git diff --check`
+  passes.
+Вне scope: blob/content intake, executor, Worker, verifier, stage, approval,
+publication, branch, PR, push, deployment or pipeline retry.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. One anonymous verified-TLS
+`/rate_limit` GET returned HTTP 200 / 35; the pinned metadata CLI then made its
+two commit/tree GETs and no blob request. Output confirmed the exact commit,
+tree and 23 blob metadata entries: total size `240290`, max file `220064`, one
+blob above the executor's `100000` per-file cap, and total below its `512000`
+snapshot cap. Output explicitly stated `blob_contents_fetched=false` and
+`snapshot_content_verified=false`; no paths, blob IDs, contents or content
+digest were emitted. This strongly explains EXP-492's pre-Worker mismatch:
+`_read_pinned_snapshot_files` rejects a file over 100000 bytes before comparing
+the Docker copy. This remains metadata-based diagnosis, not content/digest proof
+for that oversized blob. No Docker, credentials, model/provider or writes.
+
+### Batch CM — align verifier per-file bound with the snapshot reader (R2 execution batch 49/49; 1 task)
+
+#### EXP-496 — accept bounded snapshot files up to the source reader's limit
+Статус: ACCEPTED
+Цель: remove the demonstrated configuration mismatch where GitHub intake permits
+files up to 262144 bytes but executor/verifier snapshot checks reject files over
+100000 bytes, while preserving the existing 512000-byte aggregate bound.
+Зависит от: EXP-495 ACCEPTED; exact pinned tree metadata reports one 220064-byte
+blob and total 240290 bytes.
+Среда исполнения: local synthetic boundary tests only; no Docker, network,
+public API, credentials or provider calls.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `tests/test_executor.py`
+- `tests/test_verifier_process.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- derive verifier per-file bound from canonical `MAX_SNAPSHOT_FILE_BYTES`
+  (262144) instead of duplicating 100000;
+- a synthetic 220064-byte file passes executor pinned-file and verifier-request
+  validation; a 262145-byte file is rejected;
+- retain aggregate snapshot cap at 512000 and prove over-total still fails;
+- do not change proposal-content limits or external behavior;
+- targeted/full offline suites and `git diff --check` pass;
+- docs state that exact content/digest still needs a separately carded new
+  pipeline attempt; EXP-489 and EXP-492 remain BLOCKED and are not repeated.
+Вне scope: public snapshot/blob access, Docker pipeline, Worker/provider,
+credentials, approval, publication, branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `MAX_VERIFIER_SNAPSHOT_FILE_BYTES`
+now derives from canonical `MAX_SNAPSHOT_FILE_BYTES` (262144). Synthetic executor
+reader evidence accepts a 220064-byte file and rejects aggregate content over
+512000 bytes; verifier request serialization accepts 220064 and rejects 262145.
+Targeted boundary tests pass; full offline suite: 920 tests, 916 passed, 4
+skipped; `git diff --check` passes. No Worker, Docker, network or external
+behavior was exercised. EXP-489 and EXP-492 remain BLOCKED; a new pipeline run
+needs a new card and readiness.
+
+### Batch CN — one exact-pin pipeline retry after size-bound correction (R2 execution batch 50/50; 1 task)
+
+#### EXP-497 — fresh-readiness-gated pinned target/verifier pipeline
+Статус: BLOCKED
+Цель: test whether the aligned verifier per-file bound lets the previously
+blocked pinned snapshot reach target execution, independent verifier, durable
+stage/readback, preview and local mock receipt in one bounded run.
+Зависит от: EXP-495 ACCEPTED (one 220064-byte file; total tree size 240290),
+EXP-496 ACCEPTED (per-file limit now 262144; aggregate limit stays 512000).
+Внешняя цель: exactly one anonymous verified-TLS readiness GET to
+`https://api.github.com/rate_limit`, followed only if positive by the existing
+single snapshot intake for `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`,
+23 blobs. Target changes remain disposable/local only.
+Readiness command: exactly the bounded, header-only Python command in EXP-477;
+do not consume or emit its response body. If transport fails, HTTP status is
+not 200, or remaining is below 25, stop before snapshot intake and pipeline.
+Runtime: `RUN_DOCKER_SANDBOX_TESTS=1`; execution image
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24f1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Build verifier image offline with pulls disabled; both execution containers use
+`network=none`.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- preflight, if positive, is immediately followed by exactly one test invocation;
+- exact snapshot identity, 23-blob content digest and fixed candidate digest
+  `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`
+  validate; the sole declared `backend/routes.py` target returns HTTP 422 with
+  zero DB writes for the five malformed numeric inputs and overflow, and HTTP
+  200 with one expected DB write for valid input;
+- independent container verifier accepts the result, exact-digest stage
+  save/readback, preview and local mock receipt bind the same repo/digest, and
+  temporary DB, snapshot lease and containers are cleaned;
+- on any failed assertion, request, image build, readiness gate or runtime step,
+  record sanitized evidence and stop; no retry/fallback;
+- targeted opt-in command, non-opt-in full offline suite and `git diff --check`
+  pass if the pipeline reaches its completion path.
+Проверки: after positive readiness, run exactly once:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline -v`;
+then full suite without Docker opt-in and `git diff --check`.
+Вне scope: live DeepSeek/OpenAI inference (the test uses a fixed synthetic
+Control Plane proposal), credentials, model spend, authenticated approval,
+GitHub writes, branch, PR, push, deployment, retrying EXP-489/492, or claiming
+the fixed candidate came from a Worker.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07 after the one authorized attempt.
+Fresh anonymous verified-TLS readiness returned HTTP 200,
+`rate_remaining=33`, `rate_reset_unix=1791374862`; response body was not
+consumed. The one opt-in run verified the pinned commit/tree/content digest,
+23-blob snapshot and candidate digest and progressed past executor claim/replay
+to the verifier. The target output digest was produced, but the verifier raised
+an exception: result was sanitized as `failure_code=verifier-failed`,
+`verifier_result=null`. The test failed before durable stage save/readback,
+preview or mock receipt. Temporary contexts are managed by the test; no
+credentials/provider call or external write occurred. No retry is authorized.
+`git diff --check` passes. This is not live Worker MVP evidence and does not
+close R2; next action is an offline, synthetic verifier-failure diagnosis card.
+
+### Batch CO — isolate the verifier boundary locally (R2 execution batch 51/51; 1 task)
+
+#### EXP-498 — exercise the real verifier container with a bounded large base file
+Статус: BLOCKED
+Цель: separate verifier request/entrypoint/container behavior from the failed
+remote pipeline by submitting a fully synthetic verifier request containing a
+220064-byte pinned base file to the already-built verifier image.
+Зависит от: EXP-496 ACCEPTED; EXP-497 BLOCKED specifically at verifier
+invocation after snapshot and target execution.
+Среда исполнения: local synthetic only; no GitHub, network, target sandbox,
+credentials or provider. Existing local image ID:
+`sha256:bf2105019a40a93a0ab11c0623e0af7e1a6a9e25fc12104eac62ecbca7037120`;
+verifier source digest:
+`sha256:ba4db62a0c06cc73eb990aa37ef026e8718745b096d5cd2d5b33c114a7ff0237`.
+The verifier command is fixed by `DockerContainerVerifier` to `network=none`.
+Разрешённые пути:
+- `tests/test_verifier_container.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- add one opt-in real-container test using a synthetic valid `VerifierInput`
+  with ordinary `calculator.py` plus a `large.bin` base file of exactly 220064
+  bytes; its total remains below 512000;
+- use only the listed local image ID and matching code digest, no image build,
+  pull, network access or remote snapshot;
+- direct verifier invocation either returns a bound PASS for a harmless local
+  calculator assertion or fails with a fixed sanitized exception type/message;
+  never print request content, verifier stdout/stderr, paths from remote data or
+  environment values;
+- targeted command and full offline suite pass; `git diff --check` passes;
+- docs distinguish this narrow boundary evidence from EXP-497 reproduction and
+  do not authorize another remote pipeline.
+Проверка (one local container invocation):
+`RUN_DOCKER_SANDBOX_TESTS=1 AGENT00X_VERIFIER_IMAGE_ID=sha256:bf2105019a40a93a0ab11c0623e0af7e1a6a9e25fc12104eac62ecbca7037120 AGENT00X_VERIFIER_CODE_DIGEST=sha256:ba4db62a0c06cc73eb990aa37ef026e8718745b096d5cd2d5b33c114a7ff0237 AGENT00X_DOCKER_EXECUTABLE=/usr/local/bin/docker PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_verifier_container.VerifierContainerConfigTests.test_opt_in_real_container_accepts_bounded_large_snapshot -v`;
+then full suite without Docker opt-in and `git diff --check`.
+Вне scope: any public endpoint, source repo content, target code, provider/model,
+credentials, stage, approval, branch, PR, push, deployment or retry of EXP-497.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. The one opt-in synthetic
+container call failed safely with `verifier process: child exit failed`; no raw
+stdout/stderr was exposed. The same serialized synthetic request passed
+`run_verifier_request` locally and produced a 942-byte response, isolating the
+failure to the real container/child execution boundary rather than the request
+schema or 220064-byte limit alone. Full offline suite: 921 tests, 916 passed,
+5 skipped; `git diff --check` passes. No network, target sandbox, provider,
+credentials or writes. A new card is needed to distinguish the verifier's
+fixed rejection marker from Docker/child launch failures without exposing raw
+stderr. EXP-497 remains blocked and was not repeated.
+
+### Batch CP — preserve verifier failure causes without leaking child output (R2 execution batch 52/52; 1 task)
+
+#### EXP-499 — classify the fixed verifier rejection marker safely
+Статус: ACCEPTED
+Цель: distinguish a deliberate verifier-entrypoint rejection from a Docker
+launcher/child failure while preserving the no-raw-output boundary that made
+EXP-497 and EXP-498 hard to diagnose.
+Зависит от: EXP-498 BLOCKED with `child exit failed`; local source defines one
+fixed stderr marker emitted by the verifier entrypoint on rejected input.
+Среда исполнения: local unit tests only; no Docker, network, credentials,
+provider, target or external write.
+Разрешённые пути:
+- `src/app_contracts/verifier_process.py`
+- `tests/test_verifier_process.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- when a nonzero child returns exactly the verifier entrypoint's fixed rejection
+  marker, raise a new fixed `VerifierProcessError` message identifying only
+  `child request rejected`;
+- all other child stderr/stdout remains suppressed and maps to the existing
+  generic `child exit failed` message;
+- tests prove arbitrary canary stderr is never copied into exception text and
+  empty/other stderr retains generic classification;
+- targeted and full offline suites plus `git diff --check` pass;
+- docs state that classification is diagnostic only, not proof of the exact
+  EXP-497 cause; another local-container attempt needs a separate card.
+Вне scope: raw stderr/stdout logging, exception repr in CLI evidence, changes to
+the verifier's accepted policy, any Docker/container invocation, remote retry,
+provider/model, credentials, stage, approval, publication or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Exact fixed entrypoint rejection
+stderr is now mapped to `verifier process: child request rejected`; any other
+stdout/stderr, including canaries and near-matches, remains suppressed as the
+generic `child exit failed`. Targeted classification tests pass. Full offline
+suite: 922 tests, 917 passed and 5 skipped; `git diff --check` passes. This
+classification is diagnostic only and does not identify the specific
+EXP-497 cause or authorize another container invocation.
+
+### Batch CQ — expose only fixed verifier rejection categories (R2 execution batch 53/53; 1 task)
+
+#### EXP-500 — emit an allowlisted child rejection category
+Статус: ACCEPTED
+Цель: identify which known verifier-input guard rejects a local container
+request while keeping arbitrary request content, exception text, stdout and
+stderr out of diagnostics.
+Зависит от: EXP-499 ACCEPTED safe recognition of one exact fixed rejection
+marker; EXP-498 synthetic large-file request reached a nonzero child exit.
+Среда исполнения: local synthetic only. Rebuild verifier image offline from
+the exact pinned base (`--pull=false --network=none`), then make one direct
+`network=none` verifier invocation using a synthetic request with a 220064-byte
+base file. No GitHub, provider, credentials, target sandbox or writes.
+Разрешённые пути:
+- `src/app_contracts/verifier_container_entrypoint.py`
+- `src/app_contracts/verifier_process.py`
+- `tests/test_verifier_container.py`
+- `tests/test_verifier_process.py`
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- entrypoint maps a small explicit allowlist of fixed internal validation
+  failures to stable category codes; unknown exceptions keep the generic
+  rejection marker; never print `str(exc)`, request data, output or paths;
+- parent recognizes only exact allowlisted marker lines and maps them to fixed
+  safe messages; arbitrary/malformed stderr remains generic and unreflected;
+- offline tests cover recognized, unknown and canary cases;
+- rebuild only from the pinned local base with pulls disabled and network none;
+- one synthetic verifier invocation reports a safe category or generic
+  container failure; never retry; then run the full offline suite and
+  `git diff --check`;
+- document evidence as diagnostic only, not remote pipeline proof.
+Проверка: use the existing `_build_verifier_runtime()` helper to rebuild and
+print only image/code digests, then invoke the bounded-large-snapshot verifier
+test once with those generated IDs and
+`RUN_DOCKER_SANDBOX_TESTS=1`; image build must use `--pull=false --network=none`
+and verifier must use `network=none`.
+Вне scope: raw stream logging, arbitrary exception propagation, public API,
+remote snapshot, full pipeline, provider/model, credentials, stage, approval,
+publication, branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Entrypoint now emits allowlisted
+fixed rejection categories without reflecting exception text; parent maps only
+exact known category markers and keeps unknown/canary stderr generic. Unit
+regressions pass. The one offline rebuild succeeded, but the one synthetic
+container call still returned generic `verifier process: child exit failed`, so
+no input-guard category was observed and the EXP-497 root cause remains
+unresolved. Full offline suite: 924 tests, 919 passed and 5 skipped;
+`git diff --check` passes. No remote reads or provider calls. No retry of
+EXP-497 is authorized.
+
+### Batch CR — surface only bounded verifier child exit status (R2 execution batch 54/54; 1 task)
+
+#### EXP-501 — distinguish a safe child exit status from hidden output
+Статус: ACCEPTED
+Цель: determine whether the synthetic verifier failure is an entrypoint exit,
+Docker client/runtime failure, or another child status without exposing streams.
+Зависит от: EXP-500 ACCEPTED category markers; synthetic call remained generic.
+Среда исполнения: local synthetic only. Rebuild the verifier image offline
+from the exact pinned base, then make one direct `network=none` verifier call
+with the synthetic 220064-byte request. No GitHub, provider, credentials,
+target sandbox or external writes.
+Разрешённые пути:
+- `src/app_contracts/verifier_process.py`
+- `tests/test_verifier_process.py`
+- `tests/test_verifier_container.py`
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- for a nonzero outcome, include only a validated numeric exit status in a
+  stable error message when status is in 0..255; for malformed status keep the
+  current generic message;
+- stdout/stderr bytes, canaries, Docker text and paths never appear in errors;
+- unit tests prove numeric-only reporting and generic fallback;
+- rebuild verifier image with pulls disabled and build network none; invoke the
+  synthetic verifier exactly once and report only the bounded status/message;
+- full offline suite and `git diff --check` pass; docs do not claim the numeric
+  status by itself identifies the root cause or authorizes remote retry.
+Проверка: existing `_build_verifier_runtime()` helper for offline build, then
+the bounded-large-snapshot opt-in test once using the generated image/code
+digests and `RUN_DOCKER_SANDBOX_TESTS=1`.
+Вне scope: raw streams, repeated container invocation, public API, remote
+snapshot, full pipeline, provider/model, credentials, stage, approval,
+publication, branch, PR, push or deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Verifier failure messages now
+include only a validated integer exit status in `[0, 255]`; invalid statuses,
+stdout/stderr and canaries remain hidden. Classification tests and full offline
+suite pass: 924 tests, 919 passed and 5 skipped; `git diff --check` passes. The
+one synthetic `network=none` verifier call returned `status=1`, not a listed
+entrypoint rejection code. This narrows the observed child outcome but does not
+prove whether Docker client/runtime or verifier startup failed. No retry of
+EXP-497 or EXP-498 is authorized.
+
+### Batch CS — probe verifier container startup without repository content (R2 execution batch 55/55; 1 task)
+
+#### EXP-502 — check verifier startup with a fixed malformed request
+Статус: BLOCKED
+Цель: determine whether the current verifier image/profile can start the
+entrypoint at all, independently of the large snapshot request.
+Зависит от: EXP-501 ACCEPTED with bounded `status=1` on a valid synthetic large
+request; no raw streams were exposed.
+Среда исполнения: one local container only; fixed `b"not-json"` stdin, exact
+local image ID
+`sha256:ae095fa8087d7b048ccd61e08fbb884e5f5dc945a053b9b7725063dff4c0d877`,
+code digest
+`sha256:0c884376a434f46d08574bc14cc54b831be2a48d6551bd4bde14b539b7dc1de4`,
+Docker executable `/usr/local/bin/docker`; `network=none`. No repository
+content, network, provider, credentials or writes.
+Разрешённые пути:
+- `tests/test_verifier_container.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- add an opt-in test that invokes the existing fixed Docker profile exactly
+  once with the fixed malformed stdin;
+- expected outcome is exit status 2, empty stdout, and the exact safe
+  `request-payload` marker; on any other outcome report only numeric status,
+  stream lengths and marker-match booleans, never stream contents;
+- use only the pinned image/code digest above, do not build/pull or invoke other
+  containers;
+- targeted diagnostic, full offline suite and `git diff --check` pass; if the
+  expected marker is absent, record the safe metadata and stop;
+- document this as startup evidence only, not large-request or remote pipeline
+  success.
+Проверка: one new opt-in test under `RUN_DOCKER_SANDBOX_TESTS=1` with the exact
+image/code digest and executable above; Docker profile must remain fixed and
+network-isolated.
+Вне scope: remote snapshot, target execution, full pipeline, output logging,
+provider/model, credentials, stage, approval, publication, branch, PR, push or
+deployment.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. The one container invocation ran,
+but the diagnostic test then failed while unpacking `_collect_bounded_output`
+(its documented return order is `(stdout, stderr, exit_code)`). No numeric
+status/marker evidence was retained by the failed assertion, so startup remains
+unverified. A harness-only correction was made within the card scope; repeating
+the container probe requires a fresh exact card. No remote access was used.
+
+### Batch CT — repeat the corrected startup-only verifier probe (R2 execution batch 56/56; 1 task)
+
+#### EXP-503 — capture bounded startup status and exact marker
+Статус: BLOCKED
+Цель: complete EXP-502's startup check with the corrected bounded-output tuple
+order and establish whether the current verifier entrypoint starts in the
+fixed offline container profile.
+Зависит от: EXP-502 BLOCKED because its one invocation completed but its test
+harness misread the returned `(stdout, stderr, exit_code)` tuple.
+Среда исполнения: exactly one local container; fixed malformed `b"not-json"`
+stdin; image `sha256:ae095fa8087d7b048ccd61e08fbb884e5f5dc945a053b9b7725063dff4c0d877`;
+code digest
+`sha256:0c884376a434f46d08574bc14cc54b831be2a48d6551bd4bde14b539b7dc1de4`;
+Docker `/usr/local/bin/docker`; verifier network none. No repository content,
+network, provider, credentials or writes.
+Разрешённые пути:
+- `tests/test_verifier_container.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- one targeted test reports only status, stdout/stderr lengths and exact safe
+  marker match; expected is status 2, empty stdout and
+  `verifier container: rejection:request-payload`;
+- on any different outcome report only those metadata fields and stop;
+- no image build/pull or additional container invocation;
+- full offline suite and `git diff --check` pass; document startup result as
+  narrow evidence only, not a large-request or pipeline pass.
+Проверка: run the corrected test once with `RUN_DOCKER_SANDBOX_TESTS=1`, the
+exact image/code digest and Docker executable above.
+Вне scope: remote snapshot, target execution, full pipeline, raw stream output,
+provider/model, credentials, stage, approval, publication, branch, PR, push or
+deployment.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07. The corrected one-shot probe
+retained only safe metadata: status 1, stdout 0 bytes, stderr 547 bytes,
+expected marker mismatch. This shows the verifier entrypoint did not return its
+expected status 2 for malformed input, but it does not reveal whether Docker
+or Python startup failed. No stream content was exposed. A new task is required
+to classify bounded stderr into a fixed safe category; no remote retry.
+
+### Batch CU — classify verifier startup stderr without exposing it (R2 execution batch 57/57; 1 task)
+
+#### EXP-504 — report only known startup failure categories
+Статус: ACCEPTED
+Цель: distinguish common Docker daemon/runtime failures from verifier Python
+startup failures using only fixed safe categories, never raw stderr.
+Зависит от: EXP-503 BLOCKED with status 1, stdout length 0, stderr length 547,
+and no expected verifier rejection marker.
+Среда исполнения: one local container only, same fixed malformed stdin and
+profile; image `sha256:ae095fa8087d7b048ccd61e08fbb884e5f5dc945a053b9b7725063dff4c0d877`;
+code digest
+`sha256:0c884376a434f46d08574bc14cc54b831be2a48d6551bd4bde14b539b7dc1de4`;
+Docker `/usr/local/bin/docker`; network none. No source-repository content or
+external network.
+Разрешённые пути:
+- `tests/test_verifier_container.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- add a closed set of byte-marker classifications for daemon-connect, daemon
+  rejection, OCI/runtime create, image unavailable, Python import/traceback and
+  unknown output; unknown remains `unclassified`;
+- diagnostic output consists only of status, stream lengths, marker booleans
+  and one category label; never include fragments, paths, or stream hashes;
+- one local profile invocation with fixed malformed input produces a bounded
+  classification; no retry, build or pull;
+- run full offline suite and `git diff --check`; docs state that classification
+  does not prove the cause of EXP-497's larger-request failure.
+Проверка: invoke the corrected startup test once with
+`RUN_DOCKER_SANDBOX_TESTS=1` and the exact image/code digest/executable above.
+Вне scope: raw stream reading in tool output, remote snapshot, full pipeline,
+provider/model, credentials, stage, approval, publication, branch, PR, push or
+deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The one fixed-malformed-input
+startup probe reported only `status=1`, `stdout_bytes=0`, `stderr_bytes=547`,
+`marker_match=false`, `stderr_category=python-import`. No raw stderr was
+exposed. Source inspection found a likely concrete dependency mismatch:
+`executor.py` imports GitHub snapshot modules at module load, but the pinned
+verifier image includes only executor/replay dependencies and omits those GitHub
+modules. Full offline suite: 926 tests, 920 passed, 6 skipped;
+`git diff --check` passes. Next card removes that unused module-load dependency
+while retaining runtime checks on remote paths, then checks a rebuilt verifier
+container. No remote retry is authorized.
+
+### Batch CV — decouple verifier import from remote snapshot modules (R2 execution batch 58/58; 1 task)
+
+#### EXP-505 — lazy-load remote snapshot types only for remote execution
+Статус: ACCEPTED
+Цель: fix the likely verifier image startup defect exposed as `python-import`:
+the verifier image intentionally omits GitHub snapshot modules, yet importing
+`executor.py` currently imports them eagerly.
+Зависит от: EXP-504 ACCEPTED with one startup probe classified `python-import`;
+the verifier Dockerfile module set excludes `github_snapshot.py` and
+`remote_snapshot_workspace.py`.
+Среда исполнения: local only. No GitHub/public endpoint, provider, credentials,
+target repository or external write. For real verifier confirmation, rebuild
+offline from the exact pinned base with `--pull=false --network=none`; make one
+synthetic `network=none` verifier request containing one 220064-byte base file.
+Разрешённые пути:
+- `src/app_contracts/executor.py`
+- `tests/test_executor.py`
+- `tests/test_verifier_container.py`
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- change remote type imports to `TYPE_CHECKING` plus lazy imports in only the
+  remote-workspace/snapshot validation paths; preserve exact runtime type
+  validation for live remote inputs;
+- add a regression proving local `app_contracts.executor` imports when
+  `github_snapshot` and `remote_snapshot_workspace` are unavailable, while
+  local verifier behavior stays available;
+- existing remote snapshot synthetic tests continue passing;
+- offline verifier image import/startup succeeds; bounded-large-snapshot
+  container verifier returns a bound PASS for the harmless calculator test;
+- targeted/full offline suites and `git diff --check` pass; no pipeline retry.
+Проверка: run isolated-import regression and affected tests; rebuild image with
+the existing `_build_verifier_runtime()` helper (pull disabled/network none),
+then run `tests.test_verifier_container.VerifierContainerConfigTests.test_opt_in_real_container_accepts_bounded_large_snapshot`
+exactly once with generated image/code digests and `RUN_DOCKER_SANDBOX_TESTS=1`;
+then full suite without Docker opt-in.
+Вне scope: remote snapshot, target execution pipeline, LLM/provider, credentials,
+stage, approval, publication, branch, PR, push, deployment or change to the
+verifier trust claim.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `executor.py` now uses
+`TYPE_CHECKING` annotations and lazy imports in the remote-only validation
+paths. A subprocess regression imported local executor/verifier functionality
+while blocking both remote modules. Existing remote synthetic executor tests
+passed. Offline verifier image rebuilt from pinned local base with pull/network
+disabled: image ID
+`sha256:4c838a526b9521b28cf96c0018e6f83c26b7d58baf383b4c53003213b816fdfa`, code
+digest
+`sha256:83cf0a67226b0b50885455584705f07d6608636988e9c017421c99c89bd6eb74`.
+One real `network=none` verifier call accepted a synthetic base file of 220064
+bytes and returned a bound PASS. Full offline suite: 927 tests, 921 passed and
+6 skipped; `git diff --check` passes. No GitHub/network/provider/credentials or
+external writes. This does not repeat or resolve the remote EXP-497 attempt.
+
+### Batch CW — retry the pinned synthetic target/verifier pipeline after import fix (R2 execution batch 59/59; 1 task)
+
+#### EXP-506 — one fresh-readiness-gated exact-pin pipeline attempt
+Статус: BLOCKED
+Цель: verify the corrected minimal verifier image in the one previously
+blocked exact pinned snapshot pipeline, through target execution, verifier,
+durable stage/readback, preview and local mock receipt.
+Зависит от: EXP-496 accepted per-file bound alignment; EXP-505 ACCEPTED
+executor import boundary fix and real verifier synthetic PASS.
+Внешняя цель: exactly one anonymous verified-TLS GET to
+`https://api.github.com/rate_limit`; only if status 200 and remaining >=25,
+continue immediately with exactly one existing test invocation reading
+`SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`,
+23 blobs. The readiness command is exactly the bounded header-only EXP-477
+command; no response body. No retry/fallback if not ready or if execution fails.
+Runtime: test builds verifier image offline with pulls disabled/network none;
+execution image
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24f1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`;
+both containers network none.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- exact pin/content digest and fixed candidate digest
+  `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`
+  validate;
+- only declared `backend/routes.py` executes; five malformed numeric inputs
+  and overflow return 422 with zero writes, valid input returns 200 with one
+  expected write in target and verifier;
+- verifier PASS, durable stage save/readback, preview and local mock receipt
+  bind the same repository/digest; temp DB, snapshot lease and containers clean;
+- any failure captures sanitized evidence and stops; never retries;
+- if the pipeline reaches completion, run the non-opt-in full suite and
+  `git diff --check`.
+Вне scope: live LLM/provider call (the worker uses a fixed synthetic Control
+Plane proposal), credentials, model spend, real approval, GitHub writes, branch,
+PR, push or deployment. This is not live Worker MVP evidence.
+Commit: DENIED.
+Результат Control Plane: BLOCKED before snapshot intake. The one authorized
+header-only readiness GET returned HTTP 200 with `remaining=8`, below the
+required threshold of 25. No snapshot/blob intake or pipeline invocation ran;
+there was no retry. Resume only through a new task card after reset and a fresh
+readiness check. No credentials or publication were used.
+
+### Batch CX — exact-pin pipeline retry after rate-limit reset (R2 execution batch 60/60; 1 task)
+
+#### EXP-507 — one post-reset readiness-gated exact-pin pipeline attempt
+Статус: BLOCKED
+Цель: retry the one exact pinned synthetic target/verifier pipeline after
+EXP-505 fixed the verifier import boundary, without repeating the earlier
+readiness check or treating its below-threshold result as permission.
+Зависит от: EXP-505 ACCEPTED; EXP-506 BLOCKED before snapshot intake with
+HTTP 200 / remaining 8 and no pipeline invocation.
+Условие активации: do not set READY or execute before the rate-limit reset
+reported by EXP-506 (`2026-10-07T12:07:42Z`). Activation requires a new
+Control Plane decision and a newly issued single-use readiness gate.
+Before any GitHub request, perform read-only local image inspection and require
+the execution reference below to resolve to the stated image ID on `linux/arm64`
+and the verifier reference to resolve to its stated image ID. If either check
+fails, stop before readiness and do not pull/build during this card.
+```bash
+docker image inspect 'python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57' --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+docker image inspect 'sha256:4c838a526b9521b28cf96c0018e6f83c26b7d58baf383b4c53003213b816fdfa' --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+```
+Внешняя цель при активации: exactly one anonymous verified-TLS, header-only
+GET to `https://api.github.com/rate_limit`; only on HTTP 200 and
+`remaining >= 25`, immediately run exactly once:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import http.client
+import re
+import ssl
+
+import certifi
+
+context = ssl.create_default_context()
+context.load_verify_locations(cafile=certifi.where())
+if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+    raise SystemExit("tls_verification_unavailable")
+connection = http.client.HTTPSConnection("api.github.com", timeout=8, context=context)
+status = remaining = reset = None
+try:
+    connection.request("GET", "/rate_limit", headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-ReadOnly-Snapshot/1",
+    })
+    response = connection.getresponse()
+    status = response.status
+    remaining = response.getheader("X-RateLimit-Remaining")
+    reset = response.getheader("X-RateLimit-Reset")
+    response.close()
+except Exception as exc:
+    print("transport_error_type=" + type(exc).__name__)
+    raise SystemExit(1)
+finally:
+    connection.close()
+for label, value in (("rate_remaining", remaining), ("rate_reset_unix", reset)):
+    if value is not None and (len(value) > 12 or re.fullmatch(r"[0-9]+", value) is None):
+        value = "unavailable"
+    print(label + "=" + (value if value is not None else "unavailable"))
+print("http_status=" + (str(status) if status is not None else "unavailable"))
+PY
+```
+If the readiness gate passes, the sole pipeline invocation is:
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_remote_target_stage_pipeline.PinnedTargetStagePipelineTests.test_control_plane_candidate_reaches_trusted_container_stage_and_mock_receipt -v`
+The command may read only the existing exact pin
+`SoldatovAlexander/brainbooster_full_v11` at commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs and full content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`;
+candidate digest must be
+`sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`.
+Verifier image build must use pulls disabled and network none; execution image
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base
+`python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24f1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`;
+both containers network none.
+Критерии приёмки: all EXP-506 exact-pin, target 422/no-write and 200/one-write,
+verifier PASS, durable exact-digest stage save/readback, preview, local mock
+receipt and cleanup criteria pass; otherwise sanitize evidence and stop without
+retry. If complete, run the full offline suite and `git diff --check`.
+Вне scope: live model/provider call, credentials, model spend, real approval,
+GitHub writes, branch/PR/push/deployment. No commit. Even success is not live
+Worker MVP evidence.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Результат Control Plane: BLOCKED 2026-10-07. After the reset, the required
+read-only preflight found that the exact execution image was absent from the
+currently selected Docker daemon (`No such image`). Stopped before the readiness
+GET; no GitHub request or pipeline invocation occurred. Do not retry this card.
+Re-establish the image in a separate narrowly scoped task, then prepare a new
+readiness-gated card and decision.
+
+### Batch CY — include credential lookup in the bounded provider budget (R2 execution batch 61/61; 1 task)
+
+#### EXP-508 — reject a credential callback that returns after its deadline
+Статус: ACCEPTED
+Цель: make finite credential-source latency consume the same caller-supplied
+DeepSeek transport budget and ensure a late callback cannot start an HTTPS
+request.
+Зависит от: EXP-474 portable `CredentialSource`; EXP-505 verifier import fix.
+Среда исполнения: local synthetic key and fake connection only; no network,
+provider, actual credential, Docker, or secret/config lookup.
+Разрешённые пути:
+- `src/app_contracts/deepseek_http_channel.py`
+- `tests/test_deepseek_http_channel.py`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Требуемое поведение: start the monotonic deadline before invoking the injected
+credential source; after the callback returns, reject an expired budget before
+constructing the HTTPS connection. Preserve sanitized failures and never
+include the key in an error or evidence. Do not claim cancellation of a callback
+that never returns; record that residual limitation and leave DNS cancellation
+and process isolation open.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_deepseek_http_channel -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Критерии приёмки: a fake callback that returns after the deadline yields only
+the fixed timeout error and the fake HTTPS connection factory is never called;
+existing request/read/TLS timeout and single-attempt tests pass; evidence
+contains no key or provider request. The callback itself remains non-cancellable
+in-process, explicitly documented.
+Вне scope: live provider call, real credentials, rate-limit use, profile factory,
+Docker, external writes, approval, branch/PR/push/deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Deadline starts before the
+synthetic credential callback; a callback delayed 50 ms against a 10 ms budget
+returns only the fixed timeout error and never constructs the fake connection.
+Targeted suite: 25 tests passed, 1 upload-backpressure test skipped, including
+both a late returned key and a late exception with synthetic key canary
+suppressed. Full offline suite: 929 tests, 923 passed, 6 skipped.
+`git diff --check` passes.
+No credentials, provider/network requests, Docker, or external writes. This does
+not cancel a callback that never returns and does not solve DNS cancellation.
+
+### Batch CZ — compose a synthetic remote stage with the real verifier container (R2 execution batch 62/62; 1 task)
+
+#### EXP-509 — persist and preview a synthetic stage after Docker verifier PASS
+Статус: BLOCKED
+Цель: exercise the complete synthetic snapshot → Worker → local sandbox →
+real Docker verifier → durable SQLite stage/readback → preview → mock receipt
+composition, without consuming public API quota.
+Зависит от: EXP-505 verifier import fix; EXP-508 bounded credential callback
+return behavior; synthetic remote composition tests.
+Среда исполнения: local synthetic `calculator.py` snapshot and fixed Worker;
+`LocalProcessSandboxBackend`; actual verifier image only
+`sha256:4c838a526b9521b28cf96c0018e6f83c26b7d58baf383b4c53003213b816fdfa`
+with code digest
+`sha256:83cf0a67226b0b50885455584705f07d6608636988e9c017421c99c89bd6eb74`.
+Verifier container uses `--network=none`. The target execution Docker image is
+not cached and is out of scope; this is not exact-target or sandbox evidence.
+Разрешённые пути:
+- `tests/test_remote_snapshot_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Docker task command (explicit opt-in, cached image, no pulls):
+`RUN_DOCKER_SANDBOX_TESTS=1 AGENT00X_DOCKER_EXECUTABLE=/usr/local/bin/docker AGENT00X_VERIFIER_IMAGE_ID=sha256:4c838a526b9521b28cf96c0018e6f83c26b7d58baf383b4c53003213b816fdfa AGENT00X_VERIFIER_CODE_DIGEST=sha256:83cf0a67226b0b50885455584705f07d6608636988e9c017421c99c89bd6eb74 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_snapshot_pipeline.RemoteSnapshotVerifierStageDockerTests.test_container_verifier_completes_synthetic_stage -v`
+Критерии приёмки: actual container returns bound PASS; durable stage save and
+readback match the exact digest; preview and only local mock receipt use that
+same digest; temp DB/workspace/container are cleaned. Run the full offline suite
+without Docker opt-in and `git diff --check` after the opt-in test.
+Вне scope: GitHub/network/API, target repository, Docker execution sandbox,
+live Worker/provider, credentials, real approval/publication, branch/PR/push or
+deployment. No commit. This does not establish verifier independence from the
+host Docker daemon or kernel.
+Commit: DENIED.
+Результат Control Plane: BLOCKED 2026-10-07 after one authorized opt-in
+synthetic run. The actual Docker verifier returned a bound PASS with identity
+`docker-image:sha256:4c838a526b9521b28cf96c0018e6f83c26b7d58baf383b4c53003213b816fdfa/code:sha256:83cf0a67226b0b50885455584705f07d6608636988e9c017421c99c89bd6eb74`;
+executor then returned `stage-persistence-failed`. Source inspection found a
+contract mismatch: executor accepts that exact Docker identity, but
+`PublicationSeed` accepts only verifier IDs up to 128 characters, while this
+identity is 161 characters. No stage readback, preview or mock receipt was
+reached. Docker container and temporary workspace/database were cleaned. No
+GitHub/network/provider/credentials or writes. Do not rerun EXP-509; use the
+separate remediation card below.
+
+### Batch DA — preserve exact Docker verifier identity through stage persistence (R2 execution batch 63/63; 1 task)
+
+#### EXP-510 — align PublicationSeed's verifier identity contract
+Статус: ACCEPTED
+Цель: allow only the exact bounded Docker image/code identity already accepted
+by executor validation to pass through `PublicationSeed` and durable stage,
+without broadening arbitrary verifier labels.
+Зависит от: EXP-509 BLOCKED after actual Docker verifier PASS and
+`stage-persistence-failed`; observed Docker identity length 161.
+Среда исполнения: local tests and one separately authorized opt-in synthetic
+Docker-verifier composition retry using the cached image only; no GitHub,
+provider, network, credentials, Docker target sandbox, or external writes.
+Разрешённые пути:
+- `src/app_contracts/publication_seed.py`
+- `tests/test_publication_seed.py`
+- `tests/test_remote_snapshot_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Требуемое изменение: accept a verifier identity matching exactly
+`docker-image:sha256:<64 lowercase hex>/code:sha256:<64 lowercase hex>` in
+addition to existing ≤128-character labels; preserve rejection of arbitrary
+long values and malformed Docker identities.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_publication_seed -q`
+- the exact EXP-509 Docker command, once, with the same explicit opt-in and
+  cached verifier image/code digest; expected VERIFIED, exact SQLite
+  save/readback, digest-bound preview and local mock receipt;
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Критерии приёмки: identity validators remain aligned end-to-end; targeted tests
+prove exact Docker ID acceptance and invalid/overlong ID rejection; one actual
+container composition reaches receipt with same digest and all temp/container
+resources cleaned. If the opt-in run fails, stop with sanitized evidence; never
+repeat it under this card.
+Вне scope: exact pinned target retry, live provider, credentials, target Docker
+sandbox, GitHub/API reads or writes, real approval/publication, branch/PR/push
+or deployment. No commit. Docker verifier remains same-host and is not an
+independently trusted verifier.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `PublicationSeed` now accepts
+only the exact bounded Docker image/code verifier identity in addition to its
+existing short labels; arbitrary 161-character labels and malformed Docker
+identities remain rejected. Targeted suite: 33 tests passed. One opt-in actual
+Docker-verifier composition retry now reaches VERIFIED, exact SQLite
+save/readback, matching preview and local mock receipt. Verifier image/code
+identity is bound in the result; the worker proposal and snapshot are synthetic
+and the execution backend remains local process. Full offline suite: 931 tests,
+924 passed, 7 skipped. `git diff --check` passes. No GitHub/network/provider/
+credentials or external writes. Host Docker/kernel are not independently
+trusted.
+
+### Batch DB — obtain the pinned target execution image anonymously (R2 execution batch 64/64; 1 task)
+
+#### EXP-511 — cache the exact Python 3.11.16 arm64 image for EXP-507
+Статус: ACCEPTED
+Цель: make the existing exact-pin pipeline's target sandbox runnable without
+letting Docker silently pull an image during the later quota-gated test.
+Зависит от: EXP-507 DRAFT; `DockerSandboxBackend` refuses to run when its exact
+image is absent and does not auto-pull.
+Среда исполнения: one anonymous Docker Hub image pull to the exact immutable
+manifest digest
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`
+for `linux/arm64`; no repository access, credentials, source, or code execution.
+Разрешённая команда:
+```bash
+docker_config="$(mktemp -d)"
+trap 'rmdir "$docker_config"' EXIT
+docker --config "$docker_config" image pull --platform linux/arm64 \
+  'python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57'
+docker --config "$docker_config" image inspect \
+  'python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57' \
+  --format '{{.Id}} {{.Os}}/{{.Architecture}} {{json .RepoDigests}}'
+```
+Критерии приёмки: pull succeeds without registry credentials; inspect confirms
+`linux/arm64` and `python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57` in RepoDigests. On any error stop; no other tag/digest, fallback or retry. No GitHub readiness or pipeline call in this task.
+Вне scope: build/pull any other image, run any container, use credentials,
+GitHub/API reads/writes, provider calls, repository edits beyond evidence,
+branch/PR/push/deployment.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The exact digest pull ran with a
+fresh empty Docker config, without registry credentials. Docker reported the
+requested manifest digest and `docker image inspect` on the exact tag@digest
+reference returned image ID `sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`,
+platform `linux/arm64`, and canonical RepoDigest `python@sha256:8b29…e3c57`.
+The image is now available to EXP-507. No container was run and no repository
+or external service state was written.
+
+### Batch DC — re-establish the exact pinned execution image (R2 execution batch 65/65; 1 task)
+
+#### EXP-512 — anonymously restore the Python 3.11.16 arm64 image
+Статус: ACCEPTED
+Цель: restore and verify the exact execution image required by a future
+readiness-gated attempt after the previous image disappeared from the currently
+selected Docker daemon.
+Зависит от: EXP-507 BLOCKED before readiness because read-only inspection
+returned `No such image`; EXP-511 previously obtained the exact manifest but it
+is not present in this daemon now.
+Среда исполнения: one anonymous Docker Hub pull of the exact immutable manifest
+for `linux/arm64`; no credentials or registry config, repository access, source,
+or code execution.
+Разрешённые команды:
+```bash
+docker_config="$(mktemp -d)"
+trap 'rmdir "$docker_config"' EXIT
+docker --config "$docker_config" pull --platform linux/arm64 \
+  'python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57'
+docker --config "$docker_config" image inspect \
+  'python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57' \
+  --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+```
+Критерии приёмки: exact expected image ID and `linux/arm64`; if pull/inspect
+fails, stop with no fallback, tag mutation, or retry. This task does not activate
+EXP-507 or authorize a GitHub request.
+Вне scope: run any container, pull/build another image, credentials, GitHub/API,
+provider calls, repository changes outside evidence, branch/PR/push/deployment.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The anonymous exact-digest pull
+with a fresh empty Docker config returned the expected image ID and
+`linux/arm64`. EXP-513 then confirmed the image is visible in the currently
+active `desktop-linux` Docker context. No container, GitHub request, or pipeline
+ran in this card.
+
+### Batch DD — identify the Docker daemon used by the target pipeline (R2 execution batch 66/66; 1 task)
+
+#### EXP-513 — inspect the active Docker context and exact-image availability
+Статус: ACCEPTED
+Цель: determine why the exact image is visible under a temporary empty Docker
+config but absent under the default local Docker configuration, without reading
+credential material or changing Docker state.
+Зависит от: EXP-507 BLOCKED before readiness (`No such image`); EXP-512 BLOCKED
+because its temporary-config daemon identity was not established.
+Среда исполнения: local read-only Docker metadata only. Do not read Docker config
+files, environment credential values, keychains, helper stores, or secret data.
+Команды при последующей активации:
+```bash
+docker context show
+docker context ls --format '{{.Name}} {{.DockerEndpoint}} {{.Current}}'
+docker image inspect 'python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57' --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+```
+Критерии приёмки: report only current context name, endpoint metadata and exact
+image presence/identity; sanitize local filesystem paths if needed. No pull,
+build, container run, config read or mutation. If the image is absent, prepare a
+separate narrowly scoped anonymous pull card that explicitly targets the
+confirmed daemon without exposing credentials.
+Вне scope: GitHub/API, repository access, registry login, provider calls,
+credential lookup, config edits, run/build/pull, branch/PR/push/deployment.
+Разрешённые пути:
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+Commit: DENIED.
+Результат Control Plane: activated 2026-10-07 for the exact read-only local
+diagnostics listed above. No credential material or Docker config files may be
+read; no Docker state may be changed.
+Результат проверки: current context `desktop-linux`; endpoint metadata listed
+`unix:///Users/aleksandrsoldatov/.docker/run/docker.sock`; exact image inspect
+returned the expected image ID and `linux/arm64`. No credentials/config files
+were read, and Docker state was not changed.
+
+### Batch DE — fresh readiness gate and exact-pin pipeline attempt (R2 execution batch 67/67; 1 task)
+
+#### EXP-514 — one fresh readiness-gated exact-pin pipeline attempt
+Статус: ACCEPTED
+Цель: make one new pipeline attempt after EXP-507 stopped before any GitHub
+request; target image is now verified in the active Docker context.
+Зависит от: EXP-507 BLOCKED before readiness; EXP-512 ACCEPTED exact image pull;
+EXP-513 ACCEPTED active-context image preflight.
+Внешняя цель: exactly one anonymous verified-TLS header-only GET to
+`https://api.github.com/rate_limit`. Only if HTTP 200 and remaining >=25,
+immediately run the one pipeline command below. Otherwise stop without retry.
+Readiness command:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import http.client
+import re
+import ssl
+import certifi
+
+context = ssl.create_default_context()
+context.load_verify_locations(cafile=certifi.where())
+if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+    raise SystemExit("tls_verification_unavailable")
+connection = http.client.HTTPSConnection("api.github.com", timeout=8, context=context)
+status = remaining = reset = None
+try:
+    connection.request("GET", "/rate_limit", headers={
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "Agent00X-ReadOnly-Snapshot/1",
+    })
+    response = connection.getresponse()
+    status = response.status
+    remaining = response.getheader("X-RateLimit-Remaining")
+    reset = response.getheader("X-RateLimit-Reset")
+    response.close()
+except Exception as exc:
+    print("transport_error_type=" + type(exc).__name__)
+    raise SystemExit(1)
+finally:
+    connection.close()
+for label, value in (("rate_remaining", remaining), ("rate_reset_unix", reset)):
+    if value is not None and (len(value) > 12 or re.fullmatch(r"[0-9]+", value) is None):
+        value = "unavailable"
+    print(label + "=" + (value if value is not None else "unavailable"))
+print("http_status=" + (str(status) if status is not None else "unavailable"))
+PY
+```
+If the readiness gate passes, run exactly once:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline.PinnedTargetStagePipelineTests.test_control_plane_candidate_reaches_trusted_container_stage_and_mock_receipt -v`
+Only exact remote pin: `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs, full content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`;
+candidate digest `sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`.
+Target image `python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base `python:3.12.15-alpine3.24@sha256:7a63cb93468d7ce5f24f1332a8f7a27f444b3221b0a3d6b5573036b78d937c78`.
+Verifier build pulls disabled; both containers network none. If the attempt
+completes, run the full offline suite and `git diff --check`.
+Вне scope: live Worker/provider, credentials, model spend, real approval,
+GitHub writes, branch/PR/push/deployment, retries or alternate image/pin.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Commit: DENIED.
+Результат Control Plane: activated 2026-10-07 for one readiness gate and at
+most one pipeline invocation, conditional on HTTP 200 / remaining >=25.
+Результат Control Plane: ACCEPTED 2026-10-07. One verified-TLS header-only
+readiness GET returned HTTP 200, remaining 60, reset Unix `1791378648`; no
+response body was consumed. The one exact-pin pipeline test passed (`1 test`,
+`OK`): exact pinned snapshot/candidate digest validated, target malformed input
+returned 422 with zero writes, valid input returned 200 with one write, Docker
+verifier PASS, durable exact-digest stage save/readback, preview and local mock
+receipt completed. Offline suite: 931 tests, 924 passed, 7 skipped.
+`git diff --check` passed. No credentials, provider call, real approval, GitHub
+write, branch, PR or push. This is not live Worker evidence or MVP completion.
+
+### Batch DF — wire the bounded Worker into the pinned CLI runtime (R2 execution batch 68/68; 1 task)
+
+#### EXP-515 — build a pinned DeepSeek profile from injected dependencies
+Статус: ACCEPTED
+Цель: provide a supported Control Plane factory for the fixed pinned-snapshot
+CLI, assembling `DeepSeekHTTPChannel` and `DeepSeekProposalWorker` without
+inventing a credential store or implicit runtime configuration.
+Зависит от: EXP-514 exact-pin synthetic pipeline accepted; open gates remain
+live Worker proposal, user-controlled secret source, spend limit and missing
+standalone runtime profile factory.
+Среда исполнения: local-only assembly and fake collaborator tests. Never call
+the injected credential source or perform network, Docker, GitHub, provider, or
+filesystem/config/environment lookup.
+Требуемый API: add a factory that takes explicit Control Plane task fields plus
+an injected `CredentialSource`, verifier, sandbox backend, and durable stage
+sink; it creates one fixed DeepSeek HTTP channel/Worker and a validated
+`RemoteSnapshotExecutionProfile`. Existing request validation must fail closed
+before snapshot intake. The factory must not call or inspect the credential
+source; the source is used only later when the Worker is actually invoked.
+Проверки:
+- focused `tests.test_worker_cli` tests prove correct Worker/channel assembly,
+  callback untouched during factory construction, and rejection of malformed
+  profile/dependencies before any GitHub reader call;
+- full offline suite and `git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: read credentials, create a secret provider, environment or file
+lookup, real provider call, remote snapshot read, Docker, approval/publication,
+GitHub writes, branch/PR/push/deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added
+`build_deepseek_remote_execution_profile`, which assembles the fixed DeepSeek
+HTTP channel/Worker from an injected `CredentialSource`, validates the complete
+profile before remote intake, and does not call the source during construction.
+Targeted CLI tests: 27 passed. Full offline suite: 933 tests, 926 passed, 7
+skipped. `git diff --check` passed. No credential lookup, network, Docker,
+GitHub, provider call, approval or write. This is a profile factory helper, not
+a configured standalone runtime or evidence of a live Worker call.
+
+### Batch DG — compose an explicit local runtime for the pinned CLI (R2 execution batch 69/69; 1 task)
+
+#### EXP-516 — add a no-implicit-config runtime entrypoint
+Статус: ACCEPTED
+Цель: turn the profile helper into a usable local runtime entrypoint for the
+fixed pinned-snapshot CLI, while keeping every authority-bearing dependency
+explicitly injected by the Control Plane.
+Зависит от: EXP-515 profile assembly accepted; exact target image and verifier
+container adapter already exercised in the exact-pin synthetic pipeline.
+Требуемый API: add an importable runtime function that accepts explicit task
+scope, `CredentialSource`, `VerifierContainerConfig`, stage database path, and
+output streams; it must assemble `DeepSeekHTTPChannel`/Worker,
+`DockerContainerVerifier`, `DockerSandboxBackend` with the exact pinned Python
+image, and a context-managed `SQLiteStagedArtifactStore`, then call the existing
+`--remote-snapshot-execute` path. Reject malformed runtime parameters before
+opening the database or contacting GitHub. Do not read environment/config files
+or resolve the credential source during assembly. The runtime is not invoked by
+the module's default `__main__` path.
+Проверки:
+- focused unit tests mock snapshot intake and composition, assert exact adapter
+  wiring and no credential lookup, and prove invalid runtime config causes no
+  DB creation or remote reader call;
+- full offline suite and `git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: invoke the runtime, read credentials, provider/model call, GitHub
+snapshot request, Docker build/run, external write, approval, branch/PR/push,
+deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added
+`run_remote_snapshot_with_runtime`: validates the injected profile/config before
+opening the stage DB, then composes the DeepSeek Worker, pinned Python Docker
+sandbox, configured Docker verifier and context-managed SQLite sink into the
+existing fail-closed CLI path. The exact credential callback remains lazy and
+untouched during assembly. Targeted CLI tests: 29 passed. Full offline suite:
+935 tests, 928 passed, 7 skipped. `git diff --check` passed. No network, Docker,
+credential lookup, provider call or external write. This importable entrypoint
+has not itself been invoked; live execution and operational runtime evidence
+remain open.
+
+### Batch DH — enforce one-shot readiness and provider-call authorization (R2 execution batch 70/70; 1 task)
+
+#### EXP-517 — require a fresh bound permit before remote CLI execution
+Статус: ACCEPTED
+Цель: prevent accidental or repeated remote snapshot/provider execution through
+the importable runtime and direct remote CLI branch unless Control Plane supplies
+a fresh, exact-pin, one-use authorization.
+Требуемое поведение:
+- add a verified-TLS anonymous `GET /rate_limit` operation that reads response
+  headers only, never reads the body and never retries; expose status, remaining,
+  reset and monotonic observation time as bounded typed evidence;
+- introduce a thread-safe one-use execution permit bound to the task/card,
+  `SoldatovAlexander/brainbooster_full_v11`, exact pinned commit, and an explicit
+  Control Plane `provider_call_approved=True` decision; require HTTP 200,
+  remaining >=25, and age <=120 seconds;
+- require and consume this permit in `--remote-snapshot-execute` before any
+  snapshot request; fail closed if missing, stale, mismatched, below threshold
+  or already consumed. Runtime/profile validation and bad DB path rejection
+  happen before permit consumption. A consumed permit is never restored after
+  downstream failure;
+- document that this is a process-local accidental-replay guard, not
+  authentication or enforcement against malicious trusted-host Python code.
+Проверки: offline fake-connection tests prove header-only behavior and verified
+TLS config, no retry, exact binding, TTL/threshold rejection, atomic single-use
+under concurrent attempts, and remote-reader non-invocation for every denied
+case. Update existing remote CLI tests to inject a synthetic permit. Run the
+full offline suite and `git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/github_http_transport.py`
+- `src/app_contracts/worker_cli.py`
+- `tests/test_github_http_transport.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: live rate-limit request, credentials, provider/model call, Docker,
+real approval, GitHub writes, branch/PR/push/deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Added one-use verified-TLS
+header-only `GET /rate_limit` to the fixed GitHub transport, with no body read
+and no retry (the transport instance itself also permits only one readiness
+attempt). The remote CLI now requires an explicit permit, bound to the fixed
+repository/commit, task and card, issued only for HTTP 200 / remaining >=25 and
+an explicit Control Plane provider-call approval; permit TTL is 120 seconds and
+consumption is atomic and irreversible. Missing, stale, mismatched, denied or
+reused permits stop before snapshot intake. Targeted tests: 42 passed. Full
+offline suite: 941 tests, 934 passed, 7 skipped. `git diff --check` passed. No
+live readiness request, credential, provider call, Docker or external write.
+This is only a process-local accidental-replay guard, not authentication or an
+enforcement boundary against malicious trusted-host Python code.
+
+### Batch DI — make target sandbox image an explicit pinned runtime input (R2 execution batch 71/71; 1 task)
+
+#### EXP-518 — require an explicit digest-pinned execution image
+Статус: ACCEPTED
+Цель: allow the Control Plane to select a locally prepared target runtime image
+with exact application dependencies, while preventing an implicit fallback to
+the base Python image or any mutable image tag.
+Требуемое поведение:
+- add required keyword-only `execution_image` input to
+  `run_remote_snapshot_with_runtime`; accept only an immutable Docker image ID
+  `sha256:<64 lowercase hex>` or a repository reference ending in
+  `@sha256:<64 lowercase hex>`;
+- reject missing, tag-only, malformed, option-like or non-string image values
+  before Docker adapter construction, SQLite creation, permit consumption,
+  credential-source invocation or GitHub access;
+- pass the exact validated image value to `DockerSandboxBackend`; preserve all
+  current resource and `container-network-none` settings;
+- keep `REMOTE_EXECUTION_IMAGE` only as the documented base-image reference;
+  do not use it as a runtime fallback in this entrypoint;
+- cover the accepted immutable forms, rejected values and all no-side-effect
+  guarantees with offline tests.
+Проверки:
+- focused `tests.test_worker_cli` tests for exact image forwarding and fail-closed
+  validation before DB/permit/GitHub/credential activity;
+- full offline suite and `git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/worker_cli.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: build/pull/run Docker images, credentials, provider/model request,
+GitHub snapshot request, task test-command semantics, approval, GitHub write,
+branch/PR/push/deployment.
+Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. `run_remote_snapshot_with_runtime`
+now requires an explicit immutable Docker image ID or digest reference and
+passes it unchanged to `DockerSandboxBackend`; no base-image fallback remains.
+Malformed, mutable-tag, option-like and wrong-type values fail before Docker
+adapter construction, stage DB creation, permit consumption or credential
+source invocation. Targeted `tests.test_worker_cli`: 35 passed. Full offline
+suite: 943 tests, 936 passed, 7 skipped; `git diff --check` passed. No Docker
+build/run, network, credential lookup, provider call, GitHub access or external
+write occurred. The configured image's suitability, dependencies and isolation
+are not attested by this value check.
+
+### Batch DJ — package the pinned target application runtime (R2 execution batch 72/72; 1 task)
+
+#### EXP-519 — build an offline dependency image from the accepted wheel inventory
+Статус: ACCEPTED
+Цель: provide an immutable local Python 3.11 target image containing exactly
+the already HTTP-tested FastAPI/Uvicorn dependency inventory, without copying
+target source into the image or allowing build/container network access.
+Зависит от: EXP-462 accepted exact Python 3.11.16 arm64 image, actual loopback
+HTTP baseline and 15 PyPI wheels with recorded SHA-256 values; EXP-518 requires
+runtime callers to pass an explicit digest-pinned image.
+Reuse only the exact 15 package/version/filename/hash entries recorded in
+EXP-462 evidence immediately above. This includes FastAPI 0.142.2, Uvicorn
+0.54.0, python-multipart 0.0.32 and exact transitive wheels; do not resolve from
+the target's unpinned requirements.txt.
+Create `containers/target-runtime/requirements.lock` with one exact version and
+SHA-256 per wheel. Create a multi-stage `containers/target-runtime/Dockerfile`
+based only on `python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`; install to
+an isolated `/opt/target-python` path using only a temporary wheelhouse and
+`pip --no-index --require-hashes --no-deps`. The final image must contain no
+wheelhouse, target source, API key, GitHub material or application database.
+External read-only operations: fetch only the exact 15 pinned wheel artifacts
+from PyPI over verified HTTPS; check each filename and SHA-256 against the lock
+before build. No dependency resolution, sdist, alternate version, or host-side
+package installation.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+Base image preflight: inspect only the exact Python image digest below; if absent,
+allow one pull of that exact digest only, then record the resulting image ID.
+No tag substitution, alternate platform or pull retry.
+Build: `RUN_DOCKER_SANDBOX_TESTS=1 docker build --pull=false --network=none --tag agent00x-target-runtime:exp519 <temporary-exact-context>`.
+Expected Docker profile for the import/version smoke: `network=none`; no target
+source or secrets in the image, and temporary wheelhouse/context are cleaned.
+Record immutable resulting image ID; smoke imports FastAPI/Uvicorn/multipart
+and reports exactly `0.142.2/0.54.0/0.0.32`.
+Checks:
+- every downloaded wheel filename and hash matches the lock;
+- exact opt-in Docker build and no-network import/version smoke;
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`;
+- `git diff --check`.
+Разрешённые пути:
+- `containers/target-runtime/Dockerfile`
+- `containers/target-runtime/requirements.lock`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: verifier image, code/runtime API, target snapshot reads/execution,
+Worker/provider/credentials, approval/publication, GitHub writes, branch/PR/push,
+deployment, testdev.
+Внешние операции: only the exact 15 PyPI wheel GETs described above and, if
+the exact base image is absent, one read-only pull of that exact Docker digest;
+no other network request. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. The exact 15 wheels from the
+EXP-462 inventory were downloaded with `pip --require-hashes --no-deps
+--only-binary=:all:` for CPython 3.11 Linux aarch64; every filename and SHA-256
+matched the lock. The exact Python base image was absent in `desktop-linux`, so
+one pull of only its pinned digest was completed. The multi-stage image built
+successfully with `--pull=false --network=none`; immutable image ID is
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`
+(`linux/arm64`). Non-root read-only `network=none` smoke imported FastAPI
+0.142.2, Uvicorn 0.54.0 and multipart 0.0.32. A second smoke confirmed target
+source, wheelhouse and DB are absent from the final image. Full offline suite:
+943 tests, 936 passed, 7 skipped; `git diff --check` passed. No target source
+execution, app HTTP test, credentials, provider/model call, snapshot request or
+write occurred. This is a prepared dependency image, not an app-runtime or
+independent verifier proof.
+
+### Batch DK — first live Worker attempt (R2 execution batch 73/73; 1 task)
+
+#### EXP-520 — obtain one bounded DeepSeek proposal without publication
+Статус: ACCEPTED
+Цель: obtain one useful, sanitized proposal from the real DeepSeek Worker for
+the exact pinned `SoldatovAlexander/brainbooster_full_v11` snapshot, then replay
+and verify it in the bounded local pipeline, stopping before approval/provider
+write.
+Зависит от: EXP-519 accepted; fixed HTTP/DB test command and timeout;
+user-controlled `CredentialSource` available only to the operator without
+exposing its value to chat, prompt, logs, command arguments, files or evidence;
+exact verifier image ID and code digest; exact user-set maximum provider spend.
+Pinned target dependency image from EXP-519:
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`.
+Batch DL / EXP-521 built a matching Python 3.11.16 verifier image
+`sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+(`linux/arm64`) from the exact EXP-519 runtime image and its accepted dependency
+payload. Its verifier code digest is
+`sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`.
+The fixed HTTP/DB command is in `tests/test_remote_target_stage_pipeline.py`
+(`PINNED_HTTP_DB_TEST_COMMAND`), with a 30-second test timeout and 60-second
+verifier-container timeout. EXP-522 proved it on the exact four-file source
+slice; DT / EXP-529 later passed this command once through the exact full pinned
+23-blob snapshot and same-host verifier. It remains synthetic, not a live Worker
+proposal or independent verifier trust evidence.
+Fixed pin: commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs, full digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`;
+only `backend/routes.py` may change in the disposable snapshot. Docker opt-in:
+`RUN_DOCKER_SANDBOX_TESTS=1`; target base is
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+verifier base is
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+Expected target profile is network-none; each malformed numeric payload ->
+HTTP 422 / zero DB rows; valid payload -> HTTP 200 / one exact row; temp
+containers/processes/DBs cleaned. The verifier result is same-host container
+evidence, not independent trust. No approval or external write.
+Only one DeepSeek request, no retries; exactly one fresh readiness GET and the
+fixed public snapshot GETs in `_run_pinned_remote_execution`; no provider retry,
+image build/pull, real approval, GitHub write, branch/PR/push, deployment or
+`testdev`. The execution instruction is: "In `backend/routes.py`, reject
+malformed or non-finite numeric fields in `/save-session` with HTTP 422 before
+any database write. Preserve the valid request behavior (HTTP 200 and exactly
+one expected row). Change only this route file; do not add unrelated changes."
+Commit: DENIED. Stop immediately if readiness is not HTTP 200 with >=25 remaining,
+either exact image identity is absent, the full snapshot pin mismatches, or any
+stage fails. No retry or fallback.
+
+Exact one-shot Control Plane runner (stdout is filtered to sanitized CLI
+evidence; stderr and credential value are never emitted):
+```bash
+RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 - <<'PY'
+import json, os, shutil, subprocess, sys, tempfile
+from io import StringIO
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd() / "tests"))
+from test_remote_target_stage_pipeline import (
+    PINNED_HTTP_DB_TEST_COMMAND,
+    PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
+    PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
+    TARGET_RUNTIME_IMAGE_ID,
+    VERIFIER_RUNTIME_CODE_DIGEST,
+    VERIFIER_RUNTIME_IMAGE_ID,
+)
+from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
+from app_contracts.verifier_container import VerifierContainerConfig
+from app_contracts.worker_cli import (
+    issue_remote_execution_permit,
+    run_remote_snapshot_with_runtime,
+)
+
+EXPECTED = {
+    TARGET_RUNTIME_IMAGE_ID: "linux/arm64",
+    VERIFIER_RUNTIME_IMAGE_ID: "linux/arm64",
+}
+docker = shutil.which("docker")
+if docker is None:
+    print('{"status":"stopped","reason":"docker-unavailable"}')
+    raise SystemExit(2)
+
+with tempfile.TemporaryDirectory(prefix="agent00x-exp520-docker-config-") as config:
+    child_env = {"DOCKER_CONFIG": config, "PATH": os.path.dirname(docker) + ":/usr/bin:/bin"}
+    for image, platform in EXPECTED.items():
+        try:
+            inspected = subprocess.run(
+                [docker, "--config", config, "--host=unix:///var/run/docker.sock",
+                 "image", "inspect", image, "--format", "{{.Id}}|{{.Os}}/{{.Architecture}}"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=5, check=False, env=child_env,
+            )
+        except Exception:
+            inspected = None
+        if inspected is None or inspected.returncode != 0 or inspected.stdout.strip() != image + "|" + platform:
+            print('{"status":"stopped","reason":"pinned-image-unavailable"}')
+            raise SystemExit(2)
+
+os.environ["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+os.environ["RUN_DOCKER_SANDBOX_TESTS"] = "1"
+readiness = GitHubAnonymousSnapshotTransport(timeout_seconds=10).read_rate_limit()
+if readiness.status != 200 or readiness.remaining is None or readiness.remaining < 25 or readiness.reset_unix is None:
+    print('{"status":"stopped","reason":"readiness-gate"}')
+    raise SystemExit(2)
+
+permit = issue_remote_execution_permit(
+    card_id="EXP-520",
+    process_id="process-exp520-live-20261007-001",
+    task_id="task-exp520-live-20261007-001",
+    readiness=readiness,
+    provider_call_approved=True,
+)
+
+credential_path = Path("/Volumes/DATA/Проекты/AI Process Architect/.env")
+def credential_source():
+    if credential_path.is_symlink() or not credential_path.is_file():
+        raise RuntimeError("authorized credential source unavailable")
+    try:
+        for line in credential_path.read_text(encoding="utf-8").splitlines():
+            name, separator, value = line.partition("=")
+            if separator and name.strip() == "AI_PROCESS_API":
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                if not value or any(ch.isspace() for ch in value) or len(value) > 4096:
+                    raise RuntimeError("authorized credential source unavailable")
+                return value
+    except Exception:
+        raise RuntimeError("authorized credential source unavailable") from None
+    raise RuntimeError("authorized credential source unavailable")
+
+stage_dir = Path(tempfile.mkdtemp(prefix="agent00x-exp520-stage-"))
+stage_dir.chmod(0o700)
+stage_db = stage_dir / "stage.sqlite3"
+stdout = StringIO()
+stderr = StringIO()
+try:
+    code = run_remote_snapshot_with_runtime(
+        process_id="process-exp520-live-20261007-001",
+        task_id="task-exp520-live-20261007-001",
+        task_instruction=(
+            "In backend/routes.py, reject malformed or non-finite numeric fields "
+            "in /save-session with HTTP 422 before any database write. Preserve "
+            "valid behavior (HTTP 200 and exactly one expected row). Change only "
+            "this route file; do not add unrelated changes."
+        ),
+        declared_change_paths=("backend/routes.py",),
+        allowed_commands=frozenset({"python3"}),
+        test_command=PINNED_HTTP_DB_TEST_COMMAND,
+        execution_image=TARGET_RUNTIME_IMAGE_ID,
+        credential_source=credential_source,
+        verifier_config=VerifierContainerConfig(
+            docker_executable=docker,
+            runtime_image_id=VERIFIER_RUNTIME_IMAGE_ID,
+            verifier_code_digest=VERIFIER_RUNTIME_CODE_DIGEST,
+            timeout_seconds=PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
+            max_stdout_bytes=65536,
+            max_stderr_bytes=16384,
+        ),
+        stage_database_path=stage_db,
+        execution_permit=permit,
+        test_timeout_seconds=PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    payload = json.loads(stdout.getvalue())
+    allowed = {
+        "schema", "evidence_origin", "repository_id", "commit", "tree",
+        "content_digest", "external_write", "approval", "publication",
+        "limitations", "status", "failure_code", "snapshot_claim_digest",
+        "verified_contents_digest", "verification_digest", "staged_change_digest",
+        "verifier_identity_digest",
+    }
+    safe = {key: value for key, value in payload.items() if key in allowed}
+    safe["exit_code"] = code
+    safe["stage_database"] = str(stage_db)
+    print(json.dumps(safe, sort_keys=True, separators=(",", ":")))
+    raise SystemExit(0 if code == 0 else 1)
+except SystemExit:
+    raise
+except Exception:
+    print('{"status":"failed","reason":"runner-failed"}')
+    raise SystemExit(1)
+PY
+```
+Control Plane status: ACCEPTED 2026-10-07 after user set the total spend ceiling
+to USD 1, confirmed exactly one live proposal call, and explicitly authorized
+using the existing AI Process Architect project credential source. A sanitized
+presence check confirmed only that `AI_PROCESS_API` is populated and the
+configured DeepSeek base URL is the official endpoint; its value was not
+displayed. The permitted callback reads that single key lazily into memory and
+never copies or persists it in Agent00X. Exact target and verifier Docker image
+IDs/platforms were re-inspected in the local daemon with an empty temporary
+Docker config; both matched. Public DeepSeek pricing at this checkpoint bounds
+the fixed request below USD 0.05 under the current published peak rates and
+payload/output limits; user cap remains USD 1 and is not an account-level cap.
+One fresh GitHub readiness GET passed and the one pinned-snapshot pipeline
+completed with `status=verified`, `exit_code=0`. Snapshot pin matched commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, and content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+The live Worker proposal changed only `backend/routes.py`; the read-only local
+preview showed numeric parsing and HTTP 422 rejection before the database
+insert, and the pinned HTTP/DB verifier returned PASS. Stage digest:
+`sha256:a68580b0acd241cb346f7fd225c9632c166ebedfe985d1fa656cd88d966198d7`;
+artifact digest: `sha256:4b0c775c755079f1ce294f03a596080f4f43cbececd0b1732aa48c82c2538822`;
+verification digest:
+`sha256:07ca43adb230f9bd52cd8d9343440aaa8056053d80220b2dbc9497ac37367512`.
+The credential value was read lazily into process memory from the user-authorized
+AI Process Architect source; it was not copied to this repository or emitted.
+Current published pricing and the bounded request imply under USD 0.05 at peak
+rates; the user's USD 1 ceiling is not an account-level cap. No retry, approval,
+or external write occurred. Accepted as a useful live Worker-to-stage experiment,
+not as independent verifier trust, authenticated provenance, production approval,
+or publication evidence.
+
+### Batch DL — align verifier runtime with the pinned target (R2 execution batch 74/74; 1 task)
+
+#### EXP-521 — build a pinned dependency-capable verifier image
+Статус: ACCEPTED
+Цель: prepare the verifier to execute later HTTP/DB test commands under the
+same Python minor version and already pinned dependency inventory as the target,
+without using network access or embedding target source.
+Зависит от: EXP-519 ACCEPTED; EXP-518 requires explicit pinned target image.
+Use only the exact local image ID from EXP-519:
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`.
+Inspect that exact ID and copy only `/opt/target-python` from a stopped,
+never-started container created by that image. Copy the accepted
+`containers/target-runtime/requirements.lock` as provenance. Do not copy target
+source, wheels, databases, credentials or other files. Pin the verifier base to
+the same Python 3.11.16 digest used by EXP-519; retain numeric non-root user,
+read-only root, network-none, dropped capabilities, no-new-privileges, bounded
+resources, and noexec temporary filesystems in the verifier launcher.
+Update only the local verifier image builder used by the existing opt-in
+pipeline test so it verifies the exact source image ID before dependency copy,
+removes its stopped extraction container in `finally`, and computes a stable
+verifier-code digest over Dockerfile, lock and verifier modules. Build with
+`RUN_DOCKER_SANDBOX_TESTS=1 docker build --pull=false --network=none
+--build-arg SOURCE_DATE_EPOCH=0`; do not pull, tag-substitute, start the
+extraction container, invoke the verifier on target code, or issue any remote
+request. Two independent offline builds from the same exact context must have
+the same immutable image ID; otherwise stop and leave this card BLOCKED.
+Checks:
+- offline unit tests cover the updated pinned-base/dependency-copy Dockerfile;
+- inspect both immutable verifier image IDs/platforms and confirm exact ID match;
+- one `network=none`, read-only, non-root import smoke confirms exact FastAPI,
+  Uvicorn and multipart versions and Python 3.11.16;
+- smoke confirms no `/workspace/backend`, application DB, wheelhouse or secret
+  path exists in the image;
+- full offline unit suite and `git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/verifier_container.py`
+- `containers/verifier/Dockerfile`
+- `tests/test_verifier_container.py`
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: GitHub/snapshot requests, target source execution or HTTP/DB tests,
+Worker/provider/credential, readiness, approval/publication, branch/PR/push,
+deployment, testdev, changes to sandbox resource flags, commit.
+Docker opt-in: `RUN_DOCKER_SANDBOX_TESTS=1`.
+External operations: none; local Docker daemon only. Commit: DENIED.
+Результат Control Plane: ACCEPTED 2026-10-07. Exact EXP-519 image ID and
+`linux/arm64` platform were inspected. A never-started extraction container was
+created, only `/opt/target-python` copied, and the stopped container removed.
+Two separate builds from equivalent exact contexts used the pinned Python 3.11.16
+base, Docker pull disabled, build network none and `SOURCE_DATE_EPOCH=0`; both
+produced immutable ID
+`sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+(`linux/arm64`). Verifier code digest over Dockerfile, lock and verifier modules:
+`sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`.
+One network-none, read-only, non-root smoke on that exact image confirmed Python 3.11.16 and
+FastAPI/Uvicorn/multipart `0.142.2/0.54.0/0.0.32`; checked target source, DB,
+wheelhouse and secret paths were absent. Focused image tests: 2 passed. Full
+offline suite: 944 tests, 937 passed, 7 skipped; `git diff --check` passed.
+No snapshot, target code, HTTP/DB probe, verifier target run, credential, model,
+provider call or external write occurred. The image is same-host verifier
+runtime preparation, not independent verifier trust. EXP-520 was still DRAFT at
+this checkpoint; its later live Worker run is recorded below in the Control
+Plane result for EXP-520.
+
+### Batch DM — fix the bounded HTTP/DB verifier command (R2 execution batch 75/75; 1 task)
+
+#### EXP-522 — verify the pinned route candidate through real HTTP/DB in the verifier
+Статус: ACCEPTED
+Цель: replace the current stub-only verifier test command with a bounded real
+Uvicorn/SQLite command and record the exact timeout for later target execution.
+This is a synthetic Control Plane candidate, not Worker output.
+Pin: `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`. Read only these four HTTPS raw
+files from `raw.githubusercontent.com` at that exact commit; no redirects,
+fallback or retry, verified TLS, max 8192 response bytes each:
+- `backend/database.py`, 314 bytes, SHA-256
+  `9f04e8eed6b3d139bbd2914a476d1515b5fc30227a3e6d1d6d1a63cb9dddb4e7`;
+- `backend/logic.py`, 2027 bytes, SHA-256
+  `5c760f37d77b0a10fdd724e3fd6ba3f3f027d5edbb70f986632419847e474e3e`;
+- `backend/main.py`, 412 bytes, SHA-256
+  `99701c88519975a1f9776944ae095baad6721ac376d4d4f70b8882b648a509a2`;
+- `backend/routes.py`, 826 bytes, SHA-256
+  `32847307337ab9e9f02bec60c69ed1b581206f453f6d6f59ef6ea15938de1cf7`.
+Compare all bytes before materializing the verifier request. Apply only the
+fixed Control Plane candidate used by the pinned-pipeline cards in memory to
+`backend/routes.py` (expected candidate digest
+`sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`);
+never write it to the source repository. Use the exact EXP-519 execution image
+and EXP-521 verifier image/code identities. The verifier runs the four pinned
+modules plus that candidate in its bounded container; create explicitly empty
+`static/` and `frontend/` support directories only if the pinned import requires
+them, and label them synthetic in evidence. No target modules may execute on
+the host. No full-snapshot or provenance claim from these four files.
+Perform one verifier invocation only. The argv-only command must start the
+actual Uvicorn app on container loopback, POST five malformed numeric fields and
+overflow one at a time (each HTTP 422 and zero DB rows), then POST the valid
+payload and assert HTTP 200 plus exactly the expected single row
+`("synthetic-probe",2,1,0,1,250)`. Always terminate Uvicorn and let the verifier
+workspace/SQLite DB be cleaned. Fix `test_timeout_seconds=30`; configure verifier
+container timeout 60 seconds. No retries or second invocation.
+Docker profile: `RUN_DOCKER_SANDBOX_TESTS=1`; verifier remains network-none,
+read-only root, UID 65532, cap-drop ALL, no-new-privileges, bounded process/
+memory/CPU and noexec tmpfs. No target source image build/pull.
+Checks:
+- exactly four bounded raw GETs and each expected size/SHA-256;
+- targeted one-invocation Docker verifier test against exact image/code digest;
+- assert no host target import or source write, and cleanup on success/failure;
+- full offline unit suite and `git diff --check`.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Вне scope: full snapshot GET, Worker/model/provider/credential, readiness,
+GitHub writes, stage/approval/publication, branch/PR/push, deployment, testdev,
+commit. External read-only scope: only the four exact raw-file HTTPS GETs above.
+Commit: DENIED. If source, candidate, HTTP/DB assertions, timeout or cleanup
+differs, stop and leave BLOCKED without retry.
+Результат Control Plane: ACCEPTED 2026-10-07. Exactly four bounded raw HTTPS
+GETs returned status 200 with no redirects; all byte lengths and SHA-256 values
+matched the EXP-455 inventory. The in-memory Control Plane candidate matched
+`sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`.
+One DockerContainerVerifier invocation used image
+`sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+and code digest
+`sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`;
+result was PASS with the exact trusted identity. Its fixed argv command started
+the pinned Uvicorn app on verifier-container loopback, proved each of five
+malformed numeric values and overflow returned HTTP 422 with zero rows, then
+proved HTTP 200 and the exact single SQLite row. Test timeout is 30 seconds;
+container timeout 60 seconds. No target module ran on the host; only four
+verified files were used and empty `static/`/`frontend/` dirs were created
+inside the bounded verifier workspace. This is subset HTTP/DB evidence, not a
+full-snapshot claim, live Worker proposal, independent Docker/host attestation,
+stage/approval/publication or production proof. Source/DB workspace was cleaned;
+no credential, model/provider call, external write or commit occurred. The
+stored argv strips the probe's final newline for `ExecutionRequest` compatibility;
+the one-shot verifier call ran the same Python script body with that terminal
+newline, which does not alter its Python semantics. Full suite: 945 tests, 938
+passed, 7 skipped; `git diff --check` passed.
+
+### Batch DN — full pinned synthetic HTTP/DB chain (R2 execution batch 76/76; 1 task)
+
+#### EXP-523 — run the exact 23-blob snapshot through target, verifier and mock stage
+Статус: BLOCKED
+Цель: exercise the now-fixed real HTTP/DB command on both the exact target
+execution image and matching verifier image while carrying the exact full public
+snapshot through fake Worker, durable stage, preview and mock-only receipt.
+This is not a live model run. Fixed pin: `SoldatovAlexander/brainbooster_full_v11`,
+commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs, content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Before the attempt, issue exactly one anonymous header-only `/rate_limit` GET
+through the fixed verified-TLS transport. Continue only on HTTP 200 with
+`remaining >= 25`; otherwise stop BLOCKED without snapshot intake or another
+readiness call. If ready, run exactly once only this opt-in test:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest tests.test_remote_target_stage_pipeline.PinnedTargetStagePipelineTests.test_control_plane_candidate_reaches_trusted_container_stage_and_mock_receipt -v`.
+Expected external GETs after readiness: one commit, one recursive tree and 23
+blob GETs, all only to `api.github.com`, exact full pin, verified TLS, bounded
+responses and redirects disabled; transport performs no retries. Reuse only
+cached target image ID `sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`
+and verifier image ID
+`sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+with code digest
+`sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`;
+no image pull/build. Fixed synthetic candidate digest:
+`sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8`.
+The fake channel must be called exactly once. Both target sandbox and verifier
+use network-none; test command is `PINNED_HTTP_DB_TEST_COMMAND`, test timeout
+30s and verifier container timeout 60s. Assert full snapshot pin/digest, target
+and verifier HTTP 422/zero-row for five malformed fields plus overflow, valid
+200/one exact SQLite row, verifier trusted identity, exact durable stage
+readback, preview and local mock receipt all share the bound candidate digest.
+Clean every server, container, snapshot lease and temporary stage DB.
+No credentials, real Worker/model/provider call, API key lookup, provider write,
+real approval, GitHub write/branch/PR, push, deployment or testdev. Mock receipt
+must remain `external_write=false`. No retry or second pipeline attempt.
+Checks after success: full offline unit suite and `git diff --check`.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+External read-only scope: the single readiness GET and, if ready, exact pinned
+commit/tree/23-blob snapshot GETs described above. Commit: DENIED. On any
+readiness, intake, digest, Docker, HTTP/DB, stage or cleanup failure, stop and
+leave BLOCKED with sanitized evidence; do not repeat.
+
+Результат Control Plane: BLOCKED. Fresh one-shot readiness returned HTTP 200
+with 60 remaining. The sole opt-in test fetched and validated the pinned
+23-blob snapshot, then failed in `prepare_change` before durable stage creation:
+`verification failed; staged change was not created`. The allowlisted target
+test command returned nonzero, and at that time `prepare_change` exposed only
+this generic failure; the independent container verifier was not reached. No
+HTTP/DB sub-result is available and it is not safe to infer which probe
+assertion failed. No retry was made; no stage, preview, approval or mock
+receipt was produced. The test
+process exited 1 after 14.839 seconds. Local Docker inspection showed no
+running containers. This batch is blocked; any diagnostic or retry requires a
+new Control Plane card defining a bounded next step.
+
+### Batch DO — sanitized target-test failure diagnosis (R2 execution batch 77/77; 1 task)
+
+#### EXP-524 — expose only fixed failure markers from bounded target tests
+Статус: ACCEPTED
+Цель: make the next full pinned attempt diagnostically useful when the target
+test command fails, while never returning raw stdout/stderr or exception text.
+Add a finite allowlist of fixed failure categories in `prepare_change`; read
+only exact marker lines from stdout, default to `allowlisted-tests-failed`, and
+append only the resulting category to the existing failure exception. The
+synthetic HTTP/DB probe emits fixed markers for readiness, malformed-status,
+malformed-no-write, overflow-status, overflow-no-write, valid-status,
+valid-body and valid-row failures. Markers are diagnostic hints, never pass
+evidence or verifier inputs. Verify that arbitrary output, unknown markers,
+stderr and secret-shaped canaries never appear in raised errors. No Docker,
+GitHub, model, credential or remote pipeline invocation in this task.
+Проверки: targeted repository-process and probe-contract unit tests, then the
+full offline suite
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`, and
+`git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/repository_process.py`
+- `tests/test_executor.py`
+- `tests/test_repository_process.py`
+- `tests/test_remote_target_stage_pipeline.py`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+External scope: none. Commit: DENIED. If any marker parsing or non-disclosure
+test fails, stop and leave BLOCKED; do not run the full pipeline here.
+
+Результат Control Plane: ACCEPTED. `prepare_change` now forwards only exact
+allowlisted target-test markers (`readiness-exit`, `readiness-timeout`,
+malformed/overflow status and no-write, valid status/body/row); unknown or
+missing markers collapse to `allowlisted-tests-failed`. No raw stdout/stderr
+is included. The synthetic HTTP/DB probe emits these fixed markers on failure.
+Targeted checks: 40 tests passed; embedded probe compiled successfully. Full
+offline suite: 947 tests, 940 passed, 7 skipped. `git diff --check` passed.
+No Docker or external request was made. This improves next-attempt diagnostics
+but does not itself establish which assertion failed in EXP-523.
+
+### Batch DP — retry full pinned HTTP/DB chain with sanitized diagnostics (R2 execution batch 78/78; 1 task)
+
+#### EXP-525 — one full-snapshot attempt after diagnostic plumbing
+Статус: BLOCKED
+Цель: use the newly tested fixed-marker path in one fresh full-snapshot attempt
+through the synthetic Worker, exact target runtime, trusted verifier, durable
+stage, preview and local mock-only receipt. Fixed pin and expected content
+digest are identical to EXP-523: `SoldatovAlexander/brainbooster_full_v11`,
+commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs,
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Before intake, make exactly one anonymous header-only `/rate_limit` GET via
+the fixed verified-TLS transport; continue only on HTTP 200 and remaining >=25.
+Otherwise mark BLOCKED and stop. If ready, execute exactly once the command
+recorded in EXP-523 (the opt-in `PinnedTargetStagePipelineTests` method). Fetch
+only the pinned commit/tree/23 blobs with no retries; reuse only cached target
+image `sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`
+and verifier image `sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+with verifier code digest
+`sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`;
+no image build or pull. If target tests fail, report only the fixed marker
+category surfaced by `prepare_change`; never capture or expose child output.
+On success, require all EXP-523 acceptance assertions including HTTP/DB
+negative and positive cases, exact durable stage readback, preview, mock
+receipt and cleanup. No credentials, real Worker/provider call, external write,
+branch/PR, push, deployment or testdev. No retry or second pipeline attempt.
+Checks after success: full offline suite and `git diff --check`.
+Разрешённые пути:
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+External read-only scope: one readiness GET then, only if ready, exact pinned
+commit/tree/23-blob GETs. Commit: DENIED. Any failure leaves BLOCKED; a further
+attempt requires a new Control Plane card.
+
+Результат Control Plane: BLOCKED. Fresh readiness returned HTTP 200 / 35
+remaining. The single attempt fetched and validated the exact pinned snapshot
+and candidate digest, then stopped before sandbox creation completed. The
+Docker daemon is running (server 28.3.3), but the exact target image
+`python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`
+is absent from its cache (`No such image`). No pull/build occurred, no target
+command, verifier, stage, preview or receipt ran, and no retry was made. The
+next step requires a separate card to fetch this public immutable image
+anonymously, then another one-shot pipeline card.
+
+### Batch DQ — obtain the pinned Python execution base image (R2 execution batch 79/79; 1 task)
+
+#### EXP-526 — pull only the public target image by immutable digest
+Статус: ACCEPTED
+Цель: make the pinned Python execution base image already referenced by the
+pipeline available in the active Docker daemon without credentials or mutable
+tags. This is distinct from the prepared `agent00x-target-runtime` image ID
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`.
+Confirm the active daemon is
+running, then use a newly created empty temporary Docker config and run only
+`docker --config <empty-temp-config> pull python:3.11.16-slim@sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`.
+No registry login or credential lookup. Verify with
+`docker image inspect --format '{{.Id}}'` that the immutable reference resolves
+to exact image ID
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`.
+Delete only the exact temporary config directory after the command. Do not
+pull the verifier image, build any image, start containers, run target code, or
+retry a failed pull. If anonymous digest fetch is unavailable or resolved ID
+differs, leave BLOCKED and stop. No GitHub, model, credential, provider write,
+branch/PR, push, deployment or testdev.
+Проверки: `docker info --format '{{.ServerVersion}}'`, the exact pull above,
+then the exact immutable image inspect, expected local image ID
+`sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`;
+`git diff --check`.
+Разрешённые пути:
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+External read-only scope: anonymous OCI image layers/config for the one exact
+digest above. Commit: DENIED. Do not proceed to a pipeline run from this card.
+
+Результат Control Plane: ACCEPTED. Docker daemon server version 28.3.3 was
+active. One pull through a newly created empty Docker config completed
+anonymously for the exact immutable Python reference; Docker reported the same
+digest and `image inspect` returned local ID
+`sha256:8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57`
+(`linux/arm64`). The temporary empty config directory was removed. This is the
+pinned Python execution base image, not the separate target runtime image
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`.
+No container or target code was run.
+
+### Batch DR — align the full-snapshot test with the prepared runtime (R2 execution batch 80/80; 1 task)
+
+#### EXP-527 — use the exact target runtime image for candidate tests
+Статус: ACCEPTED
+Цель: fix the image mismatch exposed by EXP-525: the full pipeline currently
+constructs its target sandbox from the bare Python base image, while the pinned
+repository's FastAPI/Uvicorn dependencies are in the separately prepared target
+runtime image. Inspect only cached target image ID
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812` and
+use that exact ID for `DockerSandboxBackend` in the pipeline test. Before the
+edit, run one bounded network-none, read-only, non-root import/version smoke in
+that image for FastAPI `0.142.2`, Uvicorn `0.54.0` and multipart `0.0.32`; use
+`RUN_DOCKER_SANDBOX_TESTS=1`, no pull/build. Remove the now-unused bare-base
+constant if safe. Add/adjust offline contract coverage so future test changes
+cannot silently switch back to the unrelated base image. No GitHub GET, live
+Worker, verifier, credential, provider, stage, publication or testdev.
+Проверки: the exact image smoke; targeted pipeline command-contract tests; full
+offline unit suite; `git diff --check`.
+Разрешённые пути:
+- `tests/test_remote_target_stage_pipeline.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+External scope: none. Commit: DENIED. If image identity or pinned dependency
+versions differ, stop BLOCKED; do not pull/build or run the remote pipeline.
+
+Результат Control Plane: ACCEPTED. The exact cached target image passed one
+`RUN_DOCKER_SANDBOX_TESTS=1` network-none, read-only, non-root import smoke:
+FastAPI 0.142.2, Uvicorn 0.54.0 and multipart 0.0.32. The pipeline test now
+constructs `DockerSandboxBackend` from the pinned target runtime image ID
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`,
+not the separately pinned bare Python base. Added a command-contract test for
+that binding; targeted tests: 3 passed. Full offline suite: 948 tests, 941
+passed, 7 skipped. `git diff --check` passed. No GitHub request or full
+pipeline run occurred.
+
+### Batch DS — full pinned HTTP/DB chain on the prepared runtime (R2 execution batch 81/81; 1 task)
+
+#### EXP-528 — re-run the full pinned synthetic stage after runtime alignment
+Статус: BLOCKED
+Последний readiness gate вернул remaining 10, ниже порога; reset
+`2026-10-07T14:46:32Z`. Snapshot intake запрещён по этой карточке.
+Цель: once Control Plane promotes this card after a fresh gate is available,
+run exactly one full pinned snapshot through fake Worker, prepared target
+runtime (`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`),
+trusted verifier (`sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`,
+code `sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`),
+durable stage, preview and local mock-only receipt. Fixed snapshot remains
+`SoldatovAlexander/brainbooster_full_v11` commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs, content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Require exactly one verified-TLS header-only readiness GET with HTTP 200 and
+remaining >=25; otherwise stop before snapshot intake. If ready, run exactly
+once the opt-in `PinnedTargetStagePipelineTests.test_control_plane_candidate_reaches_trusted_container_stage_and_mock_receipt`
+command already recorded in EXP-523. No image pull/build, retry, model,
+credentials, provider/external writes, branch/PR, push, deployment or testdev.
+Use only safe allowlisted failure categories; never expose command output.
+Checks after success: full offline suite and `git diff --check`.
+Разрешённые пути:
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+External read-only scope: one readiness GET and, only if ready, the exact
+pinned commit/tree/23-blob GETs. Commit: DENIED. Any failure blocks the card;
+no second attempt.
+
+Результат Control Plane: BLOCKED before snapshot intake. The sole readiness
+GET returned HTTP 200, remaining 10 (required >=25), reset
+`2026-10-07T14:46:32Z`. No commit/tree/blob GET or pipeline invocation occurred.
+Wait for reset, then use a separate fresh one-shot card; this blocked card is
+not retried.
+
+### Batch DT — post-reset full pinned chain (R2 execution batch 82/82; 1 task)
+
+#### EXP-529 — one full-snapshot synthetic stage attempt after quota reset
+Статус: ACCEPTED
+Control Plane release: after quota reset `2026-10-07T14:46:32Z`, exactly one
+fresh readiness GET completed before pinned snapshot intake (HTTP 200 / 60).
+Цель: once released, run one exact pinned snapshot through fake Worker, the
+prepared target image `sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`,
+trusted verifier `sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+with code digest `sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`,
+durable stage, preview and local mock-only receipt. Snapshot:
+`SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs, digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Use the EXP-523 opt-in test command exactly once, no image pull/build, no retry,
+no credentials/model/provider, external write, branch/PR, push, deployment or
+testdev. Preserve only fixed diagnostic markers. After success, run the full
+offline suite and `git diff --check`.
+Разрешённые пути:
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+External scope used: one readiness GET (HTTP 200 / 60 remaining), then only
+exact pinned commit/tree/23-blob GETs. No provider write. Commit: DENIED.
+Результат Control Plane: ACCEPTED. The single opt-in test passed in 18.946s:
+full snapshot pin/digest, fake Worker call, target malformed-input 422/no-row
+and valid-input 200/one-row behavior, pinned-identity Docker verifier, exact durable
+stage readback, preview and local mock receipt all passed under the fixed
+candidate digest. Full offline suite: 950 tests, 941 passed, 9 skipped;
+`git diff --check` passed. ResourceWarnings about unclosed SQLite connections
+appeared during the suite but did not fail it. No credentials, live
+model/provider or external write; no retry. This is synthetic Worker and
+same-host Docker-verifier evidence, not authenticated approval, independent
+verifier trust or real PR publication.
+
+### Batch DU — exercise the injected pinned CLI through real local containers (R2 execution batch 83/83; 1 task)
+
+#### EXP-530 — run synthetic CLI composition with Docker and durable stage
+Статус: ACCEPTED
+Цель: close the evidence gap between the tested CLI dispatch and its injected
+runtime composition without spending GitHub requests or calling a provider.
+Use a synthetic 23-blob snapshot with the fixed remote owner/repository/pin
+shape, a deterministic fake Worker proposal, the exact prepared target image
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`,
+exact Docker verifier image
+`sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`
+and code digest `sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`.
+Invoke `main(["--remote-snapshot-execute"])` with a synthetic one-use permit,
+patched in-memory snapshot reader, expected digest and transport; use the real
+executor/composition, network-none Docker sandbox, Docker verifier and
+temporary SQLite staged-artifact store. Test command must be a harmless local
+assertion against candidate contents. Assert `verified`, exact shared stage
+digest, verifier identity, no credential callback, no approval, no publication,
+`external_write=false`, sanitized output and complete cleanup. This is a
+synthetic CLI composition test, not real remote snapshot or independent trust.
+Require `RUN_DOCKER_SANDBOX_TESTS=1`; no network-capable container, image
+pull/build, GitHub request, model, credential, external write or testdev.
+Проверки: the one opt-in Docker CLI composition test, then full offline suite
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q` and
+`git diff --check`.
+Разрешённые пути:
+- `tests/test_worker_cli.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+External scope: none. Commit: DENIED. On test failure, stop and leave BLOCKED;
+do not retry Docker invocation under this card.
+
+Результат Control Plane: ACCEPTED. The single opt-in test passed in 2.764s.
+The real CLI `main`, remote composition, network-none target sandbox, exact
+Docker verifier and temporary SQLite stage completed with one fixed fake Worker
+call. The CLI returned `verified`; stage save/readback and CLI evidence shared
+the same digest, with verifier identity digest bound. Output reported no
+approval/publication and `external_write=false`; no source, prompt or stderr
+canary escaped. Credential callback stayed unused. Docker inspection after the
+test found no target-runtime or verifier containers. Full offline suite: 949
+tests, 941 passed, 8 skipped. `git diff --check` passed. This is synthetic CLI
+composition evidence only, not a real remote snapshot, live Worker, independent
+trust or external publication.
+
+### Batch DV — compose DeepSeek Worker and bounded channel with the CLI (R2 execution batch 84/84; 1 task)
+
+#### EXP-531 — run CLI with real Worker adapter and in-memory HTTPS transport
+Статус: ACCEPTED
+Цель: extend EXP-530's synthetic Docker/SQLite CLI composition to use the real
+`DeepSeekProposalWorker` and `DeepSeekHTTPChannel`, while ensuring the transport
+is an in-memory fake and no model/provider is contacted. Build the HTTP 200
+Chat Completions response containing the deterministic route proposal; inject a
+clearly synthetic, non-secret credential marker through `CredentialSource` to
+the fake connection only. Verify exact fixed host/path, one request and one
+credential callback, bounded payload, synthetic response parsed into the scoped
+proposal, and that the marker appears nowhere in prompt, candidate workspace,
+CLI evidence, stdout or stderr. Continue through the same exact target image,
+Docker verifier, network-none sandbox and temporary SQLite stage. Require the
+same digest-bound `verified` output, exact stage readback, no approval or
+publication and `external_write=false`. This is still synthetic protocol
+evidence, not live inference or independent trust.
+Require `RUN_DOCKER_SANDBOX_TESTS=1`; no outbound network socket (the Docker
+daemon control channel remains local), GitHub, live model, real credential,
+provider write, image pull/build, external write, branch/PR, push, deployment
+or testdev.
+Проверки: one opt-in integrated test, full offline suite and `git diff --check`.
+Разрешённые пути:
+- `tests/test_worker_cli.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+External scope: none. Commit: DENIED. Any failure blocks; do not retry the
+integrated Docker invocation under this card.
+
+Результат Control Plane: ACCEPTED. The single opt-in integrated test passed
+(1.163s); full offline suite: 950 tests, 941 passed, 9 skipped. The actual
+DeepSeek Worker and bounded HTTP channel produced exactly one POST to fixed
+`api.deepseek.com/chat/completions` through an in-memory fake connection; the
+synthetic key-shaped marker was confined to the fake Authorization header and
+did not appear in request JSON, candidate contents, CLI evidence, stdout or
+stderr. The synthetic proposal passed the network-none target sandbox and exact
+Docker verifier, then exact-digest SQLite stage readback. No real TLS handshake,
+socket, model or provider was used. CLI evidence kept approval/publication
+absent and `external_write=false`. `git diff --check` passed; no external call.
+
+### Batch DW — bind the CLI stage to the local approval/mock PR gates (R2 execution batch 85/85; 1 task)
+
+#### EXP-532 — consume the CLI-produced digest in mock-only approval
+Статус: ACCEPTED
+Цель: extend the synthetic CLI composition test so the exact StagedArtifact
+loaded from the CLI's SQLite stage flows into the existing typed-digest
+approval and controlled local mock publication gate. First confirm that a
+different digest is rejected; then pass only the exact staged digest to
+`run_local_mock_publication` with an explicit `agent/` branch. Assert the mock
+receipt binds the same digest, repository and branch. The CLI evidence must
+still say approval was not created and publication was not attempted; the
+separate post-CLI local harness may create only a mock receipt with no external
+write. Verify the synthetic key marker remains absent from receipt/output.
+Require `RUN_DOCKER_SANDBOX_TESTS=1`; use the existing fixed fake DeepSeek
+transport, synthetic snapshot, cached exact target/verifier images and
+network-none sandboxes. No GitHub, model, socket, real credential, external
+write, branch/PR, push, deployment, image pull/build or testdev.
+Проверки: one opt-in integrated CLI-to-mock-approval test, full offline suite,
+`git diff --check`.
+Разрешённые пути:
+- `tests/test_worker_cli.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+External scope: none. Commit: DENIED. Any failure leaves BLOCKED; no retry.
+
+Результат Control Plane: ACCEPTED. The one opt-in CLI/DeepSeek/Docker/SQLite
+composition test passed (1.229s); full offline suite: 950 tests, 941 passed,
+9 skipped. A deliberately different digest was rejected, then the exact
+CLI-produced stage digest was accepted by `run_local_mock_publication`; the
+mock PR receipt bound that digest, the pinned repository and the explicit
+`agent/` branch. CLI evidence remained `approval=not_created`,
+`publication=not_attempted`, `external_write=false`; the later receipt came
+only from the isolated in-memory mock approval/policy/gateway/broker/journal
+harness. No external request or write occurred. Synthetic key marker remained
+absent. Docker cleanup inspection and `git diff --check` passed. This connects
+the local digest-bound mock gate to the CLI artifact; it is not authenticated
+human approval, a real PR, or production recovery.
+
+### Batch DX — close SQLite test-fixture handles (R2 reliability batch 86/86; 1 task)
+
+#### EXP-533 — explicitly close observation-store test connections
+Статус: ACCEPTED
+Цель: remove the observed Python 3.13 `ResourceWarning: unclosed database`
+leaks from SQLite connections created by observation-store tests, which
+currently contaminate a later stage-preview CLI test's expected-empty stderr.
+Evidence: a tracemalloc-enabled run of
+`tests.test_observation_store tests.test_stage_preview tests.test_durable_stage`
+reported allocations at `tests/test_observation_store.py` lines 74, 113, 124,
+134 and 144; the stage-preview CLI test then failed because those warnings were
+captured in stderr. `sqlite3.Connection`'s context manager controls transactions
+but does not close the connection.
+Scope: explicitly close every test connection created by `sqlite3.connect` in
+`tests/test_observation_store.py`, preserving existing commit/rollback behavior.
+Do not alter product code, expected data, warning filters, or unrelated tests.
+No Docker, network, GitHub, credential/provider, approval or publication.
+Критерии приёмки:
+- the focused observation-store and stage-preview tests pass with
+  `PYTHONTRACEMALLOC=5` and ResourceWarnings enabled, and emit no unclosed-DB
+  warning or warning-induced stderr failure;
+- full offline suite passes and `git diff --check` is clean.
+Проверки:
+`PYTHONDONTWRITEBYTECODE=1 PYTHONTRACEMALLOC=5 PYTHONWARNINGS=always::ResourceWarning python3 -m unittest tests.test_observation_store tests.test_stage_preview -q`
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+`git diff --check`
+Разрешённые пути:
+- `tests/test_observation_store.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+External scope: none. Commit: DENIED. Stop if another test failure appears; do
+not broaden the fix to unrelated files under this card.
+
+Результат Control Plane: ACCEPTED. The focused tracemalloc/ResourceWarning run
+passed all 58 tests with no warnings; full offline suite passed (950 tests, 941
+passed, 9 skipped) without ResourceWarnings; `git diff --check` passed. The
+observation-store fixtures now close each connection while preserving SQLite
+transaction context behavior. No product code or external system was changed.
+
+### Batch DY — persist local digest-confirmation evidence (R2 prototype batch 87/87; 1 task)
+
+#### EXP-534 — persist typed-digest confirmation for the mock-only CLI
+Статус: ACCEPTED
+Цель: make the current interactive local mock confirmation reproducible across
+processes by persisting a record bound to the exact staged digest and complete
+publication intent before entering the mock gate, then recording the mock
+receipt afterward.
+Scope: add a separate SQLite operator-confirmation store and require an explicit
+`--confirmation-db` path to the `stage_approval` CLI. The versioned database
+record contains a generated record ID, staged digest, intent digest, repository,
+branch, operation, UTC confirmation time, expiry and lifecycle status. Exact readback
+must pass before the mock call; a completed record stores only the mock receipt
+ID. Stage database must remain byte-for-byte unchanged. Fail closed if the
+confirmation DB aliases the stage DB, is malformed, or the typed digest differs.
+The CLI must explicitly report `authenticated=false`,
+`external_write=false`, and that confirmation is local typed-digest evidence;
+do not call this production authentication or make the record usable by a real
+provider. Keep the existing mock-only endpoint and policy/gateway/broker path.
+No network, GitHub, credentials, model/provider calls, branch/PR, deployment or
+testdev.
+Критерии приёмки:
+- accepted typed digest is persisted and exact-readback verified before mock
+  publication; success reopens the confirmation DB and proves exact record to
+  stage digest, intent digest, repository, branch, expiry and mock receipt ID;
+- wrong digest, invalid/mismatched intent, same stage/confirmation DB path,
+  corrupt store and cancelled confirmation create no mock receipt;
+- CLI never claims authenticated approval or external write, and stage DB stays
+  unchanged;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_stage_approval -q`,
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`,
+`git diff --check`.
+Разрешённые пути:
+- `src/app_contracts/operator_confirmation.py`
+- `src/app_contracts/stage_approval.py`
+- `tests/test_stage_approval.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+External scope: none. Commit: DENIED. Stop on any failure; no retry of CLI
+mock invocation under this card.
+
+Результат Control Plane: ACCEPTED. Focused tests passed (7 tests, with
+ResourceWarning treated as an error); full offline suite passed (952 tests, 943
+passed, 9 skipped) and `git diff --check` passed. The CLI persists a separate
+typed-digest confirmation record and verifies its exact readback before entering
+the local mock-only gate; a reopened record binds the same stage digest, intent,
+repository, branch, expiry and mock receipt ID. The record declares
+`authenticated=false`; the stage DB remains unchanged. Wrong digest, invalid
+branch, corrupt/aliased DB and replayed completion fail closed. No external
+service, credential, model or provider write was used.
+
+### Batch DZ — GitHub file-update request contract (R2 execution batch 88/88; 1 task)
+
+#### EXP-535 — bind existing-file updates to the pinned base blob SHA
+Статус: ACCEPTED
+Цель: ensure the GitHub Contents update request identifies the existing file
+blob at the exact staged `base_commit`, as required by the provider contract.
+Гипотеза: fetching and validating only the base-commit file SHA before any
+branch or content write lets the broker construct a valid, conflict-detecting
+update for an existing file without trusting mutable default-branch state.
+Scope: `GitHubAppPublicationChannel.publish_verified_files` only supports
+existing files for this card. Before creating/reconciling a branch, perform a
+read of each manifest path pinned to `staged_change.base_commit`, accept only a
+well-formed file record with a full 40-hex blob SHA, and include that SHA in the
+matching Contents PUT. Missing, malformed, or unknown base-file metadata must
+fail closed before branch/content writes. Do not add file creation/deletion,
+multi-file atomicity, retry/recovery, real API calls, or authorization changes.
+Use fake injected transports exclusively.
+Разрешённые пути:
+- `src/app_contracts/github_app.py`
+- `tests/test_github_app.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+Критерии приёмки:
+- fake transport observes an exact Contents GET with `ref=base_commit` before
+  any branch POST or content PUT;
+- successful existing-file publication includes the validated base blob SHA in
+  its Contents PUT payload;
+- missing, unknown, malformed, or non-file base metadata results in no branch
+  or content write and emits only a bounded contract error;
+- existing reconciliation and manifest-integrity regressions remain green;
+- targeted tests, full offline suite, and `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Секреты/credentials: запрещены.
+Сеть, GitHub, provider calls/writes, branch/PR, Docker, testdev: запрещены.
+Commit: DENIED. При любой ошибке остановиться и вернуть evidence.
+
+Результат Control Plane: ACCEPTED. Provider-independent fake tests verify that
+the existing-file Contents GET is pinned to the staged base commit and happens
+before branch reconciliation/creation; the returned 40-hex blob SHA is included
+in the update PUT. Missing/unknown/malformed/non-file metadata fails before any
+write. Targeted GitHub App suite passed (56 tests); full offline suite passed
+(955 tests, 946 passed, 9 skipped); `git diff --check` passed. No GitHub call,
+credential, branch, PR, or provider write occurred. This repairs the request
+shape for updating an existing file only; it does not establish conflict-free
+multi-file publication or durable recovery after ambiguous outcomes.
+
+### Batch EA — reconcile GitHub file writes from remote branch state (R2 execution batch 89/89; 1 task)
+
+#### EXP-536 — make content PUT recovery idempotent across channel restarts
+Статус: ACCEPTED
+Цель: recover a partially completed or ambiguously acknowledged existing-file
+publication by inspecting the scoped branch's current content instead of blindly
+repeating a Contents PUT.
+Гипотеза: for each file, comparing the exact branch blob SHA against both the
+desired Git blob SHA and the staged base blob SHA lets a fresh channel instance
+skip an already-applied update, safely apply a still-unmodified file, and reject
+any third state before further writes.
+Scope: local-only changes to `GitHubAppPublicationChannel.publish_verified_files`
+and fake-transport tests. Preserve the per-instance same-channel unknown-write
+guard. For an existing branch, preflight all manifest files at that branch before
+any file PUT: desired blob SHA means already applied; base blob SHA means safe to
+apply using that base SHA; any missing, malformed, unknown, or conflicting state
+fails closed. If all files are already desired, return the validated current
+branch commit SHA without PUT. A partial batch may write only files still at the
+base SHA. The one-shot fake tests must model a lost PUT response, a new channel
+instance, and partial multi-file completion. Do not add real network/API calls,
+credentials, branch/PR writes, SQLite journal/schema changes, file creation or
+deletion, or claim production durability.
+Разрешённые пути:
+- `src/app_contracts/github_app.py`
+- `tests/test_github_app.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+Критерии приёмки:
+- provider GETs use the exact staged base commit and requested candidate branch;
+- branch reference must provide a valid commit SHA before it can be returned as
+  the already-applied result;
+- a fresh channel skips a file whose current branch blob is the desired Git blob
+  SHA, and does not repeat its PUT;
+- partial multi-file recovery skips already-applied files and updates only files
+  still matching their base blob SHA;
+- conflict, missing or malformed current branch file metadata blocks all content
+  PUTs for the current recovery attempt;
+- tests prove lost-response recovery after channel recreation with fake
+  transports only; focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Секреты/credentials: запрещены.
+Сеть, GitHub, provider calls/writes, branch/PR, Docker, testdev: запрещены.
+Commit: DENIED. При любой ошибке остановиться и вернуть evidence Control Plane.
+
+Результат Control Plane: ACCEPTED. Fake transports prove recovery across a fresh
+channel after a lost successful PUT response: exact desired branch blob is
+recognized and not re-written. A partial two-file attempt skips the already
+applied file and updates only the file still at its staged base SHA. A conflicting
+branch file aborts before any content PUT. Full offline suite passed (958 tests,
+949 passed, 9 skipped); `git diff --check` passed. No GitHub request, credential,
+branch, PR, or provider write occurred. This is fake-provider adapter evidence;
+it is not production durability or an integrated external publication journal.
+
+### Batch EB — journal GitHub PR receipts and reconcile after restart (R2 execution batch 90/90; 1 task)
+
+#### EXP-537 — persist and recover a typed GitHub pull-request receipt
+Статус: ACCEPTED
+Цель: connect the existing SQLite publication journal to the typed GitHub App
+PR channel so an ambiguous PR POST can be reconciled after process restart
+without a second provider write.
+Гипотеза: persisting the exact provider PR number and URL in the existing
+request-bound journal, then resolving the canonical idempotency key through a
+read-only channel lookup, allows matching outcomes to complete and unknown or
+absent outcomes to fail closed as `reconciliation_required`.
+Scope: migration-safe nullable receipt URL storage in `PublicationJournal`,
+exact acceptance of existing mock receipts and typed `GitHubPullRequest` values,
+and a read-only `GitHubAppPublicationChannel.find_by_idempotency_key` adapter.
+Preserve all existing mock behavior and request/digest/repository/branch/key
+binding checks. Reconciliation must never POST; a null/unknown lookup after a
+lost response transitions the journal to `reconciliation_required` and blocks
+retry. Add a regression that simulates provider creation followed by lost POST
+response, closes/reopens SQLite, finds the matching PR through fake GET, and
+stores its exact ID and URL without a second POST; also cover unresolved lookup
+and old-schema migration. Do not wire a live credential broker, change approval
+semantics, call real GitHub, or claim production durability.
+Разрешённые пути:
+- `src/app_contracts/publication.py`
+- `src/app_contracts/github_app.py`
+- `tests/test_publication.py`
+- `tests/test_github_app.py`
+- `.opencode/tasks/WORK_QUEUE.md`
+- `docs/27-implementation-status.md`
+- `docs/24-mvp-final-plan.md`
+Критерии приёмки:
+- a pre-existing journal schema is upgraded without losing records or changing
+  their status/bindings;
+- completed mock records retain current behavior, and completed GitHub records
+  persist exact typed ID and HTTPS PR URL bound to journal repository/branch/
+  staged digest/idempotency key;
+- canonical GitHub idempotency lookup is read-only and rejects malformed or
+  foreign repository/key values before transport;
+- a lost PR response followed by SQLite reopen reconciles to one exact receipt
+  with no second POST; absent or unknown results become
+  `reconciliation_required` and cannot be replayed;
+- targeted tests, full offline suite, and `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_publication tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Секреты/credentials: запрещены.
+Сеть, GitHub, provider calls/writes, branch/PR, Docker, testdev: запрещены.
+Commit: DENIED. При любой ошибке остановиться и вернуть evidence Control Plane.
+
+Результат Control Plane: ACCEPTED. The publication journal now migrates legacy
+SQLite rows by adding a nullable provider receipt URL, keeps existing mock
+receipts compatible, and stores exact `GitHubPullRequest` ID/URL only after
+repository/branch/digest/idempotency binding validation. Fake provider evidence
+simulated PR creation plus a lost response, closed/reopened the journal, and
+reconciled the exact receipt without a second POST. A missing result transitioned
+to `reconciliation_required`; repeat recovery did not POST. Targeted suite passed
+(96 tests), full offline suite passed (963 tests, 954 passed, 9 skipped), and
+`git diff --check` passed. No credentials or real GitHub calls/writes occurred.
+This is adapter/journal contract evidence, not live provider or production
+durability evidence.
+
+### Batch EC — compose controlled approval path with GitHub App channel (R2 execution batch 91/91; 1 task)
+
+#### EXP-538 — connect the exact controlled gates to the typed GitHub App channel
+Статус: ACCEPTED
+Цель: соединить существующую approval → policy → gateway → broker → SQLite
+journal цепочку с типизированным GitHub App publication channel, не ослабляя
+mock-путь и не разрешая реальные provider credentials или сеть.
+Гипотеза: fake-only интеграция, которая пропускает точный GitHub receipt через
+те же gates и восстанавливает потерянный PR POST только read-only lookup-ом,
+подтвердит локальную композицию перед отдельным решением о live experiment.
+Зависит от: EXP-537.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- coordinator принимает только существующие точные типы mock broker/endpoint
+  либо `GitHubAppCredentialBroker` и `GitHubAppPublicationChannel`;
+- GitHub App path проходит имеющиеся approval, policy, slow-gateway, grant,
+  single-use broker и SQLite journal проверки; request остаётся привязан к
+  repository, branch, digest и idempotency key;
+- fake minter и fake GET/POST моделируют созданный PR с потерей POST-ответа;
+  coordinator сохраняет ровно один POST и восстанавливает точный typed receipt
+  и HTTPS URL read-only lookup-ом в тот же journal;
+- существующие mock tests остаются зелёными; targeted suite, полный offline
+  suite и `git diff --check` проходят;
+- документация называет это локальной fake-транспортной композицией, а не
+  real GitHub publication, production approval или доказанной durability.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_publication tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Секреты/credentials: запрещены;
+использовать только synthetic token и fake transports.
+Сеть, реальные GitHub calls/writes, branch/PR, Docker, testdev, sandbox,
+credential files: запрещены.
+Commit: DENIED. При ошибке или несовпадении контрактов остановиться и вернуть
+evidence Control Plane.
+
+Результат Control Plane: ACCEPTED. GitHub App channel проходит тот же
+approval/policy/slow-gateway/broker/SQLite journal coordinator, что и mock
+endpoint, при сохранении exact type checks. Synthetic fake minter и GET/POST
+смоделировали PR creation плюс потерянный ответ; один POST и read-only recovery
+сохранили exact ID/HTTPS URL в journal. Focused tests, полный offline suite и
+`git diff --check` прошли. Реальные credentials, сеть и provider writes не
+использовались; live publication и production durability не доказаны.
+
+### Batch ED — deny-path evidence for controlled GitHub App composition (R2 execution batch 92/92; 1 task)
+
+#### EXP-539 — prove rejected gates do not mint or touch the provider channel
+Статус: ACCEPTED
+Цель: дополнить успешную fake-only композицию Batch EC отказными проверками
+именно через `GitHubAppCredentialBroker`.
+Гипотеза: отказ approval, policy или gateway в integrated coordinator
+останавливает исполнение до token mint, provider transport и journal prepare.
+Зависит от: EXP-538.
+Разрешённые пути:
+- tests/test_controlled_publication.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- отсутствующий/невалидный approval, policy deny и gateway deny не вызывают
+  synthetic token minter и fake GET/POST transports;
+- отказ не создаёт publication journal row и не вызывает staged loader либо
+  поздние эффекты для каждого соответствующего gate;
+- успешная композиция Batch EC и текущие mock regressions остаются зелёными;
+- targeted suite, полный offline suite и `git diff --check` проходят;
+- результат описан как fake-only порядок отказов, без claims об auth, live
+  provider или production trust boundary.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Секреты/credentials: только
+synthetic. Сеть, GitHub, provider writes, branch/PR, Docker, testdev и sandbox:
+запрещены.
+Commit: DENIED. При расхождении с критериями остановиться и представить
+evidence Control Plane.
+
+Результат Control Plane: ACCEPTED. Integrated rejection tests prove missing
+approval, policy deny and gateway deny stop before the GitHub App token minter
+and fake provider transports; they also leave the publication journal empty.
+Targeted suite, full offline suite and `git diff --check` passed. This is local
+fake-only ordering evidence, not authenticated approval or live-provider proof.
+
+### Batch EE — exact trusted adapter type identity (R2 execution batch 93/93; 1 task)
+
+#### EXP-540 — reject GitHub adapter lookalikes at the controlled gate
+Статус: ACCEPTED
+Цель: заменить строковую проверку Python `module/name` в coordinator на
+проверку точной class identity зарегистрированных GitHub App broker/channel/
+receipt типов, не импортируя provider adapter в isolated gate module.
+Гипотеза: фальшивый класс с совпадающими `__module__` и `__name__` не сможет
+пройти контроль типа и приблизиться к mint/provider/journal side effects.
+Зависит от: EXP-538, EXP-539.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- src/app_contracts/github_app.py
+- src/app_contracts/controlled_publication.py
+- tests/test_controlled_publication.py
+- tests/test_github_app.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- точные типы GitHub App broker, publication channel и receipt регистрируются
+  при загрузке trusted adapter, а coordinator сверяется с identity registry;
+- gate module по-прежнему не импортирует `github_app`;
+- lookalike broker и channel types с совпадающими именами/module отвергаются
+  до staged loader, token mint, provider transport и journal prepare;
+- точные зарегистрированные типы сохраняют Batch EC composition и все mock
+  regressions;
+- targeted suite, полный offline suite и `git diff --check` проходят;
+- текст явно ограничивает гарантию in-process type wiring и не называет её
+  security boundary против произвольного кода в том же доверенном процессе.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Synthetic types/transports only.
+Секреты, сеть, GitHub, provider writes, branch/PR, Docker, testdev и sandbox:
+запрещены.
+Commit: DENIED. При несовпадении exact type identity или import boundary
+остановиться и представить evidence Control Plane.
+
+Результат Control Plane: ACCEPTED. The controlled coordinator now validates
+registered Python class identities rather than spoofable module/name strings;
+lookalike broker/channel classes are rejected before side effects while exact
+GitHub App types still compose. The gate module remains free of a direct GitHub
+adapter import. Targeted tests, full offline suite and `git diff --check` passed.
+This is trusted in-process wiring, not a boundary against arbitrary code in the
+same process.
+
+### Batch EF — publish the approved verified files before opening the PR (R2 execution batch 94/94; 1 task)
+
+#### EXP-541 — compose staged content update and PR under one digest-bound journal attempt
+Статус: ACCEPTED
+Цель: превратить fake-only GitHub App композицию в настоящий repository-change
+flow: отправить точные проверенные файлы на scoped branch, затем открыть PR,
+всё в рамках уже существующего `publish_pull_request` approval, который связан
+с точным staged digest, repository, branch и idempotency key.
+Гипотеза: если outgoing manifest извлекается только из проверенных contents
+и его digest равен `PublicationSeed.verified_contents_digest`, а journal
+переходит в `attempting` до первого provider side effect, файлы и PR образуют
+один fail-closed controlled action без unbound content.
+Зависит от: EXP-538, EXP-537, EXP-535, EXP-536.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- src/app_contracts/controlled_publication.py
+- src/app_contracts/publication.py
+- tests/test_controlled_publication.py
+- tests/test_publication.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- GitHub App path requires a non-empty, sorted, unique `PublishableFile`
+  manifest whose per-file content digests are valid and whose canonical
+  contents digest matches the exact seed's `verified_contents_digest`;
+- mock-only path remains unchanged and does not gain file-write capability;
+- verified-file branch/content publication runs only after approval, policy,
+  slow gateway and broker checks and only for the exact approved staged change;
+- durable journal is `attempting` before branch creation/content PUT; any
+  uncertain partial write uses read-only PR reconciliation and never blindly
+  repeats the publication action;
+- fake integration proves exact ordering (branch → file update → PR), one
+  branch creation, one file PUT and one PR POST; simulate lost PR response and
+  recover the exact receipt without a second PR POST;
+- malformed, reordered, duplicate or digest-mismatched file manifests stop
+  before broker/provider transport; existing mock behavior remains covered;
+- targeted suite, full offline suite and `git diff --check` pass;
+- docs state this is fake-provider composition only, not real publication,
+  authenticated approval, multi-file atomicity or production recovery.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_publication tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Внешняя цель: none. Synthetic token and fake GET/POST/PUT
+transports only. Secrets, network, GitHub, provider writes, branch/PR, Docker,
+testdev and sandbox: forbidden.
+Commit: DENIED. При контрактной неоднозначности или failure остановиться и
+представить evidence Control Plane.
+
+Результат Control Plane:
+- ACCEPTED 2026-10-07: the controlled GitHub path publishes only the sorted
+  verified-file manifest whose content digest matches the exact publication
+  seed, after approval/policy/slow-gateway/broker and with journal `attempting`
+  persisted before the first branch/content effect. Fake tests prove branch →
+  file update → PR order and one exact receipt after a lost PR response, with no
+  second PR POST. A lost file-write response instead leaves the journal in
+  `reconciliation_required`, performs one read-only PR lookup and never sends
+  the PR POST or blindly retries the file write. Existing mock behavior remains
+  covered. Targeted suite: 156 tests; full offline suite: 968 tests (959 passed,
+  9 skipped); `git diff --check` clean. No real credential, network or provider
+  write was used; this is not multi-file atomicity or production recovery.
+
+### Batch EG — read-only recovery after an ambiguous verified-file response (R2 execution batch 95/95; 1 task)
+
+#### EXP-542 — verify applied file writes before continuing the approved PR attempt
+Статус: ACCEPTED
+Цель: при потере ответа Contents PUT определить по read-only candidate-branch
+blob metadata, был ли применён весь точный verified manifest, и продолжить
+создание PR только при подтверждённом полном совпадении.
+Гипотеза: exact Git blob SHA для каждого пути связывает неопределённый PUT с
+одобренным содержимым; read-only подтверждение позволяет продолжить ту же
+текущую попытку без повтора branch/content writes.
+Зависит от: EXP-541 (ACCEPTED), EXP-540 (ACCEPTED).
+Среда исполнения: local.
+Внешняя цель: none; synthetic provider only.
+Вне scope: реальная сеть/GitHub, credentials, новые approvals, повторные PUT,
+повтор branch creation, durable cross-process resume и multi-file atomicity.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- src/app_contracts/github_app.py
+- src/app_contracts/controlled_publication.py
+- tests/test_github_app.py
+- tests/test_controlled_publication.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- typed GitHub channel exposes one bounded read-only reconciliation operation
+  over the exact branch and sorted verified manifest;
+- reconciliation returns a usable exact branch commit only if every manifest
+  path is a regular file with the expected Git blob SHA; absent, malformed,
+  conflicting or partially applied state is unknown/denied without echoing
+  provider payloads;
+- after a file PUT response is lost, coordinator performs at most one such
+  read-only reconciliation; if all files match, it continues to the existing
+  PR POST under the same still-active approval/journal attempt, without another
+  branch creation or file PUT;
+- if state is absent, partial, conflicting or unknown, no PR POST or content
+  retry occurs and the journal becomes `reconciliation_required`;
+- fake integration covers applied-but-lost response and not-applied/partial/
+  unknown outcomes; mock publication contract remains unchanged;
+- targeted suite, full offline suite and `git diff --check` pass;
+- docs explicitly deny live publication, cross-process recovery and multi-file
+  atomicity claims.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_github_app -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Секреты, сеть, GitHub/provider writes, branch/PR, Docker,
+testdev и sandbox запрещены; применяются только синтетические doubles.
+Commit: DENIED. При несоответствии контрактов остановиться и представить
+evidence Control Plane.
+
+Результат Control Plane:
+- ACCEPTED 2026-10-07: after a simulated lost Contents PUT response, the
+  coordinator now performs one read-only candidate-branch ref/blob reconciliation.
+  It continues the current digest-bound attempt to the fake PR POST only when
+  every path matches the exact verified Git blob SHA; the successful integration
+  proves one branch POST, one file PUT and one PR POST even when both file and PR
+  responses are lost. Not-applied/partial/unknown state does not reach PR POST,
+  does not repeat writes and leaves the journal `reconciliation_required`.
+  Targeted suite: 121 tests; full offline suite: 969 tests (960 passed,
+  9 skipped); `git diff --check` clean. No real credential, network or provider
+  write was used. This is not cross-process resume or multi-file atomicity.
+
+### Batch EH — persist restart-time verified-file reconciliation (R2 execution batch 96/96; 1 task)
+
+#### EXP-543 — persist read-only file-state evidence after publication restart
+Статус: ACCEPTED
+Цель: после перезапуска восстановить PR outcome и, если PR не найден,
+проверить verified manifest на candidate branch и сохранить digest-only
+reconciliation evidence в SQLite journal.
+Гипотеза: durable observation точного manifest и branch commit позволяет
+Control Plane безопасно оценить незавершённую публикацию, не переиспользуя
+старое approval и не повторяя внешний write.
+Зависит от: EXP-542 (ACCEPTED), EXP-537 (ACCEPTED).
+Среда исполнения: local.
+Внешняя цель: none; synthetic provider only.
+Вне scope: возобновление PR, выпуск/переиспользование approval, credential
+lookup, любые повторные provider writes, live GitHub, cross-host durability.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- src/app_contracts/controlled_publication.py
+- tests/test_publication.py
+- tests/test_controlled_publication.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- SQLite migration adds bounded nullable fields for verified-file manifest
+  digest, fixed reconciliation outcome, observed branch commit SHA and UTC time;
+- controlled publication binds the seed's verified-files digest into the journal
+  at `prepare`, before any provider effect; later reconciliation cannot record
+  evidence for another manifest;
+- one recovery API accepts only the exact seed/intent, exact registered channel,
+  matching journal idempotency/repository bindings and a sorted manifest whose
+  contents digest matches the seed;
+- after a reopened `attempting` record, one read-only PR lookup first completes
+  a matching PR receipt; absent/unknown PR moves to `reconciliation_required`,
+  then one read-only file reconciliation records only verified/unverified
+  digest-only evidence;
+- no path reopens an attempt for PR POST, branch creation or file PUT; fresh
+  approval is required for any later publication action;
+- close/reopen tests cover exact file state, partial/unknown state, PR already
+  present, journal-binding mismatch and no-write guarantees;
+- targeted suite, full offline suite and `git diff --check` pass;
+- docs distinguish persisted observation from production durability or a
+  recoverable/resumable real publication.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_publication -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Только fake transports; credentials, сеть, provider
+writes, branch/PR, Docker, testdev и sandbox запрещены.
+Commit: DENIED. При неоднозначности authority или journal transition остановиться
+и представить evidence Control Plane.
+
+Результат Control Plane:
+- ACCEPTED 2026-10-07: a reopened `attempting` publication first performs the
+  existing read-only PR reconciliation. Matching PRs complete the same journal
+  receipt; if no receipt is established, the attempt remains terminal
+  `reconciliation_required` and exact branch-file state is recorded as only a
+  manifest digest, fixed verified/unverified outcome, branch commit SHA and UTC
+  observation time. The expected manifest digest is bound into the journal at
+  prepare, before any provider effect; mismatched manifest or journal bindings
+  stop before GET. Reopen tests cover exact, partial, unknown and already-PR
+  states plus binding mismatches. The API never resumes POST/PUT or reuses
+  approval. Targeted suite: 99 tests; full offline suite: 972 tests (963 passed,
+  9 skipped); `git diff --check` clean. This is local SQLite/fake evidence, not
+  cross-host or production durability.
+
+### Batch EJ — repeat read-only PR reconciliation after restart (R2 execution batch 97/97; 1 task)
+
+#### EXP-544 — complete a terminal attempt when its exact PR becomes visible later
+Статус: ACCEPTED
+Цель: разрешить read-only recovery повторно проверить точный idempotency key
+после перевода попытки в `reconciliation_required` и завершить journal только
+если позже найден matching PR receipt.
+Гипотеза: delayed provider visibility может быть reconciled без повторного
+POST, если typed receipt совпадает с исходными repository/branch/digest/key.
+Зависит от: EXP-543 (ACCEPTED), EXP-537 (ACCEPTED).
+Среда исполнения: local.
+Внешняя цель: none; synthetic provider only.
+Вне scope: любое повторение POST/PUT/branch creation, новое approval, retry
+publication, live GitHub, credentials, cross-host durability.
+Разрешённые пути:
+- src/app_contracts/publication.py
+- src/app_contracts/controlled_publication.py
+- tests/test_publication.py
+- tests/test_controlled_publication.py
+- .opencode/tasks/WORK_QUEUE.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- a `reconciliation_required` attempt may transition to `completed` only through
+  an explicit read-only receipt-reconciliation method and only after the same
+  strict typed-receipt/repository/branch/digest/idempotency checks as normal
+  completion;
+- restart recovery rechecks PR lookup for an already-terminal attempt before
+  file metadata; exact later receipt completes the journal and retains prior
+  digest-only file evidence;
+- absent, malformed, wrong-repository, wrong-branch or wrong-key receipt leaves
+  journal `reconciliation_required`; no write is attempted;
+- close/reopen tests cover initially absent then visible exact PR, persistent
+  absence and mismatched receipt, with no POST/PUT calls;
+- targeted suite, full offline suite and `git diff --check` pass;
+- docs state repeated recovery is read-only reconciliation, not publication
+  retry or production-provider evidence.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_controlled_publication tests.test_publication -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Внешняя среда: local. Только fake transports; network, credentials, GitHub,
+provider writes, branch/PR, Docker, testdev и sandbox запрещены.
+Commit: DENIED. При mismatch receipt или journal transition остановиться и
+представить evidence Control Plane.
+Результат Control Plane: ACCEPTED после проверки локального diff и evidence.
+Исполнитель добавил явный read-only переход из `reconciliation_required` в
+`completed` только при exact typed receipt и повторяет GET по исходному
+idempotency key при restart recovery; отсутствующий/несовпадающий PR оставляет
+attempt terminal без POST/PUT, прежнее digest-only file evidence сохраняется.
+Targeted suite: 100 tests passed. Полный offline suite: 973 tests, 964 passed,
+9 skipped. `git diff --check` чистый. Только SQLite/fake transports; без
+credentials, network, GitHub или provider writes. Commit не создавался.
+
+## Batch B — локальное укрепление контрактов
 
 ## Batch B — локальное укрепление контрактов
 
@@ -8207,3 +19110,2022 @@ Commit: ALLOWED
 Разрешённые внешние команды:
 - none
 Commit: ALLOWED
+
+## DOC-001 — зафиксировать исследовательские идеи ApprenticeBench и DeepSeek Harness
+Статус: ACCEPTED
+Цель: документально зафиксировать применимые гипотезы о длительном обучении,
+воспроизводимой траектории и управляемой композиции расширений runtime.
+Гипотеза: зафиксированные источники и явно ограниченные target patterns помогут
+планировать R3–R5 без ошибочного утверждения, что соответствующие возможности
+уже реализованы.
+Зависит от: none
+Среда исполнения: local
+Внешняя цель: none
+Вне scope: исходный код, схемы, policy semantics, plugin installation, сеть,
+Docker, testdev, Agent00X-sandbox, branch/PR, commit и push.
+Разрешённые пути:
+- docs/08-references.md
+- docs/17-agent-adaptation-and-patterns.md
+- docs/28-observer-and-learning.md
+- docs/06-decision-register.md
+Критерии приёмки:
+- источники ApprenticeBench и DeepSeek Harness зафиксированы как исследовательские,
+  а не как выбранные зависимости;
+- отражены профили/расширения runtime, lifecycle и provenance траектории;
+- явно сохранены Authority Plane, Policy Engine и Action Gateway как не обходные
+  trust boundaries;
+- текст не заявляет реализацию плагинного runtime, replay, collector или benchmark.
+Проверки:
+- git diff --check
+Разрешённые внешние команды:
+- none
+Commit: DENIED
+Результат Control Plane:
+- SUPERSEDED PENDING REVIEW: карточка создана и выполнена Codex по прямому
+  подтверждению пользователя 2026-09-29.
+- ACCEPTED 2026-10-01: независимая сверка четырёх разрешённых документов
+  подтверждает, что обе ссылки сохранены как исследовательские references,
+  профили/версии/dependencies/lifecycle описаны как target pattern, trust
+  boundaries явно сохранены, а отсутствие реализации runtime/replay/collector/
+  benchmark прямо указано. `git diff --check` passed. Внешние источники и сеть
+  не проверялись: они вне scope карточки. Commit запрещён карточкой; изменения
+  остаются локальными.
+
+## DOC-002 — сверить актуальную матрицу MVP после Batch EF—EH
+Статус: ACCEPTED
+Цель: устранить factual drift между README, итоговым планом и оперативной
+матрицей R2 относительно актуального offline suite и controlled publication.
+Гипотеза: единый актуальный фактологический срез не даст принять fake/local
+evidence за live publication или считать устаревшие числа текущими.
+Зависит от: EXP-541, EXP-542, EXP-543 (ACCEPTED).
+Среда исполнения: local.
+Внешняя цель: none.
+Вне scope: код, tests, сеть, credentials, provider calls/writes, Docker,
+branch/PR, deployment, commit и push.
+Разрешённые пути:
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- README test count matches the latest verified full offline suite;
+- R2 publication matrix reflects Batch EF—EH: verified files before PR,
+  same-invocation read-only reconciliation, restart-time digest-only evidence,
+  no reuse of approval or automatic resume;
+- remaining requirements still explicitly include fresh authorization, real
+  provider receipt, independent verifier trust and production recovery;
+- R2 remains OPEN and no fake test is described as live evidence;
+- `git diff --check` passes.
+Проверки:
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Не запускать тесты: карточка изменяет только документацию.
+
+Результат Control Plane:
+- ACCEPTED 2026-10-07: README reports the latest full offline suite and the
+  R2 matrix distinguishes fake composition from real provider evidence; current
+  publication/recovery limitations and remaining gates are explicit. Diff check
+  passed. No code, test, network, credential or provider state changed.
+
+### Batch EK — bind pull-request base branch to the approved intent (R2 execution batch 98/98; 1 task)
+
+#### EXP-545 — remove the hardcoded GitHub PR base branch
+Статус: ACCEPTED
+Цель: make the pull-request base branch explicit and bind it through publication
+intent, approval digest, idempotency key and GitHub actuator request.
+Гипотеза: a base-branch substitution cannot redirect an already approved staged
+change, and the actuator will target the exact user-selected base instead of a
+hardcoded branch.
+Зависит от: EXP-520 accepted live staged artifact; Batch EF—EJ accepted fake
+publication and recovery path.
+Среда исполнения: local.
+Внешняя цель: none.
+Вне scope: GitHub/API/network requests, credentials, Docker, testdev,
+Agent00X-sandbox, branch/PR/push/deployment, approval of or publication of the
+EXP-520 artifact, commits.
+Разрешённые пути:
+- `src/app_contracts/publication_seed.py`
+- `src/app_contracts/publication.py`
+- `src/app_contracts/controlled_publication.py`
+- `src/app_contracts/actuator.py`
+- `src/app_contracts/mock_github.py`
+- `src/app_contracts/github_app.py`
+- `src/app_contracts/chain.py`
+- `src/app_contracts/broker.py`
+- `src/app_contracts/stage_approval.py`
+- `src/app_contracts/operator_confirmation.py`
+- `src/app_contracts/worker_cli.py`
+- `schemas/action-receipt.schema.json`
+- `schemas/actuator-request.schema.json`
+- `schemas/publish-pull-request-intent.schema.json`
+- `fixtures/valid/mvp-chain.json`
+- `fixtures/invalid/intent-arbitrary-operation.json`
+- `fixtures/invalid/intent-with-token.json`
+- `tests/test_publication_seed.py`
+- `tests/test_publication.py`
+- `tests/test_controlled_publication.py`
+- `tests/test_github_app.py`
+- `tests/test_actuator.py`
+- `tests/test_broker.py`
+- `tests/test_mock_github.py`
+- `tests/test_contracts.py`
+- `tests/test_local_publication_chain.py`
+- `tests/test_stage_approval.py`
+- `tests/test_remote_snapshot_pipeline.py`
+- `tests/test_worker_cli.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `README.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- `PublicationIntent` requires an explicit validated base branch; there is no
+  implicit `main` or other default;
+- published JSON schemas and the valid end-to-end fixture require the same
+  explicit base branch and canonical key shape;
+- canonical approval digest binds repository, source commit, target base branch,
+  head branch and staged-change digest; the canonical idempotency key binds
+  target base, head branch and staged-change digest within the configured repo;
+- the controlled-publication actuator request passes the exact approved base
+  branch; GitHub PR creation uses that value, not a literal;
+- mock and GitHub adapters reject missing/invalid/substituted base branches
+  before any token mint or provider transport call;
+- typed mock/provider receipts retain the exact base branch, and journal
+  completion/recovery rejects a receipt for another base;
+- local fake tests prove approvals and receipts cannot be reused with another
+  base branch, and the `master` target case is represented without network;
+- focused and full offline test suites plus `git diff --check` pass;
+- docs continue to distinguish fake tests from live GitHub evidence.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_publication_seed tests.test_publication tests.test_controlled_publication tests.test_actuator tests.test_github_app tests.test_stage_approval tests.test_remote_snapshot_pipeline tests.test_broker tests.test_mock_github tests.test_contracts tests.test_local_publication_chain tests.test_worker_cli -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop on any unexpected external call, digest mismatch or scope
+expansion; report evidence to Control Plane.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: explicit base branch is bound through approved intent,
+  actuator request, provider/mock request and typed receipt; journal refuses a
+  receipt whose base differs. Focused suite: 369 tests (3 skipped). Standard
+  full suite: 974 tests (965 passed, 9 skipped). `git diff --check` passed.
+  No credentials, network, provider writes, branches, PRs, commits or deployment.
+  R2 remains OPEN; evidence is local fake-only contract/recovery coverage.
+
+### Batch EL — constrain approval identity claims in policy (R2 execution batch 99/99; 1 task)
+
+#### EXP-546 — allowlist the approver principal
+Статус: ACCEPTED
+Цель: reject an approval whose claimed `approver_id` is not explicitly trusted
+by the active deterministic policy configuration.
+Гипотеза: a digest-correct approval carrying an untrusted or missing approver
+identifier cannot reach the slow gateway/broker or mock/provider adapter.
+Зависит от: EXP-545 accepted; digest-bound approval and controlled fake path.
+Среда исполнения: local.
+Внешняя цель: none.
+Вне scope: credentials, private keys, identity provider integration, network,
+GitHub/API calls, Docker, testdev, Agent00X-sandbox, provider writes, branch/PR,
+push, deployment, commits.
+Разрешённые пути:
+- `src/app_contracts/authority.py`
+- `src/app_contracts/stage_approval.py`
+- `tests/test_authority.py`
+- `tests/test_adversarial.py`
+- `tests/test_actuator.py`
+- `tests/test_broker.py`
+- `tests/test_controlled_publication.py`
+- `tests/test_local_publication_chain.py`
+- `tests/test_remote_snapshot_pipeline.py`
+- `tests/test_stage_approval.py`
+- `tests/test_contracts.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `README.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- `PolicyConfig` requires a nonempty explicit set of permitted approver IDs;
+- policy denies missing, malformed or non-allowlisted `approver_id` before any
+  gateway/broker/endpoint side effect, even when the intent digest matches;
+- a permitted synthetic local approver completes only the existing mock path;
+- the evidence and docs explicitly say this checks an identity claim only and
+  does not authenticate the person or replace a signature/identity provider;
+- focused and full offline suites and `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_authority tests.test_adversarial tests.test_actuator tests.test_broker tests.test_controlled_publication tests.test_local_publication_chain tests.test_remote_snapshot_pipeline tests.test_stage_approval -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop on unexpected external access or scope expansion; report
+evidence to Control Plane.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: policy requires a non-empty configured approver allowlist
+  and denies missing, malformed or unlisted claims before downstream effects.
+  The mock path uses `local-mock-operator`; evidence states this is not
+  authentication. Focused suite: 180 tests (1 skipped). Full offline suite: 975
+  tests (966 passed, 9 skipped). `git diff --check` passed. No credentials,
+  network, provider writes, commits, branch/PR or deployment were used. R2/MVP
+  remain OPEN; no authenticated production approval was established.
+
+### Batch EM — cryptographically bind approval claims (R2 execution batch 100/100; 1 task)
+
+#### EXP-547 — verify Ed25519 signatures over exact approval bindings
+Статус: ACCEPTED
+Цель: reject approval records unless their exact approver identity, staged digest,
+intent digest, repository/operation/policy binding and validity window are
+signed by an explicitly trusted Ed25519 public key.
+Гипотеза: changing an approval field after signing, using an unknown signer, or
+providing a malformed signature cannot pass policy even when the intent digest
+is recomputed correctly.
+Зависит от: EXP-546 ACCEPTED; approval schema and controlled fake path.
+Среда исполнения: local, offline except dependency installation needed for the
+declared `cryptography==50.0.2` dependency.
+Внешняя цель: none. No provider/model calls, credentials, GitHub/API requests,
+Docker, testdev, Agent00X-sandbox, external writes, branch/PR, push or deployment.
+Разрешённые пути:
+- `pyproject.toml`
+- `src/app_contracts/approval_signature.py`
+- `src/app_contracts/authority.py`
+- `src/app_contracts/stage_approval.py`
+- `schemas/approval.schema.json`
+- `fixtures/valid/mvp-chain.json`
+- `tests/approval_test_support.py`
+- `tests/test_authority.py`
+- `tests/test_adversarial.py`
+- `tests/test_actuator.py`
+- `tests/test_broker.py`
+- `tests/test_controlled_publication.py`
+- `tests/test_local_publication_chain.py`
+- `tests/test_remote_snapshot_pipeline.py`
+- `tests/test_stage_approval.py`
+- `tests/test_contracts.py`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `README.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- approvals carry a fixed-format Ed25519 signature over a canonical payload
+  containing the approver ID and all approval binding/expiry fields;
+- policy configuration maps explicitly trusted approver IDs to validated
+  Ed25519 public keys and rejects absent, malformed, untrusted or invalidly
+  signed approvals before gateway/broker/endpoint effects;
+- a mutation to approver, repository, staged digest, intent digest, policy or
+  expiry invalidates the signature; an unknown signing key is denied;
+- the only signer shipped in the existing local mock path is ephemeral and
+  synthetic; no private key is persisted or emitted;
+- tests use a deterministic test-only private key that is never used by runtime;
+- docs distinguish cryptographic proof of key possession from proof of human
+  identity, key custody, enrollment, revocation or production approval;
+- focused and full offline suites plus `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_authority tests.test_adversarial tests.test_actuator tests.test_broker tests.test_controlled_publication tests.test_local_publication_chain tests.test_remote_snapshot_pipeline tests.test_stage_approval tests.test_contracts -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: install the exact `cryptography==50.0.2` package
+from the configured public package index if it is not already available; no
+other network or service calls. Commit: DENIED. Stop if dependency provenance,
+platform support, schema contract or signature canonicalization is uncertain.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: Ed25519 signatures now bind the approver claim and all
+  approval fields used by policy. Unknown identities and altered/forged
+  signatures fail closed before downstream effects; a composed negative test
+  verified an altered approval never calls Gateway, Broker, or provider and
+  leaves the publication journal empty. Unknown unsigned extra fields are also
+  rejected. Local mock signing uses a
+  fresh ephemeral synthetic key; deterministic private key exists only in test
+  support. Focused suite: 229 tests (1 skipped). Full offline suite: 978 tests
+  (969 passed, 9 skipped). `git diff --check` passed. `cryptography==50.0.2`
+  installed into an isolated temporary target for this verification. No
+  credential, live provider, external write or deployment was used. Human
+  identity, key enrollment/custody/revocation, independently trusted policy,
+  production approval and R2/MVP remain OPEN.
+
+### Batch EN — replay the persisted live Worker candidate without another model call (R2 execution batch 101/101; 1 task)
+
+#### EXP-548 — reproduce the exact EXP-520 staged candidate through pinned execution
+Статус: ACCEPTED
+Цель: prove that the exact persisted EXP-520 Worker-produced file can be
+rehydrated as a bounded proposal against a freshly fetched exact public snapshot,
+then independently re-run in the pinned target sandbox and pinned verifier into
+a new digest-bound SQLite stage, without invoking a model or reading credentials.
+Гипотеза: a fresh one-shot replay of the previously staged `backend/routes.py`
+contents yields `VERIFIED` with the pinned Docker verifier and a new exact
+readback stage digest; mutation, pin drift, rate-limit miss, image mismatch or
+any failed gate stops before approval/publication.
+Зависит от: EXP-520 and EXP-521/522 accepted; persisted stage DB
+`/var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp520-stage-0jaua24y/stage.sqlite3`;
+source staged digest `sha256:a68580b0acd241cb346f7fd225c9632c166ebedfe985d1fa656cd88d966198d7`.
+Среда исполнения: local macOS Docker daemon, only with
+`RUN_DOCKER_SANDBOX_TESTS=1`; anonymous read-only GitHub REST; no Worker channel,
+credential source, provider/model request, approval, or write.
+Внешняя цель: public source snapshot only —
+`SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, 23 blobs,
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+Разрешённые пути:
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- source stage loads read-only by its exact digest and contains only the pinned
+  repository/commit, one declared path `backend/routes.py` and one verified
+  candidate content; source artifact is not modified;
+- exactly one fresh anonymous GitHub readiness request returns HTTP 200, at
+  least 25 remaining and a reset timestamp, followed by one bounded full-snapshot
+  fetch; the repository, commit, tree, file count and snapshot content digest
+  match the exact values above;
+- Docker daemon contains, without pulling/building, target image
+  `sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`
+  and verifier image
+  `sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`,
+  both `linux/arm64`; verifier code digest is
+  `sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5`;
+- rehydrated proposal changes exactly the original verified
+  `backend/routes.py` content; target runs with `--network none`; pinned HTTP/DB
+  command passes five malformed cases, overflow and valid insert; verifier
+  returns PASS under its exact image/code identity;
+- the new stage is exact-readback verified and its read-only preview binds its
+  new staged digest, repository, base commit, single path and verifier identity;
+- one-shot operation stops without retry on any failed gate; it performs no
+  approval, mock receipt, GitHub write, branch/PR, commit, push, deployment,
+  `testdev` or `Agent00X-sandbox` action;
+- evidence explicitly labels the proposal source as a replay of EXP-520 (not a
+  new live Worker call) and the verifier as same-host Docker evidence, not an
+  independently governed trust domain;
+- update plan/status and this card only with observed results; keep R2/MVP OPEN.
+Проверки:
+- focused unit tests for the existing remote snapshot pipeline, durable stage,
+  stage preview and worker CLI;
+- the one-shot Python runner below;
+- `git diff --check`.
+Разрешённые внешние команды: exactly one invocation of the following Python
+runner with `RUN_DOCKER_SANDBOX_TESTS=1`; it may make the one readiness GET and
+the bounded anonymous pinned-snapshot GETs described above, and may run (but
+not pull/build) only the two exact Docker images above. No other network/service
+calls. Runner implementation is to import the current accepted constants and
+adapters, load the source stage read-only, inject an in-memory `ProposalWorker`
+that returns only its stored verified content, call
+`run_remote_snapshot_execution` with `DockerSandboxBackend`,
+`DockerContainerVerifier`, `SQLiteStagedArtifactStore`, and
+`PINNED_HTTP_DB_TEST_COMMAND`, then print only allowlisted digest/status fields
+and the new stage DB path. The private Worker credential source must not be
+constructed or imported.
+Commit: DENIED. Stop if any preflight, pin, stage, image, verifier, database or
+readback check fails; do not retry and do not fall back to host execution.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: read-only load of the source EXP-520 stage matched its
+  exact digest, repository/commit and one verified `backend/routes.py` output.
+  The one readiness check passed the `>=25` threshold and the fetched public
+  snapshot matched exact commit/tree/23-blob/content digest. Both pinned images
+  were already present as `linux/arm64`; nothing was pulled or built. The stored
+  proposal was rehydrated unchanged and passed the network-none target HTTP/DB
+  probe plus exact Docker verifier. New exact-readback SQLite stage digest:
+  `sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`;
+  verified contents digest matches the source stage; verification digest:
+  `sha256:1930fd5f5224ceda7313053d06288db735ed1fa85700a361b1f686f340ce2e23`.
+  Preview artifact digest:
+  `sha256:c60036bd6740205a1e72c6c0e66f05756f1c13a176095d5e09eb8080d8687e8c`.
+  New stage DB:
+  `/var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3`.
+  Focused suite: 65 tests (3 skipped); full suite: 978 tests (969 passed, 9
+  skipped); `git diff --check` clean. This is a replay, not a new live model
+  call; verifier remains same-host Docker and snapshot remains an unsigned API
+  claim. No credential, approval or provider write; R2/MVP remain OPEN.
+
+### Batch EO — make stored Worker-candidate replay repeatable from the CLI (R2 execution batch 102/102; 1 task)
+
+#### EXP-549 — add a credential-free replay CLI for a persisted stage
+Статус: ACCEPTED
+Цель: provide a bounded CLI operation that can take one validated persisted
+stage, fetch only the repository's existing exact public snapshot pin, and
+replay its verified candidate through explicitly injected sandbox/verifier
+adapters into a fresh exact-readback SQLite stage.
+Гипотеза: the CLI can reproduce EXP-548 without ever constructing a model
+Worker, looking up a credential, accepting a caller-supplied patch, or opening
+any approval/publication channel; malformed arguments, untrusted stage data,
+pin mismatch, or injected gate failure stop closed before a new stage is saved.
+Зависит от: EXP-548 ACCEPTED; `worker_cli.run_remote_snapshot_execution`,
+`SQLiteStagedArtifactStore`, fixed target/verifier identities and test command.
+Среда исполнения: local/offline. This card authorizes no live GitHub request,
+Docker command, credential/provider/model call, approval, write, branch/PR,
+push, deployment, testdev or Agent00X-sandbox activity.
+Внешняя цель: none. Tests use deterministic fake transport/sandbox/verifier
+only; production entrypoint must still be bounded to the pinned public snapshot.
+Разрешённые пути:
+- `src/app_contracts/remote_snapshot_pipeline.py`
+- `src/app_contracts/brainbooster_target_profile.py`
+- `src/app_contracts/worker_cli.py`
+- `scripts/replay_staged_candidate.py`
+- `tests/test_replay_staged_candidate.py`
+- `tests/test_remote_target_stage_pipeline.py`
+- `tests/test_worker_cli.py`
+- `README.md`
+- `docs/24-mvp-final-plan.md`
+- `docs/27-implementation-status.md`
+- `.opencode/tasks/WORK_QUEUE.md`
+Критерии приёмки:
+- the CLI requires explicit source SQLite path, exact source stage digest and
+  a distinct fresh output SQLite path; it refuses aliasing, symlinks, overwrite,
+  wrong repository/commit, anything other than the single allowed path
+  `backend/routes.py`, malformed content, or non-verified source stages;
+- candidate bytes come only from the revalidated source stage's `verified_contents`;
+  caller cannot provide task instructions, patches, paths, commands, images,
+  hosts, credentials, policies, approvals or publication adapters;
+- production mode uses one fresh bounded public readiness gate and exact pinned
+  snapshot intake, the fixed target/verifier image and command constants, with
+  fail-closed rate-limit/pin checks; network, model, secret and write adapters
+  are not configurable via argv/environment; those fixed contracts live in a
+  minimal runtime module rather than requiring an import of the test suite;
+- the shared already-fetched snapshot composition is re-exported from
+  `worker_cli` but implemented in a minimal module with no LLM/credential
+  imports, allowing this replay utility to use the execution pipeline without
+  loading a model adapter; existing worker-cli tests patch the new module's
+  generic executor/workspace dependencies and continue to pass;
+- fresh `VERIFIED` result is saved and exact-readback checked before safe evidence
+  is emitted; output contains only status, fixed snapshot identifiers, digests,
+  verifier identity digest, source stage reference, output stage path and explicit
+  `approval=not_created` / `publication=not_attempted` / `external_write=false`;
+- tests prove source DB is read-only and unchanged, output DB must be distinct and
+  absent, injected proposal equals stored verified contents, denial on each
+  malformed binding occurs before transport/sandbox/verifier calls, and the
+  replay CLI has no Worker-channel, credential-source, approval, or publication
+  imports or adapters; its pipeline dependency imports only generic executor
+  contracts;
+- docs describe this as an offline-testable replay utility, not provenance,
+  independent verifier governance or a new live Worker call; R2/MVP remain OPEN;
+- focused tests, full offline unittest suite and `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_replay_staged_candidate tests.test_remote_target_stage_pipeline tests.test_remote_snapshot_pipeline tests.test_durable_stage tests.test_stage_preview tests.test_worker_cli -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop if a reusable CLI would require caller-controlled policy,
+provider or credential wiring, or if current contract cannot prevent output
+database overwrite without adding a security assumption.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: fixed target contract was moved to the data-only
+  `app_contracts.brainbooster_target_profile`; the shared remote snapshot
+  executor now lives in `app_contracts.remote_snapshot_pipeline` and is still
+  re-exported by `worker_cli`. The new CLI revalidates the source artifact,
+  accepts only its exact verified content, enforces the pinned anonymous-read
+  readiness/snapshot contract, uses fixed target/verifier/test inputs, stages
+  into a same-directory temporary SQLite file, commits output without overwrite,
+  then reloads it read-only before emitting digest-only evidence. It imports no
+  Worker-channel, credential, approval, publication or GitHub App adapters.
+  Focused suite: 76 tests (4 skipped); full offline suite: 985 tests (976 passed,
+  9 skipped); `git diff --check` passed. The new production CLI was tested with
+  fakes only and not run against external services. No credential, model call,
+  Docker, GitHub request, approval or provider write occurred in this batch;
+  R2/MVP remain OPEN.
+
+### Batch EP — establish dual repository identity binding (R2 execution batch 103/103; 1 task)
+
+#### EXP-550 — define a trusted source-to-provider repository binding
+Статус: ACCEPTED
+Цель: explicitly map the verified source slug to the installation-scoped GitHub
+App repository identity before a publication intent is formed.
+Гипотеза: a frozen binding derived from validated GitHub App target config can
+preserve both names in the digest-bound seed/intent, and reject a mismatched
+source before policy, credential minting or provider transport.
+Зависит от: EXP-545 through EXP-549 ACCEPTED.
+Среда исполнения: local/offline only. No `.env`, credentials, real provider,
+network, Docker, branch/PR, push, deployment, testdev or Agent00X-sandbox.
+Внешняя цель: none; use the fixed public target identity only in deterministic
+fixtures, and synthetic numeric GitHub App identifiers in tests.
+Разрешённые пути:
+- src/app_contracts/repository_binding.py
+- src/app_contracts/publication_seed.py
+- src/app_contracts/authority.py
+- src/app_contracts/controlled_publication.py
+- src/app_contracts/github_app.py
+- schemas/approval.schema.json
+- schemas/publish-pull-request-intent.schema.json
+- schemas/actuator-request.schema.json
+- schemas/action-receipt.schema.json
+- tests/test_repository_binding.py
+- tests/test_publication_seed.py
+- tests/test_authority.py
+- tests/test_controlled_publication.py
+- tests/test_github_app.py
+- tests/test_contracts.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- an immutable `RepositoryTargetBinding` validates exact `owner/name` syntax and
+  positive installation/repository IDs without reading credentials;
+- `GitHubAppBrokerConfig` derives the binding from its already validated
+  repository slug and numeric IDs;
+- binding a verified publication seed preserves the source slug separately and
+  uses the provider-scoped ID as publication `repository_id`; mismatched source,
+  malformed IDs and repeated binding fail closed;
+- the derived immutable publication intent retains both identities, and its
+  canonical digest changes if either source slug or provider ID is modified;
+- deterministic tests use `SoldatovAlexander/brainbooster_full_v11` and
+  synthetic App IDs, with no prompt/CLI mapping, credentials or provider effects;
+- controlled publication validates the staged source slug before policy/broker
+  continuation and presents the provider ID to the GitHub App file adapter;
+- docs state clearly that this is a binding primitive and local wiring only; the
+  complete approval→policy→actuator→receipt/recovery integration remains open;
+- focused tests, full standard unittest suite and `git diff --check` pass.
+Проверки:
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_repository_binding tests.test_publication_seed tests.test_authority tests.test_controlled_publication tests.test_github_app tests.test_contracts -q`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop if the binding requires reading credential/configuration
+files, accepting a caller-selected repository identity, or changing provider
+state; R2/MVP must remain OPEN.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: added frozen `RepositoryTargetBinding` and a formatter
+  for positive installation/repository IDs; `GitHubAppBrokerConfig` derives the
+  pair from its validated `owner/name` and numeric target values. Verified seed
+  binding rejects source mismatch/non-PASS and preserves the source slug in a
+  separate field while publication `repository_id` becomes provider-scoped.
+  Derived intent retains both identities; canonical intent digest changes if
+  either is mutated. Controlled publication validates the stored stage slug
+  before its policy/broker gates and maps a copy of staged metadata to the
+  provider identity only for the GitHub App file adapter, leaving the verified
+  source artifact untouched. Focused suite: 246 tests passed; full offline
+  suite: 992 tests, 983 passed, 9 skipped; `git diff --check` passed. Synthetic
+  identifiers only; no credential, network, Docker, model, provider write or
+  real approval. This is local contract evidence, not proof the production
+  runtime composes this binding or creates a real PR; R2/MVP remain OPEN.
+
+### Batch EQ — exercise dual-identity binding through the fake publication chain (R2 execution batch 104/104; 1 task)
+
+#### EXP-551 — prove source slug and provider ID stay bound through fake PR recovery
+Статус: ACCEPTED
+Цель: exercise one complete offline approval→policy→gateway→broker→GitHub App
+adapter→journal→receipt/recovery attempt using a source-slug stage and a
+synthetic installation-scoped repository identity.
+Гипотеза: the new EXP-550 binding can flow through the existing composed path
+without losing the signed source slug, sending an unbound repository ID to the
+adapter, mutating the verified stage, or allowing retry after an unknown write.
+Зависит от: EXP-550 ACCEPTED; existing fake GitHub App integration tests.
+Среда исполнения: local/offline. No credential files, real credential values,
+network, Docker, live provider, branch/PR, push, deployment, testdev or
+Agent00X-sandbox.
+Внешняя цель: none. Use `SoldatovAlexander/brainbooster_full_v11` as a synthetic
+stage identity and only synthetic GitHub App IDs/transports.
+Разрешённые пути:
+- src/app_contracts/controlled_publication.py
+- src/app_contracts/publication.py
+- src/app_contracts/github_app.py
+- schemas/publish-pull-request-intent.schema.json
+- schemas/action-receipt.schema.json
+- tests/test_repository_binding.py
+- tests/test_controlled_publication.py
+- tests/test_github_app.py
+- tests/test_contracts.py
+- docs/27-implementation-status.md
+- docs/24-mvp-final-plan.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- a valid synthetic source stage and exact target binding complete the existing
+  fake GitHub App composition with approval signature over an intent digest
+  containing both source slug and provider-scoped ID;
+- the fake file adapter receives only the provider-scoped ID while the durable
+  source staged record remains byte-for-byte unchanged;
+- changed source slug/provider ID, or a source slug inconsistent with the
+  configured GitHub App repository, stops before broker mint, provider
+  transport, or journal preparation;
+- lost-response reconciliation and returned receipt remain bound to the same
+  provider ID and exact idempotency/staged digest; there is no duplicate POST;
+- full suite and focused composition tests pass; docs clearly keep real approval,
+  production runtime wiring and real PR evidence OPEN.
+Проверки:
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_repository_binding tests.test_controlled_publication tests.test_github_app tests.test_contracts -q`
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop if any test path attempts a real external request or if
+the fake chain cannot prove the exact repository and digest binding.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: the composed fake GitHub App path now starts with source
+  slug `SoldatovAlexander/brainbooster_full_v11`, derives and binds the exact
+  provider ID `github-installation/456/repository/1001` from synthetic target
+  config, signs an approval over an intent digest containing both identities,
+  and passes the provider ID to the verified-file adapter. The source staged
+  record remains unchanged. The fake transport simulates applied PUT and PR
+  response loss; exact read-only reconciliation returns one typed receipt with
+  the same provider ID, stage digest, and idempotency key without a duplicate
+  PR POST. A wrong provider ID is rejected before policy evaluation, stage load,
+  broker grant/mint, fake transport, gateway, or journal preparation; a config
+  slug mismatch also fails at binding construction. Focused suite: 181 tests
+  passed; full offline suite: 994 tests, 985 passed, 9 skipped;
+  `git diff --check` passed. All provider transports were deterministic fakes;
+  no credential, network, Docker, model call, real approval, external write,
+  branch, PR, push or deployment occurred. This proves local dual-identity
+  composition only, not production runtime wiring, human signer enrollment,
+  independent verifier trust or real PR publication. R2/MVP remain OPEN.
+
+### Batch ER — prepare an externally signable digest-bound approval request (R2 execution batch 105/105; 1 task)
+
+#### EXP-552 — export a reviewable unsigned approval request from a verified stage
+Статус: ACCEPTED
+Цель: let the human Control Plane review and sign the exact repository-change
+intent produced by the verified persisted stage, without the Worker or CLI
+obtaining a signing key or treating an unsigned request as approval.
+Гипотеза: a bounded read-only CLI can load one exact stage, bind its source slug
+to the already configured GitHub App target identity, derive branch/base-bound
+intent and approval metadata, then emit the full human review payload plus the
+exact canonical Ed25519 bytes to be signed out of band.
+Зависит от: EXP-547 signature contract; EXP-550/551 dual repository identity
+binding; `SQLiteStagedArtifactStore` and `stage_preview`.
+Среда исполнения: local/offline only. Read only the named SQLite stage and
+non-secret target metadata from an already supplied environment mapping; never
+open `.env`, private-key files, or credential stores.
+Внешняя цель: none. No provider/model request, credential value, signing
+operation, approval submission, network, Docker, GitHub write, branch/PR,
+push, deployment, testdev or Agent00X-sandbox.
+Разрешённые пути:
+- src/app_contracts/approval_request.py
+- src/app_contracts/publication_seed.py
+- src/app_contracts/stage_preview.py
+- scripts/create_approval_request.py
+- tests/test_approval_request.py
+- tests/test_stage_preview.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- input is one exact read-only verified stage digest, explicit branch/base,
+  approver identity, policy version and a validated fixed target binding;
+- the request binds stage digest, verified contents, repository source slug,
+  provider-scoped repository ID, base commit/branch, head branch, operation,
+  approver, policy, timestamps and approval ID into the canonical intent and
+  Ed25519 payload;
+- output explicitly says `unsigned`, `approval=not_created`,
+  `provider_write=false`; it is not accepted by policy and contains no
+  signature/private key/credential values;
+- CLI writes nothing, leaves source DB unchanged, has bounded deterministic JSON
+  output, rejects malformed/expired values and fails if config slug/provider ID
+  does not match the verified stage;
+- no API channel, broker, token minter, network client, model adapter or secret
+  source is imported by the CLI;
+- tests prove exact signed bytes are reproducible and mutation of any signed
+  intent/approval field changes the payload or digest; fake public keys only;
+- focused tests, full offline unittest suite and `git diff --check` pass; docs
+  state that human signing/enrollment and publication are separate future gates.
+Проверки:
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_approval_request tests.test_repository_binding tests.test_stage_preview -q`
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop if the request would perform signing, read a secret, or
+persist approval/publication state.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: added a read-only loader and bounded JSON approval
+  request builder for one exact verified stage. It binds source slug and
+  provider-scoped repository ID, stage and verified-content digests, base
+  commit/branch, head branch, operation, approver, policy, approval ID and
+  timestamps. The export contains the patch review and reproducible canonical
+  Ed25519 bytes, while explicitly reporting `unsigned`, `approval=not_created`
+  and `provider_write=false`; no key, signature, credential value, signing,
+  approval persistence or provider access is involved. The CLI consumes only
+  three non-secret target metadata fields and imports no credential, broker,
+  network, model or provider adapter. Fake tests prove source DB bytes remain
+  unchanged, target mismatch and malformed inputs fail closed, and mutations
+  of every intent and signed approval field change the payload/digest. Focused
+  suite: 19 tests passed; full offline suite: 1000 tests (991 passed, 9
+  skipped); `git diff --check` passed. No external service or credential was
+  used. Human signing/enrollment and real publication remain future gates;
+  R2/MVP remain OPEN.
+
+### Batch ES — round-trip signed approval into the exact policy gate (R2 execution batch 106/106; 1 task)
+
+#### EXP-553 — prove an out-of-band signer can authorize only the requested stage intent
+Статус: ACCEPTED
+Цель: exercise the unsigned approval artifact from EXP-552 through the existing
+Ed25519 verifier and DeterministicPolicy, without signing inside the product or
+performing any publication effect.
+Гипотеза: a detached signer holding an ephemeral test key can sign the exact
+exported bytes; the existing policy accepts that approval only for the same
+stage, intent and allowlisted test public key, and denies an intent mutation.
+Зависит от: EXP-547 signature contract and ACCEPTED EXP-552 approval request.
+Среда исполнения: local/offline only. Generate a fresh ephemeral test key in
+memory; no credential or user signing key is allowed.
+Внешняя цель: none. No network, Docker, model call, token mint, broker, Gateway,
+journal, GitHub write, branch/PR, push, deployment, testdev or sandbox.
+Разрешённые пути:
+- src/app_contracts/worker_cli.py
+- tests/test_approval_request.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- test code takes signing bytes exactly from `approval-request/v1` and creates
+  the external signature using a freshly generated ephemeral Ed25519 key;
+- `DeterministicPolicy` accepts the exact approval for the exact staged change,
+  intent and allowlisted public key, returning a digest-bound allow decision;
+- changing any signed intent binding without a corresponding valid signature
+  is denied by policy;
+- the test performs no downstream gate or side effect and clearly labels the
+  key as synthetic; it must not imply human identity or enrollment evidence;
+- focused approval-request/policy tests, full offline unittest suite and
+  `git diff --check` pass; docs keep real signer enrollment and publication
+  gates open.
+Проверки:
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_approval_request tests.test_authority -q`
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop if the test would read credentials, use a non-test signer,
+or reach any provider/effectful gate.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: a new regression constructs the approval request from
+  the exact verified stage, signs its emitted canonical Ed25519 bytes with a
+  fresh ephemeral test key, and passes that signed record through the existing
+  `DeterministicPolicy` using the matching allowlisted public key. Policy
+  returns `allow` with `digest-bound` for the exact stage and intent; changing
+  the signed intent binding without a corresponding signature returns `deny`
+  with approved-intent digest mismatch. The test stops at the policy decision;
+  no Gateway, Broker, journal, transport or provider effect runs. Focused suite:
+  40 tests passed; full offline suite: 1001 tests (992 passed, 9 skipped);
+  `git diff --check` passed. Ephemeral synthetic signer only; no real identity,
+  key enrollment, credentials or external service. R2/MVP remain OPEN.
+
+### Batch ET — carry the signed request through the local controlled mock chain (R2 execution batch 107/107; 1 task)
+
+#### EXP-554 — consume the externally signed stage request through mock PR receipt
+Статус: ACCEPTED
+Цель: prove the approval artifact exported in EXP-552 and policy-accepted in
+EXP-553 can traverse the full existing local controlled-publication path while
+remaining bound to the same persisted stage, repository target and intent.
+Гипотеза: a synthetic external signer can sign the exported canonical bytes;
+the resulting approval passes Approval→Policy→Gateway→Broker→SQLite journal→
+MockGitHubEndpoint and yields one digest-bound typed mock receipt.
+Зависит от: ACCEPTED EXP-550/551 repository binding, EXP-552 approval export
+and EXP-553 signer→policy round-trip; existing controlled local publication.
+Среда исполнения: local/offline only. Ephemeral test key in memory and a
+temporary SQLite stage/journal; no credential or user key.
+Внешняя цель: none. No provider/model request, network, Docker, token mint,
+GitHub App adapter, external write, branch/PR, push, deployment, testdev or
+Agent00X-sandbox.
+Разрешённые пути:
+- tests/test_approval_request.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- build one exact `StagedArtifact`, produce its unsigned request and sign only
+  the exported canonical bytes with a fresh ephemeral Ed25519 key;
+- pass the signed approval plus exact target-bound seed/intent through the
+  existing typed controlled local publication path, with a fixed slow-allow
+  Gateway and single-use synthetic grant;
+- receive exactly one mock PR receipt and a completed SQLite journal row bound
+  to the same repository ID, branch, base branch, stage digest and idempotency
+  key; there must be no GitHub App adapter or external transport;
+- an altered intent/signature fails before broker and mock endpoint effects;
+- focused integration tests, full offline unittest suite and `git diff --check`
+  pass; documentation continues to distinguish this from a real PR, human
+  identity/enrollment, production runtime and production durability.
+Проверки:
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_approval_request tests.test_controlled_publication -q`
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED. Stop if any real provider, credential, external write or
+non-test signer would be touched.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: the integration test builds one verified stage and
+  unsigned request, signs the exact exported canonical bytes with a fresh
+  ephemeral Ed25519 test key, and sends the signed approval through the typed
+  controlled local-publication path. Matching dual-identity seed/intent passes
+  Approval and `DeterministicPolicy`, then a slow-allow Gateway, single-use
+  in-memory Broker, SQLite journal and `MockGitHubEndpoint`; one typed receipt
+  and a completed journal row retain the exact provider ID, branch/base, stage
+  digest and idempotency key. A corrupted signature is denied before Gateway,
+  broker open or endpoint effects. Focused suite: 73 tests passed; full offline
+  suite: 1002 tests (993 passed, 9 skipped); `git diff --check` passed. No
+  GitHub App adapter, network, credential, model, Docker, branch or real PR was
+  used. This is a local chain only; real signer enrollment, production runtime
+  and real publication remain open; R2/MVP remain OPEN.
+
+### Batch EU — reconcile the operative R2 summary with accepted evidence (R2 execution batch 108/108; 1 task)
+
+#### EXP-555 — remove stale claims about live Worker evidence and approval state
+Статус: ACCEPTED
+Цель: ensure the top-level implementation summary and current open-gate list in
+`docs/27-implementation-status.md` agree with accepted EXP-520/548 and
+EXP-552—554 evidence, without overstating MVP completion.
+Гипотеза: replacing stale “no live Worker call/evidence” claims with the exact
+current evidence and remaining gates will make the operational status accurate
+and preserve the distinction between synthetic proof and production trust.
+Зависит от: accepted Batch DK / EXP-520, Batch EN / EXP-548, Batch ER/ES/ET /
+EXP-552—554; current R2 exit matrix in document 27.
+Среда исполнения: local documentation-only. Do not inspect secrets or run any
+external service.
+Внешняя цель: none.
+Разрешённые пути:
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- operative summary states one live DeepSeek Worker proposal and exact-stage
+  replay evidence, without implying repeatable production execution;
+- current gates no longer claim live-call evidence is absent and instead
+  retain missing independent verifier trust, trusted human approval/enrollment,
+  provider/account spend cap, production runtime, durable recovery and real PR;
+- explicitly state that no persisted SQLite stage database is present in the
+  current project working tree, so the approval CLI has not been run against
+  the historical EXP-520 stage;
+- historic experiment entries remain intact and clearly historical;
+- `git diff --check` and direct consistency searches pass; no code/runtime or
+  external operation occurs.
+Проверки:
+- `git diff --check`
+- `rg -n "live-call evidence отсутствует|не live Worker|LLM Worker.*не подтверждены|EXP-520|EXP-548|SQLite.*stage" docs/27-implementation-status.md`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: the operative summary now records exactly one live
+  DeepSeek Worker proposal (EXP-520), its no-model replay with bounded HTTP/DB
+  verifier PASS and SQLite readback (EXP-548), the unsigned approval-request
+  CLI (EXP-552), and the synthetic signer→policy→mock-chain evidence
+  (EXP-553/554). The current open-gate list no longer claims that live-call
+  evidence is absent; it distinguishes the one-shot result from repeatable
+  production execution, records that no persisted EXP-520 SQLite stage exists
+  in this working tree, and retains missing verifier/provenance/signer/runtime/
+  recovery/real-PR gates. Historical experiment entries were not changed.
+  `git diff --check` passed; the direct consistency search confirmed the
+  operative summary and open-gate section, with older “not live Worker” claims
+  limited to explicitly historical synthetic experiments. No code, runtime,
+  credential or external service was touched. R2/MVP remain OPEN.
+
+### Batch EV — make the approver allowlist explicit in policy (R2 execution batch 109/109; 1 task)
+
+#### EXP-556 — require a distinct allowed_approver_ids policy set
+Статус: ACCEPTED
+Цель: make the implementation match the documented EXP-546 policy contract by
+requiring an explicit approver-ID allowlist in addition to trusted public keys.
+Гипотеза: a separate non-empty `allowed_approver_ids` set, constrained to IDs
+with configured public keys, makes the identity-claim allowlist an explicit
+policy input and rejects unlisted IDs before signature verification/effects.
+Зависит от: EXP-546 allowlist intent; EXP-547 Ed25519 trust-key verification;
+EXP-552—554 approval-request signature interoperability.
+Среда исполнения: local/offline. Synthetic test keys only; no credential,
+human key, key enrollment, network, Docker or provider operation.
+Внешняя цель: none.
+Разрешённые пути:
+- src/app_contracts/authority.py
+- src/app_contracts/stage_approval.py
+- tests/test_authority.py
+- tests/test_approval_request.py
+- tests/test_controlled_publication.py
+- tests/test_local_publication_chain.py
+- tests/test_remote_snapshot_pipeline.py
+- tests/test_broker.py
+- tests/test_adversarial.py
+- tests/test_actuator.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- `PolicyConfig` requires an explicit non-empty set/frozenset of valid
+  `allowed_approver_ids`; no implicit derivation from the key map;
+- every allowlisted ID has a configured 32-byte Ed25519 public key, while
+  configured-but-not-allowlisted keys cannot authorize policy;
+- missing/malformed/unlisted `approver_id` is rejected before Gateway/Broker/
+  journal/provider effects, with deterministic `approver-not-allowlisted`;
+- all runtime and test `PolicyConfig` construction sites specify the set;
+- focused authority/approval/publication tests, full offline suite and
+  `git diff --check` pass; docs state that an allowlisted claim plus key proof
+  still does not establish human identity or enrollment trust.
+Проверки:
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_authority tests.test_approval_request tests.test_controlled_publication -q`
+- `PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: added required `PolicyConfig.allowed_approver_ids`,
+  validated as a non-empty set/frozenset of non-empty strings and frozen on
+  construction. Every allowlisted ID must have a 32-byte configured public
+  key; configured-but-not-allowlisted keys are insufficient. `decide()` now
+  checks the explicit set before signature verification and returns the stable
+  `approver-not-allowlisted` denial. All runtime and test construction sites
+  provide the field; tests cover malformed/empty/unbacked sets and a valid key
+  excluded by the allowlist, including controlled-path rejection before
+  Gateway/Broker/journal/mock effects. Focused suite: 108 passed; full offline
+  suite: 1004 tests (995 passed, 9 skipped); `git diff --check` passed. Only
+  synthetic keys; no identity enrollment, credential, network or provider
+  effect. R2/MVP remain OPEN.
+
+### Batch EW — recompute the exact Git tree from the complete snapshot listing (R2 execution batch 110/110; 1 task)
+
+#### EXP-557 — verify the recursive tree OID from entry paths, modes and object IDs
+Статус: ACCEPTED
+Цель: independently recompute the Git tree object IDs represented by a complete
+recursive GitHub tree listing, and reject a listing whose root tree OID does not
+match the commit claim.
+Гипотеза: validating the Merkle tree structure in addition to each blob object ID
+detects omitted, substituted, or path/mode-rebound entries before content is
+used, while preserving the evidence label `github_rest_api_claim`.
+Зависит от: accepted EXP-405 snapshot records and existing per-blob Git object
+SHA validation.
+Среда исполнения: local/offline. Synthetic fixtures only; do not fetch a
+repository, call GitHub, use credentials, or start Docker/model/runtime work.
+Внешняя цель: none.
+Вне scope: commit-object reconstruction/signature verification, authorship,
+remote provenance, source identity attestation, changing limits or adding
+unsupported Git modes.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- recompute each subtree OID and the root OID using Git's exact tree-object
+  encoding (mode, UTF-8 name, NUL, raw 20-byte OID; Git tree ordering semantics);
+- require every non-root tree entry to correspond exactly to the paths beneath
+  it, reject missing/duplicate/orphaned trees and file/directory collisions;
+- a valid nested synthetic tree is accepted and mutations to path, mode, blob
+  OID, or a missing entry fail with a bounded stable error;
+- snapshot evidence remains explicitly `github_rest_api_claim`; docs state
+  that recomputing a matching tree does not verify the commit object's bytes,
+  authorship, signed provenance, or the GitHub/TLS trust path;
+- targeted tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_github_snapshot tests.test_remote_snapshot_pipeline tests.test_pinned_snapshot -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если проверка требует сети, Docker, credentials или изменения
+вне разрешённых путей.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: full recursive GitHub tree claims now recompute the
+  exact Git SHA-1 of each subtree and the root from path/mode/object IDs, with
+  Git's directory ordering and serialized mode. Nested synthetic fixtures and
+  path/mode/blob-ID/subtree/missing-entry mutation tests pass; malformed,
+  duplicate, orphan and oversized listings fail closed. Focused snapshot,
+  pipeline and local pin suite: 79 tests passed, 1 skipped. Full offline suite:
+  1005 tests (996 passed, 9 skipped); `git diff --check` clean. An initial
+  system-`python3` attempt could not import `cryptography`; the project runtime
+  rerun passed. No network, credentials, Docker, model, provider write or
+  commit. Recomputed tree integrity does not verify commit-object bytes,
+  authorship, signed provenance or GitHub/TLS trust; evidence remains
+  `github_rest_api_claim`. R2/MVP remain OPEN.
+
+### Batch EX — verify an externally signed approval against its exact saved stage (R2 execution batch 111/111; 1 task)
+
+#### EXP-558 — add a read-only signed-approval verification CLI
+Статус: ACCEPTED
+Цель: consume a signed approval artifact for the exact unsigned request emitted
+by EXP-552, rebuild that request from the persisted verified stage, and evaluate
+the detached signature through the existing deterministic policy.
+Гипотеза: a bounded local CLI can establish cryptographic and digest-binding
+validity for a supplied public-key trust profile without signing, mutating stage
+state, or performing any downstream effect.
+Зависит от: accepted EXP-552 unsigned request, EXP-553 signature/policy
+interoperability, and EXP-556 explicit approver allowlist.
+Среда исполнения: local/offline. Test-only ephemeral signer in tests; no
+credentials, human private key, network, Docker, model call or provider effect.
+Внешняя цель: none.
+Вне scope: human identity/enrollment, whether a profile was supplied by a
+trusted administrator, approval persistence, Gateway/Broker/journal, provider
+write/branch/PR, push, deployment or live signing.
+Разрешённые пути:
+- src/app_contracts/signed_approval.py
+- scripts/verify_signed_approval.py
+- tests/test_signed_approval.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- accept only a bounded versioned unsigned request, a signed approval with
+  exactly the same canonical approval fields plus signature, and a bounded
+  explicit trust profile with policy version, target binding, repository/
+  actuator allowlists, approver IDs and hex-encoded 32-byte raw Ed25519 public
+  keys;
+- reopen the requested stage read-only, rebuild the complete approval request
+  using the profile's source/provider binding and request's explicit branch,
+  base, approval ID, approver ID, policy version and approved_at; require exact
+  request equality before signature verification;
+- existing policy returns digest-bound allow only for the exact live signed
+  request and configured allowlisted public key; altered stage, request,
+  signature, key, policy or expiry fails closed;
+- output is bounded and states `provider_write=false`,
+  `identity_authenticated=false`, and that the trust profile is operator-
+  supplied and not enrollment evidence; no key/signature/payload is echoed;
+- CLI and API are read-only: source SQLite bytes remain unchanged; no
+  credential, signing key, network/model/provider adapter, Gateway, Broker,
+  journal or endpoint is imported/called;
+- focused tests, full offline suite and `git diff --check` pass; docs preserve
+  human enrollment, independent verifier, runtime composition and publication
+  as open gates.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_approval tests.test_approval_request tests.test_authority -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись при попытке любого effectful gate, необходимости credentials/
+signing secret или изменениях вне разрешённых путей.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: added a bounded, read-only CLI that accepts an
+  EXP-552 request, a strict `signed-approval/v1` envelope, the exact saved
+  stage digest and an explicit `approval-trust-profile/v1`. It rebuilds the
+  complete request from SQLite stage plus source/provider binding and explicit
+  action metadata, requires exact canonical request/signed-field equality, and
+  evaluates the signature, expiry, policy version and explicit approver
+  allowlist through `DeterministicPolicy`. Result is `policy_allowed` or
+  `denied`, with `identity_authenticated=false` and `provider_write=false`;
+  the operator-supplied profile is not authenticated enrollment evidence.
+  Tests cover exact allow, changed request/stage binding/signature/key,
+  unlisted approver, expiry, malformed/duplicate JSON, symlink inputs, CLI
+  redaction, wrong stage/target binding and unchanged stage DB. Focused suite:
+  53 passed; full offline suite: 1016 tests (1007 passed, 9 skipped);
+  `git diff --check` passed.
+  No credential, real private key, network, Gateway/Broker, journal or provider
+  effect. The historic live Worker stage DB is unavailable at its recorded
+  paths, so only synthetic evidence was used. R2/MVP remain OPEN.
+
+### Batch EY — bind successful runtime evidence to its durable stage locator (R2 execution batch 112/112; 1 task)
+
+#### EXP-559 — report the explicit SQLite stage path only after verified persistence
+Статус: ACCEPTED
+Цель: make a successful remote runtime evidence record actionable by reporting
+the exact caller-supplied SQLite stage path that contains the verified
+digest-bound artifact.
+Гипотеза: exposing the runtime path only on successful verified execution lets
+later read-only approval/review tooling reopen the stage without reconstructing
+it from logs, while synthetic/injected profiles remain free of host-path
+disclosure.
+Зависит от: accepted durable stage exact-readback pipeline and EXP-552/558
+read-only stage consumers.
+Среда исполнения: local/offline synthetic tests only. No public API request,
+Worker/model, Docker, credentials, key use or provider call.
+Внешняя цель: none.
+Вне scope: creating stage directories automatically, choosing a default path,
+retention/cleanup policy, external effects or any provider publication.
+Разрешённые пути:
+- src/app_contracts/worker_cli.py
+- tests/test_worker_cli.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- explicit `run_remote_snapshot_with_runtime(stage_database_path=...)` is
+  carried into the injected execution profile and successful evidence reports
+  the same absolute path only when status is `verified`;
+- fail closed before snapshot/network setup for relative, symlink or directory
+  locators; if a verified result claims a locator, it must be a regular
+  non-symlink SQLite file;
+- direct synthetic profiles with no explicit locator omit the field entirely;
+- failed executions never report a successful stage locator; no task prompt,
+  credential, signature or target content is added to evidence;
+- focused runtime/evidence tests, full offline suite and `git diff --check`
+  pass; docs tell operators to supply a stable path outside auto-cleaned temp
+  directories and retain the existing production-durability caveat.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_worker_cli -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись при любом внешнем вызове или изменении вне разрешённых путей.
+Результат Control Plane:
+- ACCEPTED 2026-10-07: remote runtime profile now carries the caller-supplied
+  absolute stage path; only verified evidence reports it, after an immutable
+  read-only SQLite open. EXP-560 regression coverage confirms this mode does not
+  leave WAL/SHM sidecars that would block the read-only approval consumer.
+  Relative, symlink and directory locators fail during profile
+  validation before snapshot intake. Failed evidence and synthetic profiles
+  without an explicit locator omit the path. Focused suite: 39 tests (2 skipped);
+  full offline suite: 1018 tests (1009 passed, 9 skipped); `git diff --check`
+  clean. README and MVP/status documents explain stable-path usage and retain
+  the production durability/recovery caveat. No network, credentials, model,
+  Docker, provider write, commit, push or deployment. R2/MVP remain OPEN.
+
+### Batch EZ — verify the persisted-stage handoff to unsigned approval review (R2 execution batch 113/113; 1 task)
+
+#### EXP-560 — consume the runtime evidence locator and digest in the read-only approval CLI
+Статус: ACCEPTED
+Цель: prove that a verified runtime evidence record's stage path and staged
+change digest can be passed together to the existing approval-request CLI, which
+reopens the exact persisted artifact and emits an unsigned, digest-bound review
+request without changing the stage.
+Гипотеза: the explicit locator added in EXP-559 is sufficient to bridge local
+runtime evidence to the existing human-review boundary without reconstructing
+stage content or introducing a new trust/effect path.
+Зависит от: accepted EXP-552/558 approval request and signed-approval consumers;
+accepted EXP-559 explicit stage locator in verified runtime evidence.
+Среда исполнения: local/offline synthetic fixtures only. No public API, Worker,
+model, Docker, credentials, keys or provider calls.
+Внешняя цель: none.
+Вне scope: live stage recovery, new approval/signature semantics, credential
+handling, runtime/provider invocation, Gateway/Broker, branch/PR, push/deployment.
+Разрешённые пути:
+- src/app_contracts/worker_cli.py
+- tests/test_approval_request.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- persist a synthetic verified artifact in a temporary SQLite stage, create
+  verified execution evidence with that exact path and result digest, and pass
+  those two evidence fields unchanged to the approval-request CLI;
+- resulting request is `unsigned`, `approval=not_created`,
+  `provider_write=false`, and its stage digest equals the execution evidence;
+- source stage bytes remain unchanged; altered/missing digest or unavailable
+  locator fails closed without emitting an unsigned request;
+- validating the locator does not create SQLite WAL/SHM sidecars or otherwise
+  make the same stage unavailable to the read-only approval CLI;
+- tests make no network/model/credential/provider calls and do not sign or
+  publish; documentation states this proves a local handoff only, not human
+  identity, production durability or publication;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_approval_request -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись при изменениях вне synthetic local stage и перечисленных путей.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: persisted a synthetic verified artifact, generated
+  runtime evidence using its exact SQLite path and staged digest, and passed
+  those fields unchanged to the read-only approval-request CLI. The CLI reopened
+  that stage and emitted only an unsigned request with `approval=not_created`
+  and `provider_write=false`; stage bytes stayed identical. A changed digest
+  failed closed with no stdout/request. Regression coverage also verifies
+  immutable SQLite evidence validation creates no WAL/SHM sidecars, so the same
+  path remains readable by the approval CLI. Focused suite: 48 tests (2 skipped);
+  full offline suite: 1019 tests (1010 passed, 9 skipped); `git diff --check`
+  clean. No network, Worker/model, credentials, keys, Docker, signing, provider
+  call/write, commit, push or deployment. Synthetic local handoff only;
+  R2/MVP remain OPEN.
+
+### Batch FA — verify the persisted evidence through the signed approval gate (R2 execution batch 114/114; 1 task)
+
+#### EXP-561 — carry runtime evidence through unsigned request to policy-verified signature
+Статус: ACCEPTED
+Цель: exercise one local chain in which the path and digest from verified
+runtime evidence feed the read-only approval-request CLI, then the resulting
+request, synthetic detached signature and operator-supplied public trust profile
+are checked against the same exact persisted stage by the signed-approval CLI.
+Гипотеза: local evidence path + staged digest preserve exact binding across both
+read-only CLIs and the deterministic policy boundary without creating an
+approval record or downstream provider effect.
+Зависит от: accepted EXP-552/558 and EXP-559/560 handoff; no external credential
+or public provider state is required.
+Среда исполнения: local/offline synthetic verified fixture; test-only signing
+key. No public API, Worker/model, Docker, real credentials or provider.
+Внешняя цель: none.
+Вне scope: human identity/enrollment, production trust-profile governance,
+approval persistence, Gateway/Broker dispatch, branch/PR, push or deployment.
+Разрешённые пути:
+- tests/test_signed_approval.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- generate verified evidence from a synthetic result and exact SQLite stage;
+- pass its stage path and digest to the approval-request CLI and use that
+  emitted request as the input signed with the test-only signer;
+- the signed-approval CLI returns policy allow for the exact stage, with
+  `identity_authenticated=false` and `provider_write=false`;
+- stage bytes remain unchanged and no Gateway, Broker, journal, provider or
+  publication adapter is called; changed stage/request/signature remains denied
+  by existing negative tests;
+- documentation explicitly calls this synthetic local composition, not human
+  enrollment, production approval or live publication;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_approval -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись при отсутствии точного synthetic stage или попытке real signing/provider effect.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: used the exact SQLite path and staged digest from
+  synthetic verified runtime evidence to generate the unsigned approval request;
+  the test-only signer signed that emitted request, and the read-only signed-
+  approval CLI returned policy allow against the same stage. Stage bytes remained
+  unchanged; output retained `identity_authenticated=false` and
+  `provider_write=false`. Focused signed-approval suite: 12 passed; full offline
+  suite: 1020 tests (1011 passed, 9 skipped); `git diff --check` clean. No live
+  Worker/model, credential, network, Docker, production signer, Gateway/Broker,
+  journal or provider effect. This is synthetic policy evidence only; R2/MVP
+  remain OPEN.
+
+### Batch FB — carry signed digest-bound approval through local mock publication (R2 execution batch 115/115; 1 task)
+
+#### EXP-562 — exercise verified approval through Gateway, Broker, journal and mock PR
+Статус: ACCEPTED
+Цель: prove that the exact test-signed approval created from the request in
+EXP-561, after its read-only signature/policy verification, can pass the
+existing controlled publication gates and produce one digest-bound local mock
+PR receipt with a completed journal.
+Гипотеза: re-evaluating the exact signed approval inside Policy/Gateway/Broker
+gates binds mock publication to the same persisted stage without turning the
+read-only verifier into a provider capability.
+Зависит от: accepted EXP-541 controlled local publication chain and accepted
+EXP-561 runtime evidence → request → signed-approval verification chain.
+Среда исполнения: local/offline synthetic stage, deterministic test signer,
+in-memory MockGitHubEndpoint and SQLite publication journal only. No network,
+Worker/model, credentials, Docker or real provider.
+Внешняя цель: none.
+Вне scope: live GitHub, publication CLI, human identity/enrollment,
+operator-profile governance, branch/PR, push or deployment outside mock.
+Разрешённые пути:
+- tests/test_signed_approval.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- start with the same synthetic persisted verified artifact and runtime
+  evidence path/digest; generate request via the read-only approval CLI and
+  sign with the test-only signer;
+- the read-only signed-approval CLI must return exact-stage policy allow before
+  the test invokes `run_controlled_local_publication` with that signed approval;
+- independently re-evaluated Policy, slow Gateway, single-use in-memory Broker,
+  digest-only SQLite journal and `MockGitHubEndpoint` produce exactly one
+  matching receipt and completed journal for the same digest/branch/base;
+- stage bytes remain unchanged; no live adapter, credential value, real write,
+  push, deployment or commit is used;
+- docs retain the boundary: local mock composition is not human enrollment,
+  real provider publication, independent verifier trust or production recovery;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_approval -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись при несовпадении signed approval/stage или любой попытке real-provider effect.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: after the signed-approval CLI returned exact-stage
+  policy allow, the same test-signed approval passed the controlled local path;
+  Policy re-evaluated the approval and stage digest, Gateway returned slow allow,
+  and the single-use in-memory Broker opened one mock channel. The digest-only
+  SQLite journal completed with exactly one matching `MockGitHubEndpoint`
+  receipt for the same repository, branch, base and staged digest. Source stage
+  bytes were unchanged. Focused signed-approval suite: 12 passed; full offline
+  suite: 1020 tests (1011 passed, 9 skipped); `git diff --check` clean. No live
+  provider, credentials, key material, network, Worker/model, Docker, push,
+  deployment or commit. This proves local mock composition only, not production
+  approval, trust or publication. R2/MVP remain OPEN.
+
+### Batch FC — add an operator CLI for signed-stage mock publication (R2 execution batch 116/116; 1 task)
+
+#### EXP-563 — consume a verified signed approval and run only the controlled local mock path
+Статус: ACCEPTED
+Цель: provide one reproducible operator CLI that accepts the exact saved stage,
+unsigned request, detached signed approval and explicit trust profile; verifies
+them together; then re-evaluates the same signed approval inside the existing
+Policy → Gateway → Broker → journal gates and emits one local mock PR receipt.
+Гипотеза: a small local-only orchestrator closes the current operator handoff
+gap without converting the read-only verifier into a provider capability or
+claiming that an operator-supplied key profile authenticates human identity.
+Зависит от: accepted EXP-558 signed-approval verification, EXP-560 stage path
+handoff and EXP-562 local signed-approval controlled mock composition.
+Среда исполнения: local/offline synthetic fixtures only; `MockGitHubEndpoint`,
+`InMemoryCredentialBroker`, temporary SQLite journal and test-only signer.
+No network, public API, Worker/model, Docker, credentials or real provider.
+Внешняя цель: none.
+Вне scope: live GitHub, branch/PR outside the in-memory mock, persistent
+publication journal, human enrollment, trusted profile distribution, real
+credential source, push, deployment or recovery guarantees.
+Разрешённые пути:
+- src/app_contracts/signed_approval.py
+- src/app_contracts/signed_mock_publication.py
+- scripts/publish_signed_stage_mock.py
+- tests/test_signed_mock_publication.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- refactor signed verification to expose a bounded internal verified result
+  (exact artifact, request, approval, binding, policy config and verdict) while
+  preserving the read-only verifier CLI's existing output and behavior;
+- new CLI requires explicit database path/digest/request/signature/profile and
+  uses only the verified stage and approval; no user-provided write endpoint or
+  provider adapter can be selected;
+- deny, expired, mismatched, malformed or unlisted approval stops before
+  Gateway/Broker/mock endpoint; allow re-runs deterministic policy and only
+  proceeds through slow Gateway, one-use in-memory Broker and digest-only
+  SQLite journal to one matching `MockGitHubEndpoint` receipt;
+- bounded output states `destination=in_memory_mock_only`,
+  `external_write=false`, `identity_authenticated=false`,
+  `trust_profile_origin=operator_supplied_unverified`; no signature or payload
+  is echoed and stage/request/profile files remain unchanged;
+- docs state this is local mock composition only and leave human enrollment,
+  production trust, real provider, production recovery and publication gates open;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_mock_publication tests.test_signed_approval -q
+- PYTHONPATH=/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись при любом выборе реального provider, credential или внешнего endpoint.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: `scripts/publish_signed_stage_mock.py` now reopens and
+  verifies the exact persisted stage/request/signed envelope/operator profile,
+  then runs only the existing deterministic Policy → slow Gateway → one-use
+  in-memory Broker → temporary digest-only SQLite journal → MockGitHubEndpoint
+  path. It checks one matching completed receipt and emits bounded metadata
+  with `destination=in_memory_mock_only`, `external_write=false`,
+  `identity_authenticated=false` and `trust_profile_origin=operator_supplied_unverified`.
+  Invalid signature and policy denial stop before the controlled gates; inputs
+  remain byte-identical on allow. Focused suite: 15 passed. Full offline suite:
+  1023 tests (1014 passed, 9 skipped); `git diff --check` clean. No network,
+  Worker/model, credentials, Docker, real provider, commit, push or deployment.
+  This is an operator local-mock handoff only; R2/MVP remain OPEN.
+
+### Batch FD — add a lazy process-injected credential source (R2 execution batch 117/117; 1 task)
+
+#### EXP-564 — resolve one named credential only when the bounded Worker calls its source
+Статус: ACCEPTED
+Цель: provide a cross-platform callable adapter for one credential supplied to
+the process by an already-approved external secret manager, without discovering,
+reading or persisting credentials from project files or other workspaces.
+Гипотеза: a lazy, single-name process-input adapter lets the existing bounded
+DeepSeek channel use a separately approved source in a later one-call card,
+while offline tests can prove that construction and diagnostics do not expose
+or fetch the secret.
+Зависит от: accepted EXP-474 `CredentialSource` contract and EXP-563 bounded
+operator CLI. No external state or secret value is required for this task.
+Среда исполнения: local/offline synthetic mappings and unit tests only. No
+network, public API, Worker/model, Docker, real credential or provider.
+Внешняя цель: none.
+Вне scope: OS vault adapters, lookup in another project, `.env` parsing,
+shell-based secret retrieval, live provider calls, provider/account spend caps,
+provider writes, branch/PR, push or deployment.
+Разрешённые пути:
+- src/app_contracts/credential_source.py
+- tests/test_credential_source.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- README.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- add an explicit adapter that receives a mapping and one validated variable
+  name; it performs no lookup at construction and reads only that exact name
+  when called;
+- reject missing, blank or malformed values with a stable payload-free error;
+- repr/str and exceptions never contain the credential value or mapping contents;
+- tests use only synthetic mappings and prove lazy single-name access, no
+  mutation/persistence, and safe diagnostics;
+- docs say process injection is only a transport boundary, not encrypted
+  storage, same-user process isolation or an OS vault; a later live call needs
+  its own exact card, approved source and fresh user confirmation;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_credential_source tests.test_deepseek_http_channel tests.test_worker_cli -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если для проверки требуется прочитать реальный secret, вызвать
+провайдера или обращаться к другому проекту.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: `ProcessEnvironmentCredentialSource` now requires an
+  explicitly supplied mapping and one validated variable name; construction
+  is lazy, the callback reads only that name, and stable errors/repr/str omit
+  both values and mapping contents. Synthetic tests cover missing, malformed,
+  lookup-failure and no-mutation cases. Focused suite: 69 tests (66 passed,
+  3 skipped); full offline suite: 1028 tests (1019 passed, 9 skipped);
+  `git diff --check` clean. No ambient environment lookup, `.env`, network,
+  real secret, Worker/model, Docker, provider call/write, commit, push or
+  deployment. This is process input only, not a protected vault; R2/MVP remain
+  OPEN.
+
+### Batch FE — expose the fixed remote Worker-to-stage runtime as an operator CLI (R2 execution batch 118/118; 1 task)
+
+#### EXP-565 — add an interactive fixed-target runner without executing it in tests
+Статус: ACCEPTED
+Цель: provide a reproducible operator command that composes the existing
+fixed pinned-snapshot DeepSeek Worker, bounded Docker target, Docker verifier,
+and exact-readback SQLite stage into one runtime invocation.
+Гипотеза: a fixed operator entrypoint with an explicit one-run confirmation
+closes the runtime assembly gap and can later regenerate the missing historical
+live stage, while keeping target, model, endpoint, paths, commands and verifier
+outside user-controlled CLI options.
+Зависит от: accepted EXP-520/548 live proposal/replay evidence, EXP-559 stable
+stage locator, EXP-564 lazy single-name process source, and the existing
+`run_remote_snapshot_with_runtime` composition.
+Среда исполнения: local/offline synthetic CLI tests only. Every network,
+credential lookup, model request, Docker execution and stage write must be
+replaced by test doubles. Do not invoke the new operator command during this
+task. No public API, Worker/model, Docker, real credential or provider.
+Внешняя цель (if a future card authorizes execution): fixed public
+`SoldatovAlexander/brainbooster_full_v11` at the commit/tree/content digest in
+`brainbooster_target_profile.py`; anonymous GitHub read-only snapshot requests
+and one DeepSeek Chat Completions request to `https://api.deepseek.com/chat/completions`.
+Вне scope: provider writes, branch/PR, push, deployment, retries, selecting a
+different model/repository/endpoint/image, opening credential files, or
+claiming a provider-enforced USD spend cap.
+Разрешённые пути:
+- scripts/run_pinned_deepseek_worker.py
+- tests/test_pinned_deepseek_worker_cli.py
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- command accepts only a new absolute SQLite stage path; reject relative,
+  existing, symlink or invalid-parent paths before confirmation or network;
+- show fixed repository, commit, one-file scope, model/endpoint, one-attempt
+  limit and stage destination; reserve permit `EXP-566` and require exact
+  interactive phrase `RUN EXP-566 ONCE`
+  before readiness, network, credential lookup or file creation;
+- use only `ProcessEnvironmentCredentialSource(environ, "AI_PROCESS_API")`,
+  fixed pinned image/verifier/task profile and existing runtime permit; never
+  parse `.env`, expose the value, accept endpoint/model/target overrides or
+  retry the Worker request;
+- tests inject synthetic mappings, readiness, runtime and input; prove cancel
+  and invalid paths cause zero readiness/runtime/source lookups, acceptance
+  issues one permit and forwards the exact stage path, and all diagnostics are
+  payload-free;
+- docs state a future live call requires a distinct exact card and fresh
+  user confirmation, the source must be injected by an approved manager, the
+  per-channel one-call limit is not an account-level spend cap, and verifier
+  remains same-host trust rather than independent trust;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_pinned_deepseek_worker_cli tests.test_credential_source tests.test_worker_cli -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если тест потребует сеть, реальный secret, Worker/model, Docker,
+внешнюю запись или запуск operator command.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added the fixed operator command
+  `scripts/run_pinned_deepseek_worker.py`. It rejects invalid/new-stage paths,
+  inspects only the pinned target/verifier images locally, displays the exact
+  repository pin, file scope, endpoint/model and output path, then requires
+  `RUN EXP-566 ONCE` before anonymous readiness/snapshot traffic or lazy source
+  use. The runtime receives only the fixed target profile, one-use permit,
+  `ProcessEnvironmentCredentialSource(os.environ, "AI_PROCESS_API")`, and new
+  stage path; one-request behavior is inherited from the bounded channel. Focused
+  suite: 49 tests (47 passed, 2 skipped); full offline suite: 1033 tests
+  (1024 passed, 9 skipped); `git diff --check` clean. Tests substituted Docker,
+  readiness, runtime and input; the operator command was not run. No secret,
+  network, Worker/model, Docker, external write, commit, push or deployment.
+  The command is not a provider spend cap or identity proof; EXP-566 still needs
+  a distinct exact live-run card and fresh user authorization. R2/MVP remain OPEN.
+
+### Batch FF — regenerate a persisted live Worker stage (R2 execution batch 119/119; 1 task)
+
+#### EXP-566 — one fresh pinned-snapshot DeepSeek proposal and exact SQLite stage
+Статус: DRAFT — awaiting fresh user authorization.
+Цель: reproduce one live Worker proposal for the exact public repository pin
+and persist its verified `StagedArtifact` for local review and later approval.
+Гипотеза: the fixed operator runner can recover the missing EXP-520/548 SQLite
+evidence without widening target scope or adding any repository/provider write.
+Зависит от: accepted EXP-565 runner. The fixed CLI's
+`TerminalPromptCredentialSource` requests hidden terminal input only after the
+exact run confirmation. Record this source without the value; do not read/copy
+credentials from another workspace or `.env`.
+Среда исполнения: local operator CLI plus current pinned Docker images. No
+GitHub authentication; public snapshot GETs only. One DeepSeek request only
+after this card is READY and fresh user confirmation is recorded.
+Внешняя цель: (1) `https://api.github.com/rate_limit` and pinned anonymous GETs
+for `SoldatovAlexander/brainbooster_full_v11`, commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`
+(one rate-limit + commit + tree + 23 blob reads; at most 26 anonymous GETs);
+(2) one `POST https://api.deepseek.com/chat/completions`, model
+`deepseek-flash`, max output 4096 tokens, no retries. No provider write.
+Docker target image: `sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`;
+verifier image: `sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a`;
+verifier code digest: `sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a`.
+Результат сохраняется только в новом SQLite stage file:
+`/Volumes/DATA/Проекты/Агент 00Х/exp566-stage.sqlite3` (must not already exist).
+Вне scope: GitHub App credentials, authenticated GitHub calls, code changes to
+the target, branch/PR creation, push, deployment, retries, a second model call,
+provider account changes or claiming independent verifier trust.
+Разрешённые пути:
+- scripts/run_pinned_deepseek_worker.py (read/execute only)
+- /Volumes/DATA/Проекты/Агент 00Х/exp566-stage.sqlite3 (new experiment evidence)
+Разрешённые действия:
+- local inspect of only the pinned target/verifier Docker images; no pull/build;
+- anonymous GitHub rate-limit/pinned-snapshot GETs listed above;
+- one DeepSeek POST listed above, only after fresh user authorization and exact
+  CLI phrase `RUN EXP-566 ONCE`;
+- create/read back the named new SQLite stage. No further network/model calls.
+Лимит: maximum one provider request, no retry; the channel caps output at 4096
+tokens and the Worker caps rendered user content at 20,000 UTF-8 bytes. As of
+2026-10-08, the official Flash peak rates are $0.30/1M uncached input tokens and
+$1.20/1M output tokens; a conservative planning estimate of 25,000 input plus
+4,096 output tokens is about $0.013 for one request. This is not an enforced
+provider/account spend cap and prices can change; recheck official rates before
+execution at https://api-docs.deepseek.com/quick_start/pricing/ and do not
+represent the estimate as a hard $1 cap.
+Критерии приёмки:
+- local preflight finds the exact pinned images and fresh GitHub readiness has
+  at least the required remaining quota before snapshot intake;
+- target, commit/tree/content digest and 23-file full snapshot match the pin;
+- exactly one DeepSeek request is made and only `backend/routes.py` is proposed;
+- pinned target execution and Docker verifier return PASS; stage save and
+  exact-digest readback succeed at the named path;
+- evidence records provider/model/request count, repository pin, candidate and
+  stage digests, verifier identity/result and stage path, without credential,
+  secret-bearing prompt data or unbounded provider response;
+- no branch, PR, provider write, commit, push or deployment; report same-host
+  verifier and unauthenticated GitHub API/TLS provenance limits.
+Проверки (only after status is READY and fresh confirmation):
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/run_pinned_deepseek_worker.py "/Volumes/DATA/Проекты/Агент 00Х/exp566-stage.sqlite3"`
+  then type exactly `RUN EXP-566 ONCE` at its prompt;
+- take the resulting staged digest from bounded verified CLI evidence and run
+  `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m app_contracts.stage_preview "/Volumes/DATA/Проекты/Агент 00Х/exp566-stage.sqlite3" <staged-change-digest>`
+  for a read-only exact-digest preview; this makes no network/model call;
+- compare preview pin, path, verifier PASS and digest to CLI evidence; verify
+  the output DB remains present and only the named stage artifact was created.
+Do not run any command while this card is DRAFT.
+Commit: DENIED.
+Остановись до readiness/network call пока не получены одновременно свежая
+авторизация пользователя и READY status; hidden terminal credential entry is
+allowed only after the exact EXP-566 confirmation phrase. Do not request or
+accept the secret through chat or tool arguments.
+
+### Batch FG — remove unsafe secret-file sourcing guidance (R2 execution batch 120/120; 1 task)
+
+#### EXP-567 — document metadata-only GitHub App preflight without sourcing `.env`
+Статус: ACCEPTED
+Цель: ensure project documentation never tells operators to source the full
+GitHub App environment file for a metadata-only preflight.
+Гипотеза: removing broad shell loading avoids placing private-key values or
+unrelated secrets into the shell environment while keeping the existing
+preflight's explicit no-network/no-key-read boundary understandable.
+Зависит от: updated Control Plane secret-handling rule in `AGENTS.md` and the
+current `scripts/github_app_preflight.py` behavior.
+Среда исполнения: docs-only local edit. No `.env` or credential file may be
+opened; no credential value, GitHub API, Docker, model or external write.
+Внешняя цель: none.
+Вне scope: changing GitHub App code/configuration, reading key metadata,
+preflight execution, credential setup, network, branch/PR, push or deployment.
+Разрешённые пути:
+- README.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- remove the `source .env.github-app` example;
+- explain that `github_app_preflight.py` requires an explicitly prepared
+  process environment containing non-secret metadata and a private-key path,
+  while it does not read the key contents or make a network request;
+- direct operators to use an approved process/secret manager and never load
+  the whole credential file just to run metadata preflight;
+- `rg` finds no shell-source instruction for `.env.github-app` in README/docs;
+- `git diff --check` passes.
+Проверки:
+- `rg -n "source \.env\.github-app|\.env\.github-app" README.md docs`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если для проверки требуется открыть любой `.env`/credential file
+или вызвать GitHub.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: removed the shell instruction that loaded the entire
+  `.env.github-app` file. README now directs operators to prepare only the
+  required process metadata through an approved manager and states that preflight
+  checks metadata/file type-permissions only, without reading key contents or
+  contacting GitHub. `rg -n "source \.env\.github-app|\.env\.github-app"
+  README.md docs` shows only explanatory references and no source command;
+  `git diff --check` is clean. No `.env` or credential file was opened and no
+  network/API call was made.
+
+### Batch FH — portable one-shot secret input for the live MVP runner (R2 execution batch 121/121; 1 task)
+
+#### EXP-568 — add a hidden terminal credential source for the fixed Worker CLI
+Статус: ACCEPTED
+Цель: allow the operator to provide the temporary MVP API credential directly
+to the already-fixed Worker process without copying it into chat, a file, shell
+history or a preconfigured environment.
+Гипотеза: a lazy standard-library hidden terminal prompt, with insecure echo
+fallback rejected, provides a portable one-shot credential source for macOS,
+Linux and Windows while keeping the key outside project artifacts.
+Зависит от: accepted EXP-564 credential contract and EXP-565 fixed Worker CLI.
+This task adds no permission to make a live provider call; EXP-566 remains DRAFT
+until separately authorized and READY.
+Среда исполнения: local/offline unit tests with synthetic prompt functions only.
+No terminal secret entry, environment lookup in tests, network, public API,
+Worker/model, Docker, stage write or provider effect.
+Внешняя цель: none.
+Вне scope: OS-vault implementation, reading another project's credentials,
+`.env` parsing, secret persistence, provider/account changes, real model call,
+GitHub write, branch/PR, push or deployment.
+Разрешённые пути:
+- src/app_contracts/credential_source.py
+- scripts/run_pinned_deepseek_worker.py
+- tests/test_credential_source.py
+- tests/test_pinned_deepseek_worker_cli.py
+- AGENTS.md
+- README.md
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- implement a lazy `TerminalPromptCredentialSource` using standard-library
+  hidden terminal entry; convert terminal-unavailable/echo-fallback, blank,
+  malformed and input failures to stable payload-free errors;
+- reject `getpass.GetPassWarning` as an error before accepting an echoed
+  fallback; source repr/str/exceptions never disclose a value;
+- the fixed CLI uses this source by default only after the exact
+  `RUN EXP-566 ONCE` confirmation; explicit process mappings remain only a
+  test/embedding seam, with no ambient environment lookup on cancel/preflight;
+- docs distinguish this one-shot MVP input from durable cross-platform product
+  storage and state that the operator must revoke the temporary key after use;
+- tests use only synthetic values and prove lazy lookup, safe diagnostics,
+  echo-fallback rejection, cancellation ordering and fixed CLI wiring;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_credential_source tests.test_pinned_deepseek_worker_cli -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если проверка запросит реальный secret, использует интерактивный
+credential prompt, запустит operator command или вызовет внешний сервис.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added `TerminalPromptCredentialSource`, using lazy
+  standard-library `getpass` and treating `GetPassWarning` as an error, with
+  payload-free failures and opaque diagnostics. The fixed CLI selects this
+  source by default and does not read ambient `os.environ`; explicit mappings
+  remain a test/embedding seam. Focused suite: 14 tests passed; full offline
+  suite: 1037 tests (1028 passed, 9 skipped); `git diff --check` clean. Tests
+  patched the prompt with synthetic values and replaced readiness/runtime.
+  No real secret, prompt interaction, network, model, Docker, stage file or
+  provider effect occurred. EXP-566 remains DRAFT pending fresh authorization.
+
+### Batch FI — cryptographically bind remote verifier evidence (R2 execution batch 122/122; 1 task)
+
+#### EXP-569 — define and verify a signed nonce-bound verifier response
+Статус: ACCEPTED
+Цель: introduce a strict signed wire receipt for a verifier response so a
+future separately hosted verifier can prove the response came from a pinned
+signing key and was produced for this exact request/profile/challenge.
+Гипотеза: canonical Ed25519 signing over request digest, bounded verifier
+response, verifier-profile digest and fresh invocation nonce rejects forged,
+mutated and replayed responses before they enter the execution result.
+Зависит от: accepted EXP-568 and the existing bounded verifier process wire
+contract. This local contract does not itself establish independent-host trust
+or authorize remote service access.
+Среда исполнения: local/offline tests with ephemeral synthetic Ed25519 keys.
+No network, live verifier, SSH/testdev, Docker, real credential, provider, stage
+write or external effect.
+Внешняя цель: none.
+Вне scope: deploying a verifier, enrolling/pinning a production public key,
+changing `VerifierResult` trust claims, real target execution, GitHub API or
+provider writes, branch/PR, push or deployment.
+Разрешённые пути:
+- src/app_contracts/verifier_attestation.py
+- schemas/signed-verifier-response.schema.json
+- tests/test_verifier_attestation.py
+- docs/24-mvp-final-plan.md
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- define a strict bounded envelope containing the exact canonical
+  `VerifierProcessResponse`, request digest, 256-bit invocation nonce, pinned
+  verifier-profile digest, key ID, canonical UTC issue time and Ed25519 signature;
+- verify the signature with a separately supplied trusted-key mapping and a
+  domain-separated canonical payload; reject unknown keys, malformed fields,
+  stale/future timestamps, wrong profile/request/nonce, invalid response binding,
+  replayed nonce and any mutation;
+- return a typed verified receipt with explicit `signature_valid=true` and
+  `independent_host_trust_established=false`; do not convert it into an
+  execution `VerifierResult` or claim the key's physical custody;
+- schema and tests enforce strict bounds/canonicalization using only ephemeral
+  test keys and synthetic verifier data;
+- docs state the signed receipt is only a protocol prerequisite until the
+  verifier runs in a separate trusted environment and its public key is
+  independently pinned;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_verifier_attestation -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если для проверки нужна сеть, внешний verifier, реальный ключ,
+выполнение кода целевого репозитория или любая provider operation.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added `signed-verifier-response/v1` with strict canonical
+  bounded JSON, domain-separated Ed25519 verification, a fresh 256-bit
+  invocation nonce, exact request/profile binding, bounded trusted-key map and
+  timestamp window; the existing process response parser revalidates the
+  verifier result against the prepared input. Schema and 9 synthetic-key tests
+  cover success, mutation, wrong key/profile/request/nonce, replay under a new
+  challenge, stale/future time, duplicate/noncanonical/oversized JSON and bad
+  schema fields. Focused contract suite: 56 tests passed; full offline suite:
+  1046 tests (1037 passed, 9 skipped); `git diff --check` clean. No network,
+  external verifier, real key, target execution, Docker, secret or provider
+  effect. The receipt explicitly does not establish independent-host trust;
+  service deployment/key custody/pinning and execution-result integration
+  remain open.
+
+### Batch FJ — qualify testdev as a separate verifier host (R2 execution batch 123/123; 1 task)
+
+#### EXP-570 — read-only preflight of the explicitly selected testdev host
+Статус: DRAFT — requires fresh user confirmation in OpenCode before SSH.
+Цель: determine whether `testdev` can host the pinned verifier runtime as a
+separate machine, without deploying, starting containers or accessing secrets.
+Гипотеза: a host-key-verified read-only check of OS/architecture, Docker server
+version and the two already-pinned image IDs will decide whether a separate-host
+verifier deployment can proceed without changing the target design.
+Зависит от: EXP-569 signed-response protocol and explicit confirmation that this
+host is the intended verifier trust domain. A successful preflight will not by
+itself authenticate verifier key custody or establish independent trust.
+Среда исполнения: SSH read-only inspection of `testdev` at
+`192.168.88.101`, user `alex`, using existing SSH key authentication and strict
+host-key checking. Do not discover, print, or modify SSH credentials.
+Внешняя цель: `testdev` only. No GitHub, model provider, external write, service
+change, deployment or publication.
+Вне scope: `.env`, credentials, system secrets, service definitions, process
+environment, filesystem contents beyond command discovery, daemon changes,
+container execution, image pull/build, restart, upload or key generation.
+Разрешённые пути:
+- none (read-only host metadata only).
+Точная разрешённая команда (one SSH invocation only; run only after a fresh
+OpenCode confirmation):
+`ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 alex@192.168.88.101 'uname -s && uname -m && command -v docker && docker version --format "{{.Server.Version}}" && docker image inspect --format "{{.Id}}" sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812 && docker image inspect --format "{{.Id}}" sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a'`
+Критерии приёмки:
+- SSH succeeds only with a previously trusted host key; unknown/mismatched host
+  key or authentication failure stops without accepting a new host key;
+- output contains only OS, architecture, Docker version and the exact two
+  image IDs or bounded “unavailable” failures; no environment/key/config data;
+- no Docker container is run, image pulled, file written, service changed or
+  process restarted;
+- report whether the separate host is technically ready, while keeping
+  independent identity/key custody unproven until a later exact deployment and
+  trust-enrollment card;
+- retain redacted command/output metadata as evidence, not credential material.
+Проверки:
+- the one exact SSH command above, only after fresh confirmation;
+- local review that no additional command or remote write was executed.
+Разрешённые внешние команды:
+- exactly the one read-only SSH command above, after fresh OpenCode confirmation.
+Commit: DENIED.
+Остановись, если strict host-key verification is unavailable, authentication
+would require exposing a key, command output includes secret/configuration data,
+an image pull/build is proposed, or any write/restart would be needed.
+
+### Batch FK — carry signed verifier evidence without granting trust (R2 execution batch 124/124; 1 task)
+
+#### EXP-571 — integrate signed verifier receipt as audit-only execution evidence
+Статус: ACCEPTED
+Цель: let the execution pipeline consume a cryptographically verified remote
+receipt for evidence while refusing to stage or publish it until independent
+verifier trust is actually enrolled.
+Гипотеза: preserving only receipt digest/key/profile metadata and a
+`signature_valid=true` marker, while failing before stage persistence and
+publication seed creation, closes the disconnected-reporting gap without
+misrepresenting signature validity as independent-host trust.
+Зависит от: accepted EXP-569 receipt validator and existing executor/stage
+boundaries.
+Среда исполнения: local/offline tests with synthetic attestation fixtures only.
+No network, SSH/testdev, real verifier, real key, target execution, Docker,
+credential, stage write or provider effect.
+Внешняя цель: none.
+Вне scope: establishing trust enrollment, allowing a signed receipt to create a
+verified stage, changing local same-host verifier semantics, external service,
+GitHub/provider calls, branch/PR, push or deployment.
+Разрешённые пути:
+- src/app_contracts/executor.py
+- src/app_contracts/publication_seed.py
+- src/app_contracts/worker_cli.py
+- tests/test_executor.py
+- tests/test_publication_seed.py
+- tests/test_worker_cli.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- `run_local_execution` recognizes only a typed `VerifiedVerifierAttestation`,
+  revalidates its result against the exact prepared input and returns FAILED
+  with a stable untrusted-verifier code before calling `stage_sink.save/load`;
+- failed execution metadata contains only attestation digest, bounded key ID,
+  verifier-profile digest, `signature_valid=true` and
+  `independent_host_trust_established=false`; never includes signature bytes or
+  verifier payload;
+- `build_publication_seed` rejects any result carrying audit-only attestation
+  metadata, even if a caller manually labels its execution VERIFIED;
+- ordinary existing local verifier flows remain unchanged and all current
+  stage/publication tests pass;
+- docs state that a future trust-enrollment card is required before promoting
+  this receipt to stage evidence;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_executor tests.test_publication_seed tests.test_worker_cli -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если потребуется доверенный ключ, сеть, remote verifier, stage write
+или provider operation.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: executor accepts only the typed verified-receipt shape,
+  revalidates its verifier result and exact request digest, exposes bounded
+  digest/key/profile metadata and explicit signature/independent-host markers,
+  and fails before durable stage save/readback. Publication-seed creation
+  rejects receipt-bearing results even if relabeled VERIFIED. Targeted suite:
+  127 tests, 2 skipped; full offline suite: 1049 tests, 1040 passed, 9 skipped;
+  `git diff --check` clean. No network, SSH, remote verifier, secret, durable
+  stage write or provider operation occurred.
+
+### Batch FL — keep audit-only verifier receipts out of verified CLI output (R2 execution batch 125/125; 1 task)
+
+#### EXP-572 — prevent hand-built VERIFIED receipt results from crossing CLI gate
+Статус: ACCEPTED
+Цель: prevent a caller-constructed `ExecutionResult` from promoting an
+audit-only signed verifier receipt to `status=verified` in remote CLI evidence.
+Гипотеза: checking attestation metadata before the ordinary VERIFIED branch
+keeps the CLI projection consistent with executor and publication-seed gates,
+including when a caller supplies a stage locator.
+Зависит от: accepted EXP-571 audit-only receipt handling.
+Среда исполнения: local/offline synthetic records only. No network, SSH,
+verifier key, provider, stage write, Worker/model or Docker.
+Внешняя цель: none.
+Вне scope: changing verifier enrollment, ordinary verified result semantics,
+stage contents, trust policy or provider publication.
+Разрешённые пути:
+- src/app_contracts/worker_cli.py
+- tests/test_worker_cli.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- any `ExecutionResult` with non-empty verifier-attestation metadata is
+  projected as `failed`, even if its status is manually set to VERIFIED;
+- a well-shaped audit-only receipt gets stable
+  `verifier-trust-unestablished` and only its bounded digest/key/profile and
+  signature/independent-host booleans; malformed metadata gets a safe stable
+  failure and is not echoed;
+- the verified digest fields and optional `stage_database_path` are never
+  emitted for receipt-bearing results;
+- normal VERIFIED result and ordinary FAILED evidence remain unchanged;
+- focused CLI tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_worker_cli -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если проверка требует секрет, сеть, stage write, provider effect,
+Docker или реальный verifier.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: CLI now checks receipt metadata before its VERIFIED
+  projection. Audit-only receipts yield only failed evidence with bounded
+  metadata; malformed fields are not echoed, and no stage locator or verified
+  digest is emitted. Focused CLI suite: 42 tests, 2 skipped; full offline suite:
+  1051 tests, 1042 passed, 9 skipped; `git diff --check` clean. No external
+  action, secret, stage write, Docker or provider effect.
+
+### Batch FM — prepare a digest-confirmed GitHub publication CLI (R2 execution batch 126/126; 1 task)
+
+#### EXP-573 — compose signed-stage approval with the real GitHub App channel
+Статус: ACCEPTED
+Цель: add the missing fixed CLI path from an existing verified stage and
+externally signed digest-bound approval through Policy, slow Gateway, one-use
+Broker and the existing GitHub App publication channel.
+Гипотеза: the real-provider path can be implemented and exercised wholly with
+fake transports, while a mandatory exact-digest terminal confirmation keeps
+the eventual external write behind a fresh operator action.
+Зависит от: signed approval verifier, durable stage, GitHub App channel and
+controlled-publication gates (all locally implemented).
+Среда исполнения: local/offline tests with synthetic SQLite stage and signer.
+Fake-only GitHub transport and token minter; no network, key, credential,
+Docker, testdev, real provider call or external write.
+Внешняя цель: none during this task. Future operator run is restricted to
+`SoldatovAlexander/brainbooster_full_v11` and requires a new exact publication
+card and fresh user confirmation.
+Вне scope: invoking the live command, reading credentials, fetching GitHub,
+creating a branch/PR, pushing, deployment, automatic retry or production
+identity/trust claims.
+Разрешённые пути:
+- src/app_contracts/signed_github_publication.py
+- scripts/publish_signed_stage_github.py
+- tests/test_signed_github_publication.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- CLI re-loads the exact stage, request, signed approval and operator trust
+  profile using the existing verifier; it binds repository, branch, base and
+  every verified file to the signed stage digest;
+- before any broker/token/transport call, the operator must type the exact
+  phrase `PUBLISH <staged-change-digest>` after the CLI presents a bounded
+  digest/target/patch review; cancellation, mismatch, invalid approval or
+  policy/gateway deny causes zero broker/provider effects;
+- live adapter composition uses the existing fixed GitHub App broker/channel,
+  minimum `contents:write` and `pull_requests:write` permissions, and a
+  persistent digest-only publication journal; output is sanitized and states
+  `identity_authenticated=false` for the operator-supplied trust profile;
+- tests substitute token minter and all provider transports, cover deny-before-
+  token, exact success, receipt binding, sanitized output and no-retry journal
+  behavior; no test reaches the network or reads a real private key;
+- docs explicitly state this command has not been run and real PR publication
+  still needs a separate exact card and fresh confirmation;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_github_publication -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если нужна реальная credential, сеть, provider call, Docker,
+deployment, неопределённый recovery action или изменение trust model.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added the fixed-target digest-confirmed CLI, which
+  reloads the exact stage and signed approval, presents the bounded preview,
+  requires interactive exact-digest confirmation, then reuses the deterministic
+  Policy, slow Gateway, single-use Broker, minimal GitHub App permissions and
+  digest-only SQLite journal. The output is sanitized and explicitly says
+  `identity_authenticated=false`; it confirms a PR receipt without claiming
+  that this invocation necessarily performed a provider write. Fake-only tests
+  cover invalid approval, confirmation mismatch, policy deny before token,
+  successful receipt binding, and a lost PR response without write retry.
+  Focused suite: 5 tests passed; full offline suite: 1056 tests (1047 passed,
+  9 skipped); `git diff --check` clean. The CLI was not run, and no credential,
+  network, GitHub write, branch, PR, Docker, SSH or deployment was used. R2/MVP
+  remain OPEN; a live publication still requires a separate exact task card and
+  fresh confirmation.
+
+### Batch FN — add read-only recovery for signed-stage GitHub publication (R2 execution batch 127/127; 1 task)
+
+#### EXP-574 — reconcile an uncertain signed-stage PR attempt without write capability
+Статус: ACCEPTED
+Цель: let an operator inspect and reconcile an already-persisted publication
+journal for one exact stage after an uncertain provider response, without
+replaying any publication effect.
+Гипотеза: a distinct GET-only GitHub App broker/channel with exactly
+`contents:read` and `pull_requests:read` can recover a matching PR receipt or
+record digest-only unknown file state while making POST/PUT structurally
+unavailable on the recovery path.
+Зависит от: accepted EXP-573 signed-stage publisher, persistent publication
+journal, exact staged artifact and existing read-only reconciliation logic.
+Среда исполнения: local/offline tests with synthetic stage/journal, fake token
+minter and GET-only fake GitHub transport. No network, private key, credential,
+Docker, testdev, provider call, external write, branch, PR, push or deployment.
+Внешняя цель: none in this task. Any later invocation that reads credentials or
+contacts GitHub requires a separate exact task card and fresh user confirmation.
+Вне scope: starting a new publication, retry/resume of POST/PUT, changing trust
+enrollment, reading credentials, using `.env`, stage/journal mutation except
+digest-only recovery state, remote call or live provider result.
+Разрешённые пути:
+- src/app_contracts/broker.py
+- src/app_contracts/github_app.py
+- src/app_contracts/controlled_publication.py
+- src/app_contracts/publication.py
+- src/app_contracts/signed_github_reconciliation.py
+- scripts/reconcile_signed_stage_github.py
+- tests/test_broker.py
+- tests/test_github_app.py
+- tests/test_controlled_publication.py
+- tests/test_publication.py
+- tests/test_signed_github_reconciliation.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- the CLI opens an existing journal and exact durable stage only; it verifies
+  the supplied digest, fixed target, intent, branch/base and verified manifest
+  against the journal before any token or transport call; it never creates a
+  publication journal or new approval;
+- `prepared`/malformed/mismatched records fail before Broker; `completed`
+  records return only the stored sanitized receipt without a token; only
+  `attempting` or `reconciliation_required` can enter the recovery path;
+- recovery uses a separately registered read-only Broker and channel with the
+  exact minimal permissions `contents:read` and `pull_requests:read`; this type
+  exposes no publication method and is rejected by the write-capable
+  `run_controlled_local_publication` path;
+- the coordinator performs only read-only PR/ref/manifest lookup, persists only
+  digest-bound reconciliation outcome, never changes `reconciliation_required`
+  to a write retry, and exposes a sanitized typed receipt only on an exact
+  journal match;
+- fake-only tests prove zero POST/PUT, no token for terminal/mismatched records,
+  exact PR receipt recovery, fail-closed absent/unknown state and durable
+  digest-only evidence; tests do not read a real private key or environment
+  secret;
+- docs state that recovery CLI has not been run and a real credential/token or
+  GitHub GET still needs a separate exact card and fresh user confirmation;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_broker tests.test_github_app tests.test_controlled_publication tests.test_signed_github_reconciliation -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если понадобится реальная credential, приватный ключ, сеть,
+provider call, POST/PUT, branch/PR, Docker, deployment или изменение trust model.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: the recovery CLI opens an existing journal read-only
+  and binds the exact stage, digest, fixed target, intent, branch/base and
+  manifest before any token operation. Completed records return their stored
+  sanitized receipt without a token; only uncertain attempts can use the
+  separately typed read-only broker (`contents:read`, `pull_requests:read`).
+  That channel exposes no publication methods and the write coordinator
+  rejects it. Fake-only tests cover exact PR recovery, digest-only unknown
+  file-state evidence, terminal/mismatch no-token behavior and zero POST/PUT.
+  Focused suite: 106 tests passed; full offline suite: 1065 tests (1056 passed,
+  9 skipped); `git diff --check` clean. CLI not run; no credential, network,
+  GitHub call, provider write, Docker, SSH, branch, PR or deployment occurred.

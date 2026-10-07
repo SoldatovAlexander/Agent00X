@@ -179,10 +179,11 @@
     "operation": "publish_pull_request",
     "repository_id": "github-installation/42/repository/1001",
     "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
-    "approved_intent_digest": "sha256:f994316c8145e4fc0ec3cf13abf4c70dd43997ccfd6eac53422807999381c5a0",
+    "approved_intent_digest": "sha256:3e9266bc52ff4940bd2b475a6a733c76e990caace2c1b791a579b6a3b4ede8c9",
     "policy_version": "policy-1",
     "approved_at": "2026-09-04T12:05:00Z",
-    "expires_at": "2026-09-05T12:00:00Z"
+    "expires_at": "2026-09-05T12:00:00Z",
+    "signature": "4901f4398ebe233c32addbdb371288f5960b10af07abc49db0f299383e64836b013e342d4e393d2565ac7993bf2016a7e2e5a1a593d13e02afeeeec6a1bd2403"
   },
   "intent": {
     "schema_version": 1,
@@ -190,12 +191,13 @@
     "process_id": "process-demo-001",
     "repository_id": "github-installation/42/repository/1001",
     "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base_branch": "master",
     "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
     "approval_id": "approval-demo-001",
     "branch_namespace": "agent/process-demo-001",
     "title_artifact_ref": "artifact://pr/demo-001/title",
     "body_artifact_ref": "artifact://pr/demo-001/body",
-    "idempotency_key": "publish/process-demo-001/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "idempotency_key": "publish/process-demo-001/master/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
     "audience": "github-installation-42",
     "expires_at": "2026-09-05T12:00:00Z"
   },
@@ -220,6 +222,7 @@
     "process_id": "process-demo-001",
     "repository_id": "github-installation/42/repository/1001",
     "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base_branch": "master",
     "staged_change_digest": "sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
     "patch_artifact_ref": "artifact://patches/demo-001",
     "approval_id": "approval-demo-001",
@@ -227,7 +230,7 @@
     "branch_namespace": "agent/process-demo-001",
     "title_artifact_ref": "artifact://pr/demo-001/title",
     "body_artifact_ref": "artifact://pr/demo-001/body",
-    "idempotency_key": "publish/process-demo-001/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "idempotency_key": "publish/process-demo-001/master/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
     "expires_at": "2026-09-04T12:11:00Z"
   },
   "credential_use_grant": {
@@ -239,7 +242,7 @@
     "permissions": ["contents:write", "pull_requests:write"],
     "actuator_id": "actuator-github-001",
     "operation": "publish_pull_request",
-    "request_digest": "sha256:d543fb23dc0017524d33c53094b5cb1ba4ff9aad02d03ae4d1b8bd7363b2ed41",
+    "request_digest": "sha256:da7e7f5178362279112acb66d56979cad67b211b07547cab74d31841387c01f8",
     "single_use": true,
     "issued_at": "2026-09-04T12:06:00Z",
     "expires_at": "2026-09-04T12:11:00Z"
@@ -255,10 +258,11 @@
     "approval_id": "approval-demo-001",
     "repository_id": "github-installation/42/repository/1001",
     "branch": "agent/process-demo-001",
+    "base_branch": "master",
     "commit_sha": "1111111111111111111111111111111111111111",
     "pull_request_id": 123,
     "pull_request_url": "https://github.com/example/project/pull/123",
-    "idempotency_key": "publish/process-demo-001/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
+    "idempotency_key": "publish/process-demo-001/master/sha256:8714c5374fb74d867ff2d19e406a182b0565f14841c3b5996dbb684bfa0e1736",
     "status": "succeeded",
     "postcondition": "verified",
     "started_at": "2026-09-04T12:06:00Z",

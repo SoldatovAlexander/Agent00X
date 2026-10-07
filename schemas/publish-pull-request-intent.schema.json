@@ -4,19 +4,21 @@
   "title": "PublishPullRequestIntent",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "operation", "process_id", "repository_id", "base_commit", "staged_change_digest", "approval_id", "branch_namespace", "title_artifact_ref", "body_artifact_ref", "idempotency_key", "audience", "expires_at"],
+  "required": ["schema_version", "operation", "process_id", "repository_id", "base_commit", "base_branch", "staged_change_digest", "approval_id", "branch_namespace", "title_artifact_ref", "body_artifact_ref", "idempotency_key", "audience", "expires_at"],
   "properties": {
     "schema_version": {"const": 1},
     "operation": {"const": "publish_pull_request"},
     "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
     "repository_id": {"type": "string", "pattern": "^github-installation/[0-9]+/repository/[0-9]+$"},
+    "source_repository_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
     "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "base_branch": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$"},
     "staged_change_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "approval_id": {"type": "string", "pattern": "^approval-[a-z0-9-]+$"},
     "branch_namespace": {"type": "string", "pattern": "^agent/process-[a-z0-9-]+$"},
     "title_artifact_ref": {"type": "string", "pattern": "^artifact://"},
     "body_artifact_ref": {"type": "string", "pattern": "^artifact://"},
-    "idempotency_key": {"type": "string", "pattern": "^publish/process-[a-z0-9-]+/sha256:[0-9a-f]{64}$"},
+    "idempotency_key": {"type": "string", "pattern": "^publish/[A-Za-z0-9._~%+-]+/[A-Za-z0-9._~%+-]+/sha256:[0-9a-f]{64}$"},
     "audience": {"type": "string", "pattern": "^github-installation-[0-9]+$"},
     "expires_at": {"type": "string", "format": "date-time"}
   }

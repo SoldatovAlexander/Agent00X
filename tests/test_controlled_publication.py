@@ -4,6 +4,7 @@ import ast
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -14,6 +15,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from unittest.mock import patch
 
@@ -26,10 +28,18 @@ from app_contracts.controlled_publication import (
     run_controlled_local_publication,
     run_gateway_gate,
     run_policy_gate,
+    reconcile_controlled_attempt_after_restart,
 )
 import app_contracts.controlled_publication as gate_module
-from app_contracts.digests import sha256_digest
+from app_contracts.digests import sha256_bytes, sha256_digest
 from app_contracts.gateway import GatewayDecision, GatewayPath
+from app_contracts.github_app import (
+    GitHubAppBrokerConfig,
+    GitHubAppCredentialBroker,
+    GitHubAppPublicationChannel,
+    GitHubPullRequest,
+    _InstallationToken,
+)
 from app_contracts.executor import (
     ExecutionError,
     ExecutionRequest,
@@ -47,13 +57,16 @@ from app_contracts.pinned_snapshot import (
     export_local_commit_tree,
     open_local_repository,
 )
+from app_contracts.repository_process import PublishableFile
 from app_contracts.publication_seed import (
     PublicationIntent,
     PublicationSeed,
     PublicationSeedError,
+    bind_publication_seed_to_target,
     build_publication_seed,
     derive_publication_intent,
 )
+from approval_test_support import TEST_APPROVER_PUBLIC_KEYS, sign_test_approval
 from app_contracts.mock_github import MockGitHubEndpoint, MockPullRequest
 from app_contracts.publication import (
     PublicationJournal,
@@ -142,7 +155,7 @@ def seed_bound_intent(branch="agent/process-demo-001", process_id="process-local
             )
             assert result.status == ExecutionStatus.VERIFIED, repr(result)
             seed = build_publication_seed(request, result)
-            yield derive_publication_intent(seed, branch)
+            yield derive_publication_intent(seed, branch, "master")
         finally:
             lease.close()
 
@@ -400,7 +413,8 @@ class ApprovalGateTests(unittest.TestCase):
 
 
 @contextmanager
-def decided_gate_fixture(*, include_seed=False, include_details=False):
+def decided_gate_fixture(*, include_seed=False, include_details=False,
+                         repository_id="fixture-repository"):
     captured = {}
     with tempfile.TemporaryDirectory() as temporary_directory:
         root = Path(temporary_directory)
@@ -423,7 +437,7 @@ def decided_gate_fixture(*, include_seed=False, include_details=False):
         lease = export_local_commit_tree(open_local_repository(repository), commit_oid, root)
         try:
             pin = PinnedSnapshot(
-                repository_id="fixture-repository",
+                repository_id=repository_id,
                 commit_oid=commit_oid,
                 tree_digest=compute_snapshot_tree_digest(lease.path),
                 snapshot_path=lease.path,
@@ -452,12 +466,14 @@ def decided_gate_fixture(*, include_seed=False, include_details=False):
                 )
             assert result.status == ExecutionStatus.VERIFIED, repr(result)
             seed = build_publication_seed(request, result)
-            intent = derive_publication_intent(seed, "agent/process-demo-001")
+            intent = derive_publication_intent(seed, "agent/process-demo-001", "master")
             staged_change = captured["staged_change"]
             config = PolicyConfig(
                 version="policy-test-v1",
-                allowed_repositories=frozenset({"fixture-repository"}),
+                allowed_repositories=frozenset({repository_id}),
                 allowed_actuators=frozenset({"test-actuator"}),
+                allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
                 decision_ttl_seconds=300,
             )
             future = format_time(FIXED_NOW + timedelta(hours=1))
@@ -472,16 +488,19 @@ def decided_gate_fixture(*, include_seed=False, include_details=False):
                 "idempotency_key": intent.idempotency_key,
                 "staged_change_digest": intent.staged_change_digest,
             }
-            approval = {
+            approval = sign_test_approval({
+                "schema_version": 1,
                 "process_id": intent.process_id,
                 "repository_id": intent.repository_id,
                 "operation": "publish_pull_request",
                 "approval_id": "approval-local-001",
+                "approver_id": "user-alice",
                 "policy_version": config.version,
                 "expires_at": future,
                 "staged_change_digest": intent.staged_change_digest,
                 "approved_intent_digest": sha256_digest(engine_intent),
-            }
+                "approved_at": format_time(FIXED_NOW - timedelta(minutes=1)),
+            })
             policy = DeterministicPolicy(config)
             evaluated = policy.decide(
                 decision_id="decision-local-001",
@@ -762,7 +781,11 @@ class PolicyGateTests(unittest.TestCase):
 def gateway_envelope(intent: PublicationIntent) -> dict:
     return {
         "intent": {"operation": "publish_pull_request"},
-        "destination": {"port": "approval", "repository_id": intent.repository_id},
+        "destination": {
+            "port": "approval",
+            "repository_id": intent.repository_id,
+            "base_branch": intent.base_branch,
+        },
         "source": {"protocol": "internal", "principal_id": intent.process_id},
         "security": {"tainted": False, "sensitivity": "internal"},
         "payload": {"content_digest": intent.staged_change_digest},
@@ -1059,6 +1082,7 @@ def broker_actuator_request(intent: PublicationIntent, actuator_id="test-actuato
         "operation": "publish_pull_request",
         "repository_id": intent.repository_id,
         "actuator_id": actuator_id,
+        "base_branch": intent.base_branch,
         "staged_change_digest": intent.staged_change_digest,
         "branch_namespace": intent.branch.split("/", 1)[0],
         "idempotency_key": intent.idempotency_key,
@@ -1102,16 +1126,23 @@ class InMemoryPublicationJournal:
     def get(self, process_id):
         return self.records[process_id]
 
-    def prepare(self, process_id, *, idempotency_key, request_digest, repository_id):
+    def prepare(
+        self, process_id, *, idempotency_key, request_digest, repository_id,
+        verified_files_digest=None,
+    ):
         existing = self.records.get(process_id)
         if existing is not None:
             if (existing.idempotency_key, existing.request_digest, existing.repository_id) == (
                 idempotency_key, request_digest, repository_id
+            ) and (
+                verified_files_digest is None
+                or existing.verified_files_digest == verified_files_digest
             ):
                 return existing
             raise ValueError("publication payload conflict")
         record = PublicationRecord(
-            process_id, idempotency_key, request_digest, repository_id, "prepared", None
+            process_id, idempotency_key, request_digest, repository_id, "prepared", None,
+            verified_files_digest,
         )
         self.records[process_id] = record
         return record
@@ -1494,7 +1525,7 @@ def journal_seed_for(intent):
 
 
 class JournalPreparationTests(unittest.TestCase):
-    def test_journal_is_prepared_only_after_policy_gateway_and_broker(self):
+    def test_unsigned_extra_approval_field_stops_before_downstream(self):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent,
                                         staged_change, _evaluated):
             with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1502,48 +1533,22 @@ class JournalPreparationTests(unittest.TestCase):
                     events = []
                     gateway = FakeGateway(events)
                     broker = FakeBroker()
-                    seed = journal_seed_for(intent)
                     approval_with_canary = dict(approval, access_token="APPROVAL-TOKEN-CANARY")
-                    original_prepare = journal.prepare
-
-                    def record_prepare(*args, **kwargs):
-                        events.append("journal.prepare")
-                        return original_prepare(*args, **kwargs)
-
-                    journal.prepare = record_prepare
-
-                    def after_gates(gate_intent, _gate_approval, _decision,
-                                    _gateway_decision, _channel):
-                        events.append("endpoint.ready")
-                        return journal.get(gate_intent.process_id)
-
-                    prepared = run_broker_gate(
-                        intent, approval_with_canary, policy, engine_intent,
-                        staged_change, "decision-local-001", gateway,
-                        gateway_envelope(intent), broker, matching_grant(intent),
-                        actuator_id="test-actuator", now=FIXED_NOW,
-                        proceed=after_gates, seed=seed, journal=journal,
-                    )
-                    self.assertEqual(
-                        events, ["gateway.call", "journal.prepare", "endpoint.ready"]
-                    )
-                    self.assertEqual(len(broker.opens), 1)
-                    self.assertEqual(prepared.status, "prepared")
-                    self.assertRegex(prepared.request_digest, r"^sha256:[0-9a-f]{64}$")
-                    self.assertEqual(prepared.process_id, intent.process_id)
-                    self.assertEqual(prepared.repository_id, intent.repository_id)
-                    self.assertNotIn("APPROVAL-TOKEN-CANARY", repr(prepared))
-                    self.assertEqual(journal.get(intent.process_id), prepared)
-
-                    replayed = run_broker_gate(
-                        intent, approval_with_canary, policy, engine_intent,
-                        staged_change, "decision-local-001", FakeGateway([]),
-                        gateway_envelope(intent), FakeBroker(), matching_grant(intent),
-                        actuator_id="test-actuator", now=FIXED_NOW,
-                        proceed=lambda gate_intent, *_args: journal.get(gate_intent.process_id),
-                        seed=seed, journal=journal,
-                    )
-                    self.assertEqual(replayed, prepared)
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^decision: not allow$"
+                    ):
+                        run_broker_gate(
+                            intent, approval_with_canary, policy, engine_intent,
+                            staged_change, "decision-local-001", gateway,
+                            gateway_envelope(intent), broker, matching_grant(intent),
+                            actuator_id="test-actuator", now=FIXED_NOW,
+                            proceed=lambda *_args: self.fail("downstream was called"),
+                            seed=journal_seed_for(intent), journal=journal,
+                        )
+                    self.assertEqual(events, [])
+                    self.assertEqual(broker.opens, [])
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
 
     def test_conflicting_journal_binding_is_not_reused_or_overwritten(self):
         with decided_gate_fixture() as (intent, approval, policy, engine_intent,
@@ -1648,6 +1653,657 @@ class ControlledLocalPublicationTests(unittest.TestCase):
                     )
                     self.assertEqual(journal.get(intent.process_id).status, "completed")
 
+    def test_configured_but_unlisted_approver_stops_before_gateway_broker_and_mock(self):
+        with decided_gate_fixture(include_seed=True) as (
+            intent, approval, _old_policy, engine_intent, staged_change,
+            _evaluated, seed,
+        ):
+            keys = {**TEST_APPROVER_PUBLIC_KEYS, "user-bob": b"b" * 32}
+            policy = DeterministicPolicy(
+                PolicyConfig(
+                    version="policy-test-v1",
+                    allowed_repositories=frozenset({intent.repository_id}),
+                    allowed_actuators=frozenset({"test-actuator"}),
+                    allowed_approver_ids=frozenset({"user-bob"}),
+                    trusted_approver_public_keys=keys,
+                    decision_ttl_seconds=300,
+                )
+            )
+            events = []
+            gateway = FakeGateway(events)
+            endpoint = MockGitHubEndpoint()
+            broker = InMemoryCredentialBroker(lambda: endpoint)
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    with self.assertRaisesRegex(
+                        ContractValidationError, "^decision: not allow$"
+                    ):
+                        run_controlled_local_publication(
+                            seed, intent, approval, policy, engine_intent,
+                            lambda _seed: staged_change, "decision-unlisted-approver",
+                            gateway, gateway_envelope(intent), broker,
+                            matching_grant(intent), journal, endpoint,
+                            actuator_id="test-actuator", now=FIXED_NOW,
+                        )
+                    with self.assertRaises(KeyError):
+                        journal.get(intent.process_id)
+            self.assertEqual(events, [])
+            self.assertEqual(broker.opened_grants, [])
+            self.assertEqual(endpoint._by_idempotency_key, {})
+
+    def test_composes_github_app_broker_with_approval_policy_gateway_and_journal(self):
+        source_repository_id = "SoldatovAlexander/brainbooster_full_v11"
+        provider_repository_id = "github-installation/456/repository/1001"
+        with decided_gate_fixture(repository_id=source_repository_id) as (
+            source_intent, _approval, _policy, _engine_intent, staged_change, _evaluated
+        ):
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    config = GitHubAppBrokerConfig(
+                        app_id=123,
+                        installation_id=456,
+                        repository_id=1001,
+                        repository=source_repository_id,
+                        private_key_path=Path(temporary_directory) / "unused-key-reference",
+                        api_url="https://api.github.com",
+                    )
+                    events = []
+                    existing_prs = []
+                    file_content = "approved verified content\n"
+                    verified_file = PublishableFile(
+                        "calculator.py", file_content,
+                        sha256_bytes(file_content.encode("utf-8")),
+                    )
+                    source_seed = replace(
+                        journal_seed_for(source_intent),
+                        verified_contents_digest=sha256_digest(
+                            ((verified_file.path, verified_file.content),)
+                        ),
+                    )
+                    seed = bind_publication_seed_to_target(
+                        source_seed, config.repository_target_binding
+                    )
+                    intent = derive_publication_intent(
+                        seed, source_intent.branch, source_intent.base_branch
+                    )
+                    expires_at = format_time(FIXED_NOW + timedelta(hours=1))
+                    engine_intent = {
+                        "process_id": intent.process_id,
+                        "repository_id": provider_repository_id,
+                        "source_repository_id": source_repository_id,
+                        "base_commit": intent.base_commit,
+                        "base_branch": intent.base_branch,
+                        "branch": intent.branch,
+                        "operation": "publish_pull_request",
+                        "approval_id": "approval-bound-identities-001",
+                        "expires_at": expires_at,
+                        "branch_namespace": "agent",
+                        "idempotency_key": intent.idempotency_key,
+                        "staged_change_digest": intent.staged_change_digest,
+                    }
+                    approval = sign_test_approval({
+                        "schema_version": 1,
+                        "process_id": intent.process_id,
+                        "repository_id": provider_repository_id,
+                        "operation": "publish_pull_request",
+                        "approval_id": "approval-bound-identities-001",
+                        "approver_id": "user-alice",
+                        "policy_version": "policy-test-v1",
+                        "expires_at": expires_at,
+                        "staged_change_digest": intent.staged_change_digest,
+                        "approved_intent_digest": sha256_digest(engine_intent),
+                        "approved_at": format_time(FIXED_NOW - timedelta(minutes=1)),
+                    })
+                    policy = DeterministicPolicy(PolicyConfig(
+                        version="policy-test-v1",
+                        allowed_repositories=frozenset({provider_repository_id}),
+                        allowed_actuators=frozenset({"test-actuator"}),
+                        allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                        trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
+                        decision_ttl_seconds=300,
+                    ))
+                    source_stage_before = dict(staged_change)
+                    base_content = (ROOT / "fixtures/repository/project/calculator.py").read_bytes()
+                    base_blob_sha = hashlib.sha1(
+                        b"blob " + str(len(base_content)).encode("ascii") + b"\0" + base_content
+                    ).hexdigest()
+                    verified_blob_sha = hashlib.sha1(
+                        b"blob " + str(len(file_content.encode("utf-8"))).encode("ascii")
+                        + b"\0" + file_content.encode("utf-8")
+                    ).hexdigest()
+                    branch_created = False
+                    branch_file_sha = None
+
+                    class FakeMinter:
+                        def mint(self, _grant):
+                            events.append("broker.mint")
+                            return _InstallationToken(
+                                "synthetic-token-never-exposed", "2026-09-29T13:00:00Z"
+                            )
+
+                    def get_json(url, _headers):
+                        if "/contents/calculator.py?ref=" in url:
+                            if "?ref=" + staged_change["base_commit"] in url:
+                                events.append("base.file.get")
+                                return {"type": "file", "sha": base_blob_sha}
+                            events.append("branch.file.reconcile")
+                            return {
+                                "type": "file",
+                                "sha": branch_file_sha or base_blob_sha,
+                            }
+                        if "/git/ref/heads/" in url:
+                            if branch_created:
+                                events.append("branch.reconcile")
+                                return {
+                                    "ref": "refs/heads/agent/process-demo-001",
+                                    "object": {"type": "commit", "sha": "c" * 40},
+                                }
+                            events.append("branch.get")
+                            raise FileNotFoundError
+                        if "/pulls?" in url:
+                            events.append("pr.lookup")
+                            return list(existing_prs)
+                        self.fail("unexpected fake GET path")
+
+                    def post_json(url, _headers, payload):
+                        nonlocal branch_created
+                        if url.endswith("/git/refs"):
+                            events.append("branch.create")
+                            branch_created = True
+                            return {}
+                        if not url.endswith("/pulls"):
+                            self.fail("unexpected fake POST path")
+                        events.append("pr.create")
+                        existing_prs.append({
+                            "number": 81,
+                            "html_url": f"https://github.com/{source_repository_id}/pull/81",
+                            "head": {"ref": payload["head"]},
+                            "base": {"ref": payload["base"]},
+                            "body": payload["body"],
+                        })
+                        raise RuntimeError("synthetic lost response")
+
+                    def put_json(_url, _headers, _payload):
+                        nonlocal branch_file_sha
+                        events.append("file.put")
+                        branch_file_sha = verified_blob_sha
+                        raise RuntimeError("synthetic lost file-write response after apply")
+
+                    broker = GitHubAppCredentialBroker(
+                        config, FakeMinter(), get_json=get_json,
+                        post_json=post_json, put_json=put_json,
+                    )
+                    grant = dict(
+                        matching_grant(intent),
+                        installation_id=456,
+                        permissions=["contents:write", "pull_requests:write"],
+                    )
+                    gateway_events = []
+                    receipt = run_controlled_local_publication(
+                        seed, intent, approval, policy,
+                        engine_intent, lambda _seed: staged_change,
+                        "decision-local-001", FakeGateway(gateway_events),
+                        gateway_envelope(intent), broker, grant, journal,
+                        GitHubAppPublicationChannel,
+                        verified_files=(verified_file,),
+                        actuator_id="test-actuator", now=FIXED_NOW,
+                    )
+
+                    self.assertIsInstance(receipt, GitHubPullRequest)
+                    self.assertEqual(receipt.pull_request_id, 81)
+                    self.assertEqual(
+                        receipt.pull_request_url,
+                        f"https://github.com/{source_repository_id}/pull/81",
+                    )
+                    self.assertEqual(receipt.repository_id, provider_repository_id)
+                    self.assertEqual(intent.repository_id, provider_repository_id)
+                    self.assertEqual(intent.source_repository_id, source_repository_id)
+                    self.assertEqual(
+                        approval["approved_intent_digest"], sha256_digest(engine_intent)
+                    )
+                    self.assertEqual(
+                        receipt.staged_change_digest, intent.staged_change_digest
+                    )
+                    self.assertEqual(receipt.idempotency_key, intent.idempotency_key)
+                    self.assertEqual(staged_change, source_stage_before)
+                    self.assertEqual(events.count("broker.mint"), 1)
+                    self.assertEqual(events.count("branch.create"), 1)
+                    self.assertEqual(events.count("file.put"), 1)
+                    self.assertEqual(events.count("branch.reconcile"), 1)
+                    self.assertEqual(events.count("branch.file.reconcile"), 1)
+                    self.assertEqual(events.count("pr.create"), 1)
+                    self.assertEqual(events.count("pr.lookup"), 3)
+                    self.assertLess(events.index("branch.create"), events.index("file.put"))
+                    self.assertLess(events.index("file.put"), events.index("branch.reconcile"))
+                    self.assertLess(events.index("branch.file.reconcile"), events.index("pr.create"))
+                    self.assertEqual(len(gateway_events), 1)
+                    record = journal.get(intent.process_id)
+                    self.assertEqual(record.status, "completed")
+                    self.assertEqual(record.repository_id, provider_repository_id)
+                    self.assertEqual(record.pull_request_id, 81)
+                    self.assertEqual(
+                        record.pull_request_url,
+                        f"https://github.com/{source_repository_id}/pull/81",
+                    )
+
+    def test_provider_identity_mismatch_stops_before_policy_broker_or_journal(self):
+        source_repository_id = "SoldatovAlexander/brainbooster_full_v11"
+        wrong_provider_id = "github-installation/456/repository/999"
+        content = "verified source content\n"
+        file = PublishableFile(
+            "backend/routes.py", content, sha256_bytes(content.encode("utf-8"))
+        )
+        seed = PublicationSeed(
+            process_id="process-binding-mismatch-001",
+            repository_id=wrong_provider_id,
+            source_repository_id=source_repository_id,
+            base_commit="a" * 40,
+            staged_change_digest="sha256:" + "b" * 64,
+            verified_contents_digest=sha256_digest(((file.path, file.content),)),
+            verifier_id="synthetic-verifier",
+            verdict="pass",
+            snapshot_tree_digest="sha256:" + "c" * 64,
+            snapshot_origin="github_rest_api_claim",
+            snapshot_claim_digest="sha256:" + "d" * 64,
+        )
+        intent = derive_publication_intent(seed, "agent/process-binding-mismatch-001", "master")
+        events = []
+
+        class FakeMinter:
+            def mint(self, _grant):
+                events.append("token.mint")
+                return _InstallationToken("synthetic-token", "2026-09-29T13:00:00Z")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            config = GitHubAppBrokerConfig(
+                app_id=123,
+                installation_id=456,
+                repository_id=1001,
+                repository=source_repository_id,
+                private_key_path=Path(temporary_directory) / "unused-key-reference",
+                api_url="https://api.github.com",
+            )
+            broker = GitHubAppCredentialBroker(
+                config,
+                FakeMinter(),
+                get_json=lambda *_args: events.append("provider.get") or {},
+                post_json=lambda *_args: events.append("provider.post") or {},
+                put_json=lambda *_args: events.append("provider.put") or {},
+            )
+            policy = DeterministicPolicy(PolicyConfig(
+                version="policy-test-v1",
+                allowed_repositories=frozenset({wrong_provider_id}),
+                allowed_actuators=frozenset({"test-actuator"}),
+                allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
+            ))
+            with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                loaded = []
+                with patch.object(policy, "decide", wraps=policy.decide) as decide:
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: broker repository target mismatch$",
+                    ):
+                        run_controlled_local_publication(
+                            seed,
+                            intent,
+                            {},
+                            policy,
+                            {},
+                            lambda _seed: loaded.append(True) or {},
+                            "decision-binding-mismatch",
+                            FakeGateway(events),
+                            gateway_envelope(intent),
+                            broker,
+                            {},
+                            journal,
+                            GitHubAppPublicationChannel,
+                            verified_files=(file,),
+                            actuator_id="test-actuator",
+                            now=FIXED_NOW,
+                        )
+                    decide.assert_not_called()
+                self.assertEqual(events, [])
+                self.assertEqual(loaded, [])
+                self.assertEqual(broker._used_grants, set())
+                with self.assertRaises(KeyError):
+                    journal.get(intent.process_id)
+
+    def test_rejected_approval_policy_and_gateway_never_mint_or_touch_provider(self):
+        repository_id = "github-installation/456/repository/1001"
+        with decided_gate_fixture(repository_id=repository_id) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated
+        ):
+            file_content = "approved verified content\n"
+            verified_file = PublishableFile(
+                "calculator.py", file_content,
+                sha256_bytes(file_content.encode("utf-8")),
+            )
+            seed = replace(
+                journal_seed_for(intent),
+                verified_contents_digest=sha256_digest(
+                    ((verified_file.path, verified_file.content),)
+                ),
+            )
+            cases = (
+                ("approval", None, policy, None,
+                 ControlledPublicationError, "controlled publication: approval is missing",
+                 0, 0),
+                ("policy", approval,
+                 DeterministicPolicy(PolicyConfig(
+                     version="policy-test-v1",
+                     allowed_repositories=frozenset({"foreign-repository"}),
+                     allowed_actuators=frozenset({"test-actuator"}),
+                     allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                     trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
+                     decision_ttl_seconds=300,
+                )), None, ContractValidationError, "decision: not allow", 1, 0),
+                ("signature", dict(
+                    approval,
+                    approved_at=format_time(FIXED_NOW - timedelta(seconds=30)),
+                ), policy, None, ContractValidationError,
+                 "decision: not allow", 1, 0),
+                ("gateway", approval, policy,
+                 GatewayDecision(GatewayPath.SLOW, False, ("denied",)),
+                 ControlledPublicationError,
+                 "controlled publication: gateway has not authorized slow path",
+                 1, 1),
+            )
+            for label, candidate_approval, candidate_policy, gateway_verdict, error_type, message, expected_loads, expected_gateway_calls in cases:
+                with self.subTest(gate=label):
+                    with tempfile.TemporaryDirectory() as temporary_directory:
+                        with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                            effects = []
+
+                            class FakeMinter:
+                                def mint(self, _grant):
+                                    effects.append("token.mint")
+                                    return _InstallationToken(
+                                        "synthetic-token-not-for-transport",
+                                        "2026-09-29T13:00:00Z",
+                                    )
+
+                            def fake_transport(*_args, **_kwargs):
+                                effects.append("provider.transport")
+                                return []
+
+                            config = GitHubAppBrokerConfig(
+                                app_id=123, installation_id=456, repository_id=1001,
+                                repository="example/agent00x-sandbox",
+                                private_key_path=Path(temporary_directory) / "unused-key-reference",
+                                api_url="https://api.github.com",
+                            )
+                            broker = GitHubAppCredentialBroker(
+                                config, FakeMinter(), get_json=fake_transport,
+                                post_json=fake_transport,
+                            )
+                            gateway_events = []
+                            gateway = FakeGateway(
+                                gateway_events,
+                                verdict=gateway_verdict or slow_allow_decision(),
+                            )
+                            loader_calls = []
+                            grant = dict(
+                                matching_grant(intent), installation_id=456,
+                                permissions=["contents:write", "pull_requests:write"],
+                            )
+                            with self.assertRaisesRegex(error_type, f"^{message}$"):
+                                run_controlled_local_publication(
+                                    seed, intent,
+                                    candidate_approval, candidate_policy, engine_intent,
+                                    lambda _seed: loader_calls.append("loaded") or staged_change,
+                                    "decision-local-001", gateway,
+                                    gateway_envelope(intent), broker, grant, journal,
+                                    GitHubAppPublicationChannel,
+                                    verified_files=(verified_file,),
+                                    actuator_id="test-actuator", now=FIXED_NOW,
+                                )
+                            self.assertEqual(len(loader_calls), expected_loads)
+                            self.assertEqual(len(gateway_events), expected_gateway_calls)
+                            self.assertEqual(effects, [])
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+
+    def test_invalid_github_file_manifest_stops_before_loader_and_broker(self):
+        repository_id = "github-installation/456/repository/1001"
+        with decided_gate_fixture(repository_id=repository_id) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated
+        ):
+            content_a, content_b = "file a\n", "file b\n"
+            file_a = PublishableFile("a.py", content_a, sha256_bytes(content_a.encode()))
+            file_b = PublishableFile("b.py", content_b, sha256_bytes(content_b.encode()))
+            cases = (
+                ("empty", (), journal_seed_for(intent), "verified file manifest is invalid"),
+                ("bad-content-digest", (
+                    PublishableFile("a.py", content_a, "0" * 64),
+                ), replace(
+                    journal_seed_for(intent),
+                    verified_contents_digest=sha256_digest((("a.py", content_a),)),
+                ), "verified file manifest is invalid"),
+                ("duplicate", (file_a, file_a), replace(
+                    journal_seed_for(intent),
+                    verified_contents_digest=sha256_digest((("a.py", content_a), ("a.py", content_a))),
+                ), "verified file digest mismatch"),
+                ("unsorted", (file_b, file_a), replace(
+                    journal_seed_for(intent),
+                    verified_contents_digest=sha256_digest((("b.py", content_b), ("a.py", content_a))),
+                ), "verified file digest mismatch"),
+                ("seed-digest-mismatch", (file_a,), journal_seed_for(intent),
+                 "verified file digest mismatch"),
+            )
+            for label, files, seed, message in cases:
+                with self.subTest(manifest=label):
+                    effects = []
+
+                    class FakeMinter:
+                        def mint(self, _grant):
+                            effects.append("mint")
+                            return _InstallationToken(
+                                "synthetic-token-never-used", "2026-09-29T13:00:00Z"
+                            )
+
+                    with tempfile.TemporaryDirectory() as temporary_directory:
+                        config = GitHubAppBrokerConfig(
+                            app_id=123, installation_id=456, repository_id=1001,
+                            repository="example/agent00x-sandbox",
+                            private_key_path=Path(temporary_directory) / "unused-key-reference",
+                            api_url="https://api.github.com",
+                        )
+                        broker = GitHubAppCredentialBroker(
+                            config, FakeMinter(),
+                            get_json=lambda *_args: effects.append("GET") or [],
+                            post_json=lambda *_args: effects.append("POST") or {},
+                            put_json=lambda *_args: effects.append("PUT") or {},
+                        )
+                        with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                            loader_calls = []
+                            with self.assertRaisesRegex(
+                                ControlledPublicationError,
+                                f"^controlled publication: {message}$",
+                            ):
+                                run_controlled_local_publication(
+                                    seed, intent, approval, policy, engine_intent,
+                                    lambda _seed: loader_calls.append("loaded") or staged_change,
+                                    "decision-local-001", FakeGateway([]),
+                                    gateway_envelope(intent), broker,
+                                    dict(
+                                        matching_grant(intent), installation_id=456,
+                                        permissions=["contents:write", "pull_requests:write"],
+                                    ),
+                                    journal, GitHubAppPublicationChannel,
+                                    verified_files=files,
+                                    actuator_id="test-actuator", now=FIXED_NOW,
+                                )
+                            self.assertEqual(effects, [])
+                            self.assertEqual(loader_calls, [])
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+
+    def test_lost_verified_file_response_never_reaches_pr_post_or_blind_retry(self):
+        repository_id = "github-installation/456/repository/1001"
+        with decided_gate_fixture(repository_id=repository_id) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated
+        ):
+            file_content = "approved verified content\n"
+            verified_file = PublishableFile(
+                "calculator.py", file_content,
+                sha256_bytes(file_content.encode("utf-8")),
+            )
+            seed = replace(
+                journal_seed_for(intent),
+                verified_contents_digest=sha256_digest(
+                    ((verified_file.path, verified_file.content),)
+                ),
+            )
+            base_content = (ROOT / "fixtures/repository/project/calculator.py").read_bytes()
+            base_blob_sha = hashlib.sha1(
+                b"blob " + str(len(base_content)).encode("ascii") + b"\0" + base_content
+            ).hexdigest()
+            events = []
+            branch_created = False
+
+            class FakeMinter:
+                def mint(self, _grant):
+                    events.append("mint")
+                    return _InstallationToken(
+                        "synthetic-token-not-for-transport", "2026-09-29T13:00:00Z"
+                    )
+
+            def get_json(url, _headers):
+                if "/contents/calculator.py?ref=" in url:
+                    if "?ref=" + staged_change["base_commit"] in url:
+                        return {"type": "file", "sha": base_blob_sha}
+                    events.append("branch.file.reconcile")
+                    return {"type": "file", "sha": base_blob_sha}
+                if "/git/ref/heads/" in url:
+                    if branch_created:
+                        events.append("branch.reconcile")
+                        return {
+                            "ref": "refs/heads/agent/process-demo-001",
+                            "object": {"type": "commit", "sha": "c" * 40},
+                        }
+                    raise FileNotFoundError
+                if "/pulls?" in url:
+                    events.append("pr.lookup")
+                    return []
+                self.fail("unexpected fake GET path")
+
+            def post_json(url, _headers, _payload):
+                nonlocal branch_created
+                if url.endswith("/git/refs"):
+                    events.append("branch.create")
+                    branch_created = True
+                    return {}
+                events.append("pr.post")
+                self.fail("PR POST must not follow an uncertain file write")
+
+            def put_json(_url, _headers, _payload):
+                events.append("file.put")
+                raise RuntimeError("synthetic lost file response")
+
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                config = GitHubAppBrokerConfig(
+                    app_id=123, installation_id=456, repository_id=1001,
+                    repository="example/agent00x-sandbox",
+                    private_key_path=Path(temporary_directory) / "unused-key-reference",
+                    api_url="https://api.github.com",
+                )
+                broker = GitHubAppCredentialBroker(
+                    config, FakeMinter(), get_json=get_json,
+                    post_json=post_json, put_json=put_json,
+                )
+                with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                    with self.assertRaises(PublicationRecoveryRequired):
+                        run_controlled_local_publication(
+                            seed, intent, approval, policy, engine_intent,
+                            lambda _seed: staged_change, "decision-local-001",
+                            FakeGateway([]), gateway_envelope(intent), broker,
+                            dict(
+                                matching_grant(intent), installation_id=456,
+                                permissions=["contents:write", "pull_requests:write"],
+                            ),
+                            journal, GitHubAppPublicationChannel,
+                            verified_files=(verified_file,),
+                            actuator_id="test-actuator", now=FIXED_NOW,
+                        )
+                    self.assertEqual(events.count("mint"), 1)
+                    self.assertEqual(events.count("branch.create"), 1)
+                    self.assertEqual(events.count("file.put"), 1)
+                    self.assertEqual(events.count("branch.reconcile"), 1)
+                    self.assertEqual(events.count("branch.file.reconcile"), 1)
+                    self.assertEqual(events.count("pr.lookup"), 1)
+                    self.assertNotIn("pr.post", events)
+                    self.assertEqual(
+                        journal.get(intent.process_id).status,
+                        "reconciliation_required",
+                    )
+
+    def test_lookalike_github_adapter_types_are_rejected_before_loading(self):
+        repository_id = "github-installation/456/repository/1001"
+        with decided_gate_fixture(repository_id=repository_id) as (
+            intent, approval, policy, engine_intent, staged_change, _evaluated
+        ):
+            lookalike_broker_type = type(
+                "GitHubAppCredentialBroker",
+                (),
+                {"__module__": "app_contracts.github_app"},
+            )
+            lookalike_channel_type = type(
+                "GitHubAppPublicationChannel",
+                (),
+                {"__module__": "app_contracts.github_app"},
+            )
+            effects = []
+
+            class FakeMinter:
+                def mint(self, _grant):
+                    effects.append("token.mint")
+                    return _InstallationToken(
+                        "synthetic-token-never-used", "2026-09-29T13:00:00Z"
+                    )
+
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                config = GitHubAppBrokerConfig(
+                    app_id=123, installation_id=456, repository_id=1001,
+                    repository="example/agent00x-sandbox",
+                    private_key_path=Path(temporary_directory) / "unused-key-reference",
+                    api_url="https://api.github.com",
+                )
+                exact_broker = GitHubAppCredentialBroker(config, FakeMinter())
+                for broker, endpoint, expected_error in (
+                    (
+                        lookalike_broker_type(), GitHubAppPublicationChannel,
+                        "controlled publication: supported broker is required",
+                    ),
+                    (
+                        exact_broker, lookalike_channel_type,
+                        "controlled publication: GitHub channel type is required",
+                    ),
+                ):
+                    with self.subTest(broker_type=type(broker).__name__, endpoint=endpoint):
+                        with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                            loader_calls = []
+                            with self.assertRaisesRegex(
+                                ControlledPublicationError, f"^{expected_error}$"
+                            ):
+                                run_controlled_local_publication(
+                                    journal_seed_for(intent), intent, approval,
+                                    policy, engine_intent,
+                                    lambda _seed: loader_calls.append("loaded") or staged_change,
+                                    "decision-local-001", FakeGateway([]),
+                                    gateway_envelope(intent), broker,
+                                    dict(
+                                        matching_grant(intent), installation_id=456,
+                                        permissions=["contents:write", "pull_requests:write"],
+                                    ),
+                                    journal, endpoint, actuator_id="test-actuator",
+                                    now=FIXED_NOW,
+                                )
+                            self.assertEqual(loader_calls, [])
+                            self.assertEqual(effects, [])
+                            with self.assertRaises(KeyError):
+                                journal.get(intent.process_id)
+
     def test_missing_approval_stops_before_loader_or_effectful_collaborators(self):
         with decided_gate_fixture() as (intent, _approval, policy, engine_intent,
                                         staged_change, _evaluated):
@@ -1747,7 +2403,10 @@ class ControlledLocalPublicationTests(unittest.TestCase):
 
 class PinnedToMockPublicationTests(unittest.TestCase):
     def test_pinned_verified_seed_produces_one_mock_receipt_and_completed_journal(self):
-        with decided_gate_fixture(include_seed=True) as (
+        with decided_gate_fixture(
+            include_seed=True,
+            repository_id="github-installation/456/repository/1001",
+        ) as (
             intent, approval, policy, engine_intent, staged_change, _evaluated, seed
         ):
             self.assertEqual(seed.verdict, "pass")
@@ -2149,16 +2808,19 @@ class JournalIdempotencyIntegrationTests(unittest.TestCase):
             "idempotency_key": intent.idempotency_key,
             "staged_change_digest": intent.staged_change_digest,
         }
-        approval = {
+        approval = sign_test_approval({
+            "schema_version": 1,
             "process_id": intent.process_id,
             "repository_id": intent.repository_id,
             "operation": "publish_pull_request",
             "approval_id": approval_id,
+            "approver_id": "user-alice",
             "policy_version": policy_version,
             "expires_at": expires_at,
             "staged_change_digest": intent.staged_change_digest,
             "approved_intent_digest": sha256_digest(engine_intent),
-        }
+            "approved_at": format_time(FIXED_NOW - timedelta(minutes=1)),
+        })
         return approval, engine_intent
 
     def _run(self, seed, intent, staged_change, approval, engine_intent,
@@ -2180,6 +2842,8 @@ class JournalIdempotencyIntegrationTests(unittest.TestCase):
                 version="policy-test-v1",
                 allowed_repositories=frozenset({"fixture-repository", "foreign-repository"}),
                 allowed_actuators=frozenset({"test-actuator"}),
+                allowed_approver_ids=frozenset(TEST_APPROVER_PUBLIC_KEYS),
+                trusted_approver_public_keys=TEST_APPROVER_PUBLIC_KEYS,
             )
             policy = DeterministicPolicy(config)
             approval, engine_intent = self._authority(intent, "approval-original", config.version)
@@ -2209,7 +2873,7 @@ class JournalIdempotencyIntegrationTests(unittest.TestCase):
                         (
                             "branch",
                             seed,
-                            derive_publication_intent(seed, "agent/process-alternate"),
+                            derive_publication_intent(seed, "agent/process-alternate", "master"),
                             staged_change,
                         ),
                         (
@@ -2229,7 +2893,7 @@ class JournalIdempotencyIntegrationTests(unittest.TestCase):
                         with self.subTest(conflict=label):
                             if alternate_intent is None:
                                 alternate_intent = derive_publication_intent(
-                                    alternate_seed, "agent/process-demo-001"
+                                    alternate_seed, "agent/process-demo-001", "master"
                                 )
                             alternate_approval, alternate_engine_intent = self._authority(
                                 alternate_intent, f"approval-{label}", config.version
@@ -2259,7 +2923,9 @@ class PublicationRecoveryIntegrationTests(unittest.TestCase):
                 with self.subTest(outcome=outcome):
                     endpoint = MockGitHubEndpoint()
                     original_publish = endpoint.publish_pull_request
+                    original_lookup = endpoint.find_by_idempotency_key
                     publish_calls = []
+                    lookup_calls = []
 
                     def unknown_result(_request):
                         publish_calls.append("called")
@@ -2272,12 +2938,18 @@ class PublicationRecoveryIntegrationTests(unittest.TestCase):
                             intent.staged_change_digest, intent.idempotency_key,
                         )
 
+                    def record_lookup(key, **kwargs):
+                        lookup_calls.append(key)
+                        return original_lookup(key, **kwargs)
+
                     endpoint.publish_pull_request = (
                         unknown_result if outcome == "unknown" else mismatched_receipt
                     )
+                    endpoint.find_by_idempotency_key = record_lookup
                     broker = InMemoryCredentialBroker(lambda: endpoint)
                     with tempfile.TemporaryDirectory() as temporary_directory:
-                        with PublicationJournal(Path(temporary_directory) / "journal.sqlite") as journal:
+                        database = Path(temporary_directory) / "journal.sqlite"
+                        with PublicationJournal(database) as journal:
                             with self.assertRaises(PublicationRecoveryRequired):
                                 run_controlled_local_publication(
                                     seed, intent, approval, policy, engine_intent,
@@ -2289,19 +2961,35 @@ class PublicationRecoveryIntegrationTests(unittest.TestCase):
                             self.assertEqual(journal.get(intent.process_id).status,
                                              "reconciliation_required")
                             self.assertEqual(publish_calls, ["called"])
+                            self.assertEqual(len(lookup_calls), 1)
+                            lookups_after_uncertain_attempt = tuple(lookup_calls)
+
+                        with PublicationJournal(database) as reopened:
+                            with self.assertRaises(PublicationRecoveryRequired):
+                                recover_publication(
+                                    reopened, endpoint, intent.process_id
+                                )
+                            self.assertEqual(
+                                reopened.get(intent.process_id).status,
+                                "reconciliation_required",
+                            )
+                            self.assertEqual(
+                                tuple(lookup_calls), lookups_after_uncertain_attempt
+                            )
+                            self.assertEqual(publish_calls, ["called"])
 
                             # Fresh gate decisions and a fresh grant cannot reopen the
-                            # uncertain process or issue a second endpoint call.
+                            # reopened uncertain process or issue a second endpoint call.
                             endpoint.publish_pull_request = original_publish
                             fresh_engine_intent = dict(
                                 engine_intent,
                                 approval_id="approval-fresh-after-unknown",
                             )
-                            fresh_approval = dict(
+                            fresh_approval = sign_test_approval(dict(
                                 approval,
                                 approval_id="approval-fresh-after-unknown",
                                 approved_intent_digest=sha256_digest(fresh_engine_intent),
-                            )
+                            ))
                             with self.assertRaisesRegex(
                                 ValueError, "^publication payload conflict$"
                             ):
@@ -2312,12 +3000,15 @@ class PublicationRecoveryIntegrationTests(unittest.TestCase):
                                     FakeGateway([]), gateway_envelope(intent), broker,
                                     dict(matching_grant(intent),
                                          credential_grant_id="grant-fresh-after-unknown"),
-                                    journal, endpoint, actuator_id="test-actuator",
+                                    reopened, endpoint, actuator_id="test-actuator",
                                     now=FIXED_NOW,
                                 )
-                            self.assertEqual(journal.get(intent.process_id).status,
+                            self.assertEqual(reopened.get(intent.process_id).status,
                                              "reconciliation_required")
                             self.assertEqual(publish_calls, ["called"])
+                            self.assertEqual(
+                                tuple(lookup_calls), lookups_after_uncertain_attempt
+                            )
                             self.assertEqual(len(endpoint._by_idempotency_key), 0)
 
     def test_reopen_recovers_one_matching_mock_effect_and_repeated_recovery_never_republishes(self):
@@ -2365,6 +3056,315 @@ class PublicationRecoveryIntegrationTests(unittest.TestCase):
                     repeated = recover_publication(reopened, endpoint, intent.process_id)
                     self.assertEqual(repeated, recovered)
                     self.assertEqual(len(endpoint._by_idempotency_key), 1)
+
+
+class RestartFileReconciliationTests(unittest.TestCase):
+    def _channel(self, get_json):
+        config = GitHubAppBrokerConfig(
+            app_id=123,
+            installation_id=456,
+            repository_id=1001,
+            repository="example/agent00x-sandbox",
+            private_key_path=Path("/unused/synthetic-key-reference"),
+            api_url="https://api.github.com",
+        )
+        return GitHubAppPublicationChannel(
+            config,
+            _InstallationToken("synthetic-token-never-used", "2026-09-29T13:00:00Z"),
+            get_json=get_json,
+            post_json=lambda *_args: self.fail("restart reconciliation must not POST"),
+            put_json=lambda *_args: self.fail("restart reconciliation must not PUT"),
+        )
+
+    def _attempting_journal(self, database, intent, manifest_digest):
+        with PublicationJournal(database) as journal:
+            journal.prepare(
+                intent.process_id,
+                idempotency_key=intent.idempotency_key,
+                request_digest=sha256_digest("synthetic-recovery-request"),
+                repository_id=intent.repository_id,
+                verified_files_digest=manifest_digest,
+            )
+            journal.mark_attempting(intent.process_id)
+
+    def test_reopen_persists_verified_file_state_without_resuming_publication(self):
+        from app_contracts.github_app import _git_blob_sha
+
+        with decided_gate_fixture(
+            include_seed=True,
+            repository_id="github-installation/456/repository/1001",
+        ) as (
+            intent, _approval, _policy, _engine_intent, _staged, _evaluated, base_seed
+        ):
+            file_content = "restart-verified content\n"
+            file = PublishableFile(
+                "calculator.py", file_content,
+                sha256_bytes(file_content.encode("utf-8")),
+            )
+            seed = replace(
+                base_seed,
+                verified_contents_digest=sha256_digest(((file.path, file.content),)),
+            )
+            commit_sha = "c" * 40
+            calls = []
+
+            def get_json(url, _headers):
+                calls.append(("GET", url))
+                if "/pulls?" in url:
+                    return []
+                if "/git/ref/heads/" in url:
+                    return {
+                        "ref": f"refs/heads/{intent.branch}",
+                        "object": {"type": "commit", "sha": commit_sha},
+                    }
+                return {"type": "file", "sha": _git_blob_sha(file_content)}
+
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                database = Path(temporary_directory) / "journal.sqlite"
+                self._attempting_journal(database, intent, seed.verified_contents_digest)
+                channel = self._channel(get_json)
+                with PublicationJournal(database) as reopened:
+                    record = reconcile_controlled_attempt_after_restart(
+                        seed, intent, (file,), reopened, channel, now=FIXED_NOW,
+                    )
+                    self.assertEqual(record.status, "reconciliation_required")
+                    self.assertEqual(record.verified_files_digest, seed.verified_contents_digest)
+                    self.assertEqual(record.verified_files_outcome, "verified")
+                    self.assertEqual(record.verified_branch_commit_sha, commit_sha)
+                    self.assertEqual(record.verified_files_observed_at, "2026-09-29T12:00:00Z")
+                    self.assertTrue(all(method == "GET" for method, _url in calls))
+
+                calls.clear()
+                with PublicationJournal(database) as reopened_again:
+                    record = reopened_again.get(intent.process_id)
+                    self.assertEqual(record.verified_files_outcome, "verified")
+                    self.assertEqual(record.verified_branch_commit_sha, commit_sha)
+                    self.assertEqual(calls, [])
+
+    def test_reopen_persists_unverified_state_and_never_resumes_on_partial_or_unknown(self):
+        with decided_gate_fixture(
+            include_seed=True,
+            repository_id="github-installation/456/repository/1001",
+        ) as (
+            intent, _approval, _policy, _engine_intent, _staged, _evaluated, base_seed
+        ):
+            content_a, content_b = "verified a\n", "verified b\n"
+            files = (
+                PublishableFile("a.py", content_a, sha256_bytes(content_a.encode())),
+                PublishableFile("b.py", content_b, sha256_bytes(content_b.encode())),
+            )
+            seed = replace(
+                base_seed,
+                verified_contents_digest=sha256_digest(
+                    ((files[0].path, files[0].content), (files[1].path, files[1].content))
+                ),
+            )
+            from app_contracts.github_app import _git_blob_sha
+            exact_a = _git_blob_sha(content_a)
+
+            for outcome in ("partial", "unknown"):
+                with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary_directory:
+                    calls = []
+
+                    def get_json(url, _headers):
+                        calls.append(("GET", url))
+                        if "/pulls?" in url:
+                            return []
+                        if "/git/ref/heads/" in url:
+                            return {
+                                "ref": f"refs/heads/{intent.branch}",
+                                "object": {"type": "commit", "sha": "d" * 40},
+                            }
+                        if outcome == "unknown" and "/contents/b.py" in url:
+                            raise RuntimeError("synthetic unknown file state")
+                        if "/contents/a.py" in url:
+                            return {"type": "file", "sha": exact_a}
+                        return {"type": "file", "sha": "e" * 40}
+
+                    database = Path(temporary_directory) / "journal.sqlite"
+                    self._attempting_journal(database, intent, seed.verified_contents_digest)
+                    with PublicationJournal(database) as reopened:
+                        record = reconcile_controlled_attempt_after_restart(
+                            seed, intent, files, reopened, self._channel(get_json),
+                            now=FIXED_NOW,
+                        )
+                        self.assertEqual(record.status, "reconciliation_required")
+                        self.assertEqual(record.verified_files_outcome, "unverified")
+                        self.assertIsNone(record.verified_branch_commit_sha)
+                        self.assertTrue(all(method == "GET" for method, _url in calls))
+
+    def test_restart_recovery_completes_matching_pr_and_rejects_journal_binding_mismatch(self):
+        with decided_gate_fixture(
+            include_seed=True,
+            repository_id="github-installation/456/repository/1001",
+        ) as (
+            intent, _approval, _policy, _engine_intent, _staged, _evaluated, base_seed
+        ):
+            file_content = "restart PR content\n"
+            file = PublishableFile(
+                "calculator.py", file_content,
+                sha256_bytes(file_content.encode("utf-8")),
+            )
+            seed = replace(
+                base_seed,
+                verified_contents_digest=sha256_digest(((file.path, file.content),)),
+            )
+            marker = f"<!-- agent-process-idempotency: {intent.idempotency_key} -->"
+            pr_calls = []
+
+            def get_pr(url, _headers):
+                pr_calls.append(url)
+                if "/pulls?" in url:
+                    return [{
+                        "number": 42,
+                        "html_url": "https://github.com/example/agent00x-sandbox/pull/42",
+                        "head": {"ref": intent.branch},
+                        "base": {"ref": intent.base_branch},
+                        "body": marker,
+                    }]
+                self.fail("file reads are unnecessary when the matching PR is found")
+
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                database = Path(temporary_directory) / "journal.sqlite"
+                self._attempting_journal(database, intent, seed.verified_contents_digest)
+                with PublicationJournal(database) as reopened:
+                    recovered = reconcile_controlled_attempt_after_restart(
+                        seed, intent, (file,), reopened, self._channel(get_pr),
+                        now=FIXED_NOW,
+                    )
+                    self.assertEqual(recovered.status, "completed")
+                    self.assertEqual(recovered.pull_request_id, 42)
+                    self.assertIsNone(recovered.verified_files_outcome)
+                    self.assertEqual(len(pr_calls), 1)
+
+                calls = []
+                mismatch_database = Path(temporary_directory) / "mismatch.sqlite"
+                with PublicationJournal(mismatch_database) as mismatch_journal:
+                    mismatch_journal.prepare(
+                        intent.process_id,
+                        idempotency_key=f"publish/process-foreign/{intent.base_branch}/{intent.staged_change_digest}",
+                        request_digest=sha256_digest("synthetic-mismatch-request"),
+                        repository_id=intent.repository_id,
+                        verified_files_digest=seed.verified_contents_digest,
+                    )
+                    mismatch_journal.mark_attempting(intent.process_id)
+                with PublicationJournal(mismatch_database) as reopened:
+                    mismatched_channel = self._channel(
+                        lambda url, headers: calls.append(url) or []
+                    )
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: recovery binding mismatch$",
+                    ):
+                        reconcile_controlled_attempt_after_restart(
+                            seed, intent, (file,), reopened,
+                            mismatched_channel, now=FIXED_NOW,
+                        )
+                    self.assertEqual(calls, [])
+
+    def test_reopened_terminal_attempt_completes_when_exact_pr_becomes_visible_later(self):
+        from app_contracts.github_app import _git_blob_sha
+
+        with decided_gate_fixture(
+            include_seed=True,
+            repository_id="github-installation/456/repository/1001",
+        ) as (
+            intent, _approval, _policy, _engine_intent, _staged, _evaluated, base_seed
+        ):
+            content = "delayed PR visibility\n"
+            file = PublishableFile(
+                "calculator.py", content,
+                sha256_bytes(content.encode("utf-8")),
+            )
+            seed = replace(
+                base_seed,
+                verified_contents_digest=sha256_digest(((file.path, file.content),)),
+            )
+            mode = "absent"
+            events = []
+            marker = f"<!-- agent-process-idempotency: {intent.idempotency_key} -->"
+
+            def get_json(url, _headers):
+                events.append(url)
+                if "/pulls?" in url:
+                    if mode == "absent":
+                        return []
+                    head_ref = (
+                        "agent/process-other" if mode == "mismatched"
+                        else intent.branch
+                    )
+                    return [{
+                        "number": 73,
+                        "html_url": "https://github.com/example/agent00x-sandbox/pull/73",
+                        "head": {"ref": head_ref},
+                        "base": {"ref": intent.base_branch},
+                        "body": marker,
+                    }]
+                if "/git/ref/heads/" in url:
+                    return {
+                        "ref": f"refs/heads/{intent.branch}",
+                        "object": {"type": "commit", "sha": "c" * 40},
+                    }
+                if "/contents/calculator.py" in url:
+                    return {"type": "file", "sha": _git_blob_sha(content)}
+                self.fail("unexpected synthetic recovery GET")
+
+            with tempfile.TemporaryDirectory() as temporary_directory:
+                database = Path(temporary_directory) / "journal.sqlite"
+                self._attempting_journal(database, intent, seed.verified_contents_digest)
+                with PublicationJournal(database) as reopened:
+                    first = reconcile_controlled_attempt_after_restart(
+                        seed, intent, (file,), reopened, self._channel(get_json),
+                        now=FIXED_NOW,
+                    )
+                    self.assertEqual(first.status, "reconciliation_required")
+                    self.assertEqual(first.verified_files_outcome, "verified")
+
+                mode = "mismatched"
+                with PublicationJournal(database) as reopened:
+                    second = reconcile_controlled_attempt_after_restart(
+                        seed, intent, (file,), reopened, self._channel(get_json),
+                        now=FIXED_NOW + timedelta(seconds=1),
+                    )
+                    self.assertEqual(second.status, "reconciliation_required")
+                    self.assertEqual(second.verified_files_outcome, "verified")
+                    self.assertIsNone(second.pull_request_id)
+
+                mode = "matching"
+                with PublicationJournal(database) as reopened:
+                    completed = reconcile_controlled_attempt_after_restart(
+                        seed, intent, (file,), reopened, self._channel(get_json),
+                        now=FIXED_NOW + timedelta(seconds=2),
+                    )
+                    self.assertEqual(completed.status, "completed")
+                    self.assertEqual(completed.pull_request_id, 73)
+                    self.assertEqual(completed.pull_request_url,
+                                     "https://github.com/example/agent00x-sandbox/pull/73")
+                    self.assertEqual(completed.verified_files_outcome, "verified")
+                    self.assertEqual(completed.verified_branch_commit_sha, "c" * 40)
+                self.assertEqual(sum("/pulls?" in url for url in events), 3)
+                self.assertTrue(all("/git/refs" not in url for url in events))
+
+                digest_mismatch_database = Path(temporary_directory) / "digest-mismatch.sqlite"
+                with PublicationJournal(digest_mismatch_database) as mismatch_journal:
+                    mismatch_journal.prepare(
+                        intent.process_id,
+                        idempotency_key=intent.idempotency_key,
+                        request_digest=sha256_digest("synthetic-digest-mismatch-request"),
+                        repository_id=intent.repository_id,
+                        verified_files_digest="sha256:" + "f" * 64,
+                    )
+                    mismatch_journal.mark_attempting(intent.process_id)
+                with PublicationJournal(digest_mismatch_database) as reopened:
+                    with self.assertRaisesRegex(
+                        ControlledPublicationError,
+                        "^controlled publication: recovery binding mismatch$",
+                    ):
+                        reconcile_controlled_attempt_after_restart(
+                            seed, intent, (file,), reopened,
+                            self._channel(lambda *_args: self.fail("digest mismatch must stop before GET")),
+                            now=FIXED_NOW,
+                        )
 
 if __name__ == "__main__":
     unittest.main()

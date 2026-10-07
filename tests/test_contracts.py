@@ -8,10 +8,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from app_contracts.validator import ContractValidationError, validate, validate_schema
 from app_contracts.chain import validate_chain
 from app_contracts.digests import canonical_json, sha256_digest
+from app_contracts.approval_signature import verify_approval_signature
+from approval_test_support import TEST_APPROVER_PUBLIC_KEY
 
 
 SCHEMAS = {
@@ -66,9 +69,19 @@ class ContractTests(unittest.TestCase):
     def test_chain_binds_same_process_repository_digest_and_approval(self):
         validate_chain(self.chain)
 
+    def test_valid_fixture_approval_signature_verifies(self):
+        self.assertTrue(
+            verify_approval_signature(
+                self.chain["approval"], TEST_APPROVER_PUBLIC_KEY
+            )
+        )
+
     def test_idempotency_key_is_bound_to_process_and_staged_digest(self):
         intent = self.chain["intent"]
-        expected = f"publish/{intent['process_id']}/{intent['staged_change_digest']}"
+        expected = (
+            f"publish/{intent['branch_namespace'].removeprefix('agent/')}"
+            f"/{intent['base_branch']}/{intent['staged_change_digest']}"
+        )
         self.assertEqual(intent["idempotency_key"], expected)
         self.assertEqual(self.chain["action_receipt"]["idempotency_key"], expected)
 

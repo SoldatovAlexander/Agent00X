@@ -19,8 +19,9 @@ class MockGitHubTests(unittest.TestCase):
             "operation": "publish_pull_request",
             "repository_id": "github-installation/42/repository/1001",
             "branch": "agent/process-demo-001",
+            "base_branch": "master",
             "staged_change_digest": digest,
-            "idempotency_key": f"publish/process-demo-001/{digest}",
+            "idempotency_key": f"publish/process-demo-001/master/{digest}",
             "policy_effect": "allow",
             "approval_valid": True,
         }
@@ -30,6 +31,7 @@ class MockGitHubTests(unittest.TestCase):
         second = self.endpoint.publish_pull_request(dict(self.request))
         self.assertEqual(first, second)
         self.assertEqual(first.pull_request_id, 1)
+        self.assertEqual(first.base_branch, "master")
 
     def test_deny_decision_cannot_publish(self):
         request = dict(self.request, policy_effect="deny")
@@ -45,6 +47,7 @@ class MockGitHubTests(unittest.TestCase):
         first = self.endpoint.publish_pull_request(self.request)
         cases = (
             ("branch", "agent/process-evil-001", "idempotency key mismatch"),
+            ("base_branch", "main", "idempotency key mismatch"),
             ("staged_change_digest", "sha256:" + "b" * 64, "idempotency key mismatch"),
             ("repository_id", "github-installation/42/repository/9999", "idempotency conflict"),
         )
@@ -173,7 +176,7 @@ class MockGitHubTests(unittest.TestCase):
                     self.request,
                     branch=branch,
                     staged_change_digest=digest,
-                    idempotency_key=f"publish/{branch.removeprefix('agent/')}/{digest}",
+                    idempotency_key=f"publish/{branch.removeprefix('agent/')}/master/{digest}",
                 )
                 with self.assertRaisesRegex(
                     ContractValidationError, "branch is outside the agent namespace"
@@ -188,7 +191,7 @@ class MockGitHubTests(unittest.TestCase):
             self.request,
             branch="agent/",
             staged_change_digest=digest,
-            idempotency_key=f"publish//{digest}",
+            idempotency_key=f"publish//master/{digest}",
         )
         with self.assertRaisesRegex(
             ContractValidationError, "branch is outside the agent namespace"
@@ -203,11 +206,11 @@ class MockGitHubTests(unittest.TestCase):
                 request = dict(
                     self.request,
                     staged_change_digest=bad_digest,
-                    idempotency_key=f"publish/process-demo-001/{bad_digest}",
+                    idempotency_key=f"publish/process-demo-001/master/{bad_digest}",
                 )
                 with self.assertRaisesRegex(ContractValidationError, "^mock github: digest is malformed$"):
                     endpoint.publish_pull_request(request)
-                self.assertIsNone(endpoint.find_by_idempotency_key(f"publish/process-demo-001/{bad_digest}"))
+                self.assertIsNone(endpoint.find_by_idempotency_key(f"publish/process-demo-001/master/{bad_digest}"))
 
     def test_content_unbound_idempotency_key_is_rejected(self):
         request = dict(self.request, idempotency_key="publish/process-demo-001/anything")

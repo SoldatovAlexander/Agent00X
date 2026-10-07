@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from app_contracts.executor import VerifierInput, VerifierResult, VerifierVerdict, verifier_snapshot_tree_digest
 from app_contracts.verifier_attestation import (
     VerifierAttestationError,
+    build_signed_verifier_response,
     new_verifier_invocation_nonce,
     verify_signed_verifier_response,
     verifier_attestation_signing_bytes,
@@ -25,6 +26,7 @@ from app_contracts.verifier_process import (
     VerifierProcessRequest,
     VerifierProcessResponse,
     digest_verifier_request,
+    serialize_verifier_request,
 )
 from app_contracts.validator import ContractValidationError, validate
 
@@ -63,7 +65,7 @@ def fixture():
         base_commit=prepared.base_commit,
         snapshot_tree_digest=prepared.snapshot_tree_digest,
         replay_result_digest=prepared.replay_result_digest,
-        verifier_id="fixture-verifier",
+        verifier_id=NONCE,
         patch_digest=prepared.patch_digest,
         evidence_digest=prepared.evidence_digest,
         verification_digest=prepared.verification_digest,
@@ -78,17 +80,23 @@ def fixture():
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    envelope = {
-        "schema": "signed-verifier-response/v1",
-        "key_id": KEY_ID,
-        "invocation_nonce": NONCE,
-        "request_digest": digest_verifier_request(request),
-        "verifier_profile_digest": PROFILE_DIGEST,
-        "issued_at": now.isoformat().replace("+00:00", "Z"),
-        "response": asdict(response),
-    }
-    signature = private_key.sign(verifier_attestation_signing_bytes(envelope))
-    envelope["signature"] = signature.hex()
+    response_bytes = json.dumps(
+        asdict(response),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    envelope_bytes = build_signed_verifier_response(
+        serialize_verifier_request(request),
+        response_bytes,
+        invocation_nonce=NONCE,
+        verifier_profile_digest=PROFILE_DIGEST,
+        key_id=KEY_ID,
+        signing_key=private_key,
+        issued_at=now,
+    )
+    envelope = json.loads(envelope_bytes)
     return prepared, envelope, public_key, now
 
 
@@ -121,6 +129,82 @@ class VerifierAttestationTests(unittest.TestCase):
         self.assertEqual(result.verifier_profile_digest, PROFILE_DIGEST)
         self.assertEqual(result.verifier_result.verdict, VerifierVerdict.PASS)
         self.assertRegex(result.attestation_digest, r"^sha256:[0-9a-f]{64}$")
+
+    def test_verifier_side_builder_rejects_unbound_or_noncanonical_response(self):
+        prepared, envelope, _public_key, _now = fixture()
+        request_bytes = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(prepared)
+        )
+        signing_key = Ed25519PrivateKey.generate()
+        response = deepcopy(envelope["response"])
+
+        wrong_nonce = deepcopy(response)
+        wrong_nonce["verifier_result"]["verifier_id"] = OTHER_NONCE
+        valid_wrong_nonce = json.dumps(
+            wrong_nonce, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        malformed_cases = (
+            valid_wrong_nonce,
+            json.dumps(response, sort_keys=True, separators=(",", ":")).encode()
+            + b" ",
+        )
+        for response_bytes in malformed_cases:
+            with self.subTest(response_length=len(response_bytes)):
+                with self.assertRaises(VerifierAttestationError) as raised:
+                    build_signed_verifier_response(
+                        request_bytes,
+                        response_bytes,
+                        invocation_nonce=NONCE,
+                        verifier_profile_digest=PROFILE_DIGEST,
+                        key_id=KEY_ID,
+                        signing_key=signing_key,
+                        issued_at=datetime.now(timezone.utc),
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    "verifier attestation: response signing failed",
+                )
+
+    def test_verifier_side_builder_rejects_invalid_binding_and_signer(self):
+        prepared, envelope, _public_key, now = fixture()
+        request = VerifierProcessRequest.from_verifier_input(prepared)
+        request_bytes = serialize_verifier_request(request)
+        response_bytes = json.dumps(
+            envelope["response"], sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        signing_key = Ed25519PrivateKey.generate()
+        changed_request = request_bytes.replace(b"\"test_timeout_seconds\":30", b"\"test_timeout_seconds\":31")
+
+        for kwargs in (
+            {"invocation_nonce": "bad"},
+            {"verifier_profile_digest": "not-a-digest"},
+            {"key_id": ""},
+            {"signing_key": object()},
+        ):
+            params = {
+                "invocation_nonce": NONCE,
+                "verifier_profile_digest": PROFILE_DIGEST,
+                "key_id": KEY_ID,
+                "signing_key": signing_key,
+                "issued_at": now,
+            }
+            params.update(kwargs)
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(VerifierAttestationError):
+                    build_signed_verifier_response(
+                        request_bytes, response_bytes, **params
+                    )
+
+        with self.assertRaises(VerifierAttestationError):
+            build_signed_verifier_response(
+                changed_request,
+                response_bytes,
+                invocation_nonce=NONCE,
+                verifier_profile_digest=PROFILE_DIGEST,
+                key_id=KEY_ID,
+                signing_key=signing_key,
+                issued_at=now,
+            )
 
     def test_wrong_nonce_profile_request_or_key_fails_closed(self):
         prepared, envelope, public_key, now = fixture()

@@ -21129,3 +21129,420 @@ provider call, POST/PUT, branch/PR, Docker, deployment или изменение
   Focused suite: 106 tests passed; full offline suite: 1065 tests (1056 passed,
   9 skipped); `git diff --check` clean. CLI not run; no credential, network,
   GitHub call, provider write, Docker, SSH, branch, PR or deployment occurred.
+
+### Batch FO — reconcile the top-level test status (R2 execution batch 128/128; 1 task)
+
+#### EXP-575 — update README to the latest accepted offline suite evidence
+Статус: ACCEPTED
+Цель: ensure README's claimed current full-suite result matches the most recent
+accepted project-wide run, EXP-574.
+Гипотеза: replacing the stale Batch FI count with the directly observed
+post-EXP-574 count prevents the project front page from understating current
+test coverage while keeping the limits of that evidence explicit.
+Зависит от: accepted EXP-574 and its exact full-suite command/output.
+Среда исполнения: local documentation-only; no code, database, network, Docker,
+credential, Worker, verifier invocation or provider operation.
+Внешняя цель: none.
+Вне scope: changing R2 status, claiming MVP completion, reconciling historical
+batch counts, or changing implementation-status evidence.
+Разрешённые пути:
+- README.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- README identifies the current suite as post-Batch FN / EXP-574 and says
+  1065 tests, 1056 passed, 9 skipped;
+- README retains the caveat that this proves only covered local properties,
+  not live Worker, independent verifier trust or real publication;
+- direct consistency search and `git diff --check` pass.
+Проверки:
+- `rg -n -A 2 'Полный offline suite после Batch FN' README.md`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: README now points to Batch FN / EXP-574 and reports the
+  observed 1065-test run (1056 passed, 9 skipped), followed by its existing
+  local-only evidence caveat. The requested `rg` consistency check matched and
+  `git diff --check` passed. No tests were rerun because the task changes only
+  documentation; the cited suite is the already observed EXP-574 run.
+
+### Batch FP — reconcile the persisted Worker-stage status (R2 execution batch 129/129; 1 task)
+
+#### EXP-576 — distinguish missing project artifact from present temporary stage
+Статус: ACCEPTED
+Цель: update the operational status to reflect the current presence and
+limitations of the historical EXP-548 SQLite stage.
+Гипотеза: checking the exact recorded path and exact-digest read-only preview
+will distinguish an absent project artifact from a still-readable temporary
+host artifact, improving the next human-approval decision without mutating it.
+Зависит от: accepted EXP-548, EXP-555 and EXP-574; recorded stage path and
+stage digest in this queue.
+Среда исполнения: local read-only stage inspection only. No credentials,
+network, database writes, Docker, Worker, verifier invocation or provider call.
+Внешняя цель: none.
+Вне scope: copying or relocating the stage, generating/signing approval,
+changing repository metadata, starting publication or asserting durability.
+Разрешённые пути:
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- verify only the exact recorded EXP-548 stage path and digest;
+- record that the temp stage is present and previewable but is outside the
+  project tree, may disappear, and has no approval;
+- retain the distinction that no durable project artifact or live PR exists;
+- `git diff --check` passes.
+Проверки:
+- `test -f /var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m app_contracts.stage_preview /var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3 sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: the exact recorded EXP-548 stage file is present; the
+  read-only preview accepted `sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`
+  and returned the recorded PASS and `backend/routes.py` candidate. The file is
+  in the host's temporary directory, outside the repository, and has no
+  approval; documentation now distinguishes it from a durable project artifact.
+  Exact-path existence, preview and `git diff --check` all passed. No stage
+  mutation, credential, network, Worker/verifier invocation or provider call.
+
+### Batch FQ — confirm public source repository identity (R2 execution batch 130/130; 1 task)
+
+#### EXP-577 — read bounded metadata for the fixed public target
+Статус: ACCEPTED
+Цель: obtain the current public GitHub repository ID and default branch for
+the already-selected source `SoldatovAlexander/brainbooster_full_v11`.
+Гипотеза: one anonymous bounded metadata GET can confirm the source identity
+needed for a later review request without touching credentials or provider
+permissions.
+Зависит от: accepted EXP-574 fixed repository target and EXP-576 current-stage
+evidence.
+Среда исполнения: one unauthenticated public GitHub REST GET with a 15-second
+timeout and 64 KiB response cap. No token, cookies, credential file, other
+network host, Docker, repository clone, stage write or provider write.
+Внешняя цель: `https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11`
+Вне scope: reading branches/contents, fetching the repository snapshot,
+installations, authentication, approval, branch/PR creation or any write.
+Разрешённые пути:
+- .opencode/tasks/WORK_QUEUE.md
+- docs/27-implementation-status.md
+Критерии приёмки:
+- response is successful, <= 64 KiB, and says exact `full_name`, `public`
+  visibility, `archived=false`, with a positive numeric `id` and non-empty
+  `default_branch`;
+- record only those bounded metadata fields and observation date; do not
+  change the fixed source pin or infer GitHub App installation authority;
+- the exact command succeeds and `git diff --check` passes.
+Проверки:
+- `curl -fsS --max-time 15 --max-filesize 65536 -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11 | jq -ce '{full_name,id,default_branch,archived,visibility}'`
+- `git diff --check`
+Разрешённые внешние команды:
+- the exact anonymous GET above only
+Commit: DENIED.
+Остановись, если response exceeds 64 KiB, target is not public/exact, HTTP
+status is not 2xx, or command would require authentication.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: one bounded unauthenticated GET returned exact
+  `full_name=SoldatovAlexander/brainbooster_full_v11`, public visibility,
+  `archived=false`, repository ID `1040264611`, and default branch `master`.
+  Only these metadata were recorded; the pin was not changed and no App
+  installation/permission was inferred. The exact GET succeeded and
+  `git diff --check` passed. No credential, clone, content read, stage write,
+  approval, provider write or other external action occurred.
+
+### Batch FR — preserve the reviewed Worker stage locally (R2 execution batch 131/131; 1 task)
+
+#### EXP-578 — copy the exact EXP-548 SQLite stage to stable local evidence storage
+Статус: ACCEPTED
+Цель: preserve the already-reviewed EXP-548 stage outside the OS temporary
+directory so later local approval review does not depend on temp cleanup.
+Гипотеза: a byte-identical copy to a new dedicated local evidence directory,
+followed by exact-digest read-only preview, preserves the original evidence
+without changing the stage or entering the repository.
+Зависит от: accepted EXP-548 and EXP-576 exact preview; the recorded source
+stage digest `sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`.
+Среда исполнения: local filesystem only. No network, credential, database
+mutation, Docker, Worker/verifier invocation, approval or provider operation.
+Внешняя цель: none.
+Вне scope: modifying/removing the source file, including the artifact in Git,
+creating approval, signing, publication or claiming production durability.
+Разрешённые пути:
+- `/Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3` (new file only)
+- `.opencode/tasks/WORK_QUEUE.md`
+Разрешённые действия:
+- create `/Volumes/DATA/Agent00X-local-evidence` if absent;
+- copy the exact source DB with no-overwrite behavior;
+- compare source and destination bytes and run the exact read-only preview on
+  the destination.
+Критерии приёмки:
+- destination did not exist before this card and is created without overwriting;
+- byte comparison succeeds and exact-digest preview returns PASS for the same
+  stage/candidate;
+- original temp source remains unchanged and destination remains outside Git;
+- no approval, credential, network or provider effect occurs.
+Проверки:
+- `test ! -e /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+- `mkdir -p /Volumes/DATA/Agent00X-local-evidence && cp -n /var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3 /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+- `cmp /var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3 /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m app_contracts.stage_preview /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3 sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если destination exists, source gains a SQLite sidecar, byte
+comparison fails, or preview does not return the exact expected stage.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: copied the 16,384-byte stage DB to the previously
+  absent `/Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3` using
+  no-overwrite behavior. Byte comparison with the original temp source passed;
+  read-only exact-digest preview also passed and returned the same PASS stage.
+  Source remains intact; the evidence copy is outside Git. No database mutation,
+  credential, network, approval, provider effect or external service was used.
+
+### Batch FS — report the preserved stage accurately (R2 execution batch 132/132; 1 task)
+
+#### EXP-579 — record the external local evidence copy without a durability claim
+Статус: ACCEPTED
+Цель: reconcile document 27 with the successful byte-identical local copy of
+the reviewed EXP-548 stage.
+Гипотеза: documenting the retained copy separately from repository and
+production durability will make the approval gate reproducible without
+overclaiming persistence.
+Зависит от: accepted EXP-576 and EXP-578.
+Среда исполнения: local documentation-only plus exact read-only file checks;
+no credentials, network, SQLite mutation, Worker, verifier or provider call.
+Внешняя цель: none.
+Вне scope: copying again, changing the stage, committing its database, signing,
+approval, provider write or claiming backup/replication.
+Разрешённые пути:
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- distinguish the project tree from the local evidence copy outside Git;
+- say the copy is byte-identical and previewable, but not backed up or
+  production durable;
+- retain that no approval/PR exists and independent verifier trust remains open;
+- destination existence, byte equality, exact read-only preview and
+  `git diff --check` pass.
+Проверки:
+- `test -f /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+- `cmp /var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3 /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m app_contracts.stage_preview /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3 sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: docs/27 now distinguishes the stage in the project tree
+  from the byte-identical review copy outside Git and explicitly avoids a
+  backup/production-durability claim. The copy remains previewable, with no
+  approval or PR; independent verifier trust remains open. Destination check,
+  `cmp`, exact read-only preview and `git diff --check` all passed. No new copy,
+  DB mutation, credential, network or provider action occurred.
+
+### Batch FT — remove the stale missing-stage claim (R2 execution batch 133/133; 1 task)
+
+#### EXP-580 — reconcile the current MVP-gate summary with EXP-576/578 evidence
+Статус: ACCEPTED
+Цель: correct the open-gates summary that still says the recorded EXP-548
+stage path is absent.
+Гипотеза: separating the absent EXP-520 source from the present EXP-548 stage
+and its local copy keeps the approval readiness statement evidence-based.
+Зависит от: accepted EXP-576, EXP-578 and EXP-579.
+Среда исполнения: documentation-only; exact local read-only presence/preview
+checks. No network, credentials, stage writes, Worker, verifier or provider call.
+Внешняя цель: none.
+Вне scope: creating approval, signing, publishing, modifying or relocating
+stage files, and claiming backup or production durability.
+Разрешённые пути:
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- status says the repository checkout contains no stage DB;
+- distinguish the present EXP-548 stage/copy from the unchecked EXP-520 source;
+- keep approval CLI, authenticated approval, independent verifier and PR marked
+  incomplete;
+- exact destination preview and `git diff --check` pass.
+Проверки:
+- `test -f /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m app_contracts.stage_preview /Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3 sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: docs/27 now says the checkout has no stage DB, the
+  recorded EXP-548 temporary stage and its byte-identical local evidence copy
+  are present, and the EXP-520 source was not rechecked. Approval CLI,
+  authenticated approval, independent verifier trust and real PR remain open.
+  Exact-copy existence, read-only preview and `git diff --check` passed. No
+  stage change, credential, network, Worker/verifier execution or provider call.
+
+### Batch FU — add verifier-side signed receipt construction (R2 execution batch 134/134; 1 task)
+
+#### EXP-581 — build challenge-bound verifier responses without exposing signer material
+Статус: ACCEPTED
+Цель: provide the verifier side of the existing signed response protocol so
+an independently hosted verifier can sign only its own typed result for one
+exact request.
+Гипотеза: a single bounded builder that accepts an already-held Ed25519 signer
+object, canonical request/response records, fresh nonce, pinned profile digest
+and issue time removes test-only signing duplication without loading or
+exporting private-key material.
+Зависит от: accepted EXP-569 response envelope and canonical request/response
+binding in `verifier_process.py`.
+Среда исполнения: local/offline synthetic tests only. No key files, environment
+secrets, network, Docker, SSH, verifier execution, stage write or provider call.
+Внешняя цель: none.
+Вне scope: private-key loading/storage, verifier deployment, trust enrollment,
+independent-host claims, executor promotion to VERIFIED, stage/approval or
+publication.
+Разрешённые пути:
+- src/app_contracts/verifier_attestation.py
+- tests/test_verifier_attestation.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- builder accepts exactly one canonical bounded request and a typed response
+  bound to that request; it requires the verifier result to echo the exact
+  invocation nonce and signs only the exact typed response/profile/request;
+- output matches `signed-verifier-response/v1`, is canonical and size-bounded,
+  and contains no private-key bytes or key export;
+- mismatch, malformed nonce/key ID/profile/time, invalid response or signing
+  failure returns a stable sanitized error;
+- existing verifier remains `independent_host_trust_established=false`, and
+  audit-only executor behavior is unchanged;
+- focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_verifier_attestation -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если реализация требует чтения/создания ключевого файла, передачи
+секрета, внешнего запуска verifier или изменения trust claim.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: `build_signed_verifier_response` now parses canonical
+  bounded request/response bytes, rebinds the typed response to the exact
+  request, requires exact nonce echo, and signs the canonical envelope using an
+  already-held Ed25519 key object. No key file loading/export was added;
+  `VerifiedVerifierAttestation.independent_host_trust_established` remains
+  false and the executor promotion gate is unchanged. Focused suite: 11 tests
+  passed; full offline suite: 1067 tests (1058 passed, 9 skipped);
+  `git diff --check` clean. No credentials, key files, network, Docker,
+  verifier execution, stage write or provider effect occurred.
+
+### Batch FV — compose a fixed-profile signed verifier run (R2 execution batch 135/135; 1 task)
+
+#### EXP-582 — bind a verifier run to a pinned target profile before signing
+Статус: ACCEPTED
+Цель: provide a transport-neutral one-request verifier-side operation that
+rejects requests outside the fixed BrainBooster profile before target test
+execution and signs only the bound verifier result.
+Гипотеза: a canonical profile digest covering source pin, allowed changed path,
+test command/timeout and verifier image/code identity, combined with pre-run
+request validation, prevents a future remote signer from attesting caller-
+chosen repository or test parameters.
+Зависит от: accepted EXP-581 signed response builder; fixed target and verifier
+constants in `brainbooster_target_profile.py`.
+Среда исполнения: local/offline synthetic tests with injected verifier and
+synthetic Ed25519 key objects only. No key files, environment secrets, network,
+Docker, SSH, target execution, stage write or provider call.
+Внешняя цель: none.
+Вне scope: transport/server/CLI, private-key loading, key enrollment, setting
+`independent_host_trust_established=true`, executor promotion to VERIFIED,
+stage/approval or publication.
+Разрешённые пути:
+- src/app_contracts/signed_verifier_service.py (new)
+- tests/test_signed_verifier_service.py (new)
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- `VerifierProfile` is immutable and its digest covers exact target repo,
+  commit and normalized snapshot-content pin, changed path, test command/timeout, pinned verifier
+  image/code identity and signer key ID;
+- the operation accepts one canonical bounded `VerifierProcessRequest`, checks
+  every profile-bound input before invoking the injected verifier, then checks
+  the returned verifier identity/result against the same request before signing;
+- a valid run produces a canonical EXP-569 envelope whose request digest,
+  nonce, profile digest and typed result verify with the existing verifier;
+- mismatched profile/request/verifier result causes no signature/output and
+  errors remain sanitized; tests use no real key file;
+- no code path asserts independent-host trust; focused, full offline suite and
+  `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_verifier_service -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если фактический profile невозможно однозначно вывести из уже
+зафиксированных контрактов, потребуется прочитать/создать key file или
+изменить trust claim.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added immutable `VerifierProfile` and the fixed
+  BrainBooster profile, then `run_signed_verifier_request` validates canonical
+  bounded input and exact repository/commit/snapshot digest+count/change path/
+  command/timeout before verifier execution. It checks the returned result
+  against the same input and pinned runtime image/code ID before producing the
+  EXP-569 signed envelope. Tests prove profile digest sensitivity, valid
+  signature round-trip, pre-run rejection of changed request fields and
+  rejection of a spoofed verifier ID. No key file loader, transport or
+  independent-host assertion was added. Focused suite: 5 tests passed; full
+  offline suite: 1072 tests (1063 passed, 9 skipped); `git diff --check` clean.
+  No credentials, network, Docker, SSH, stage write or provider effect.
+
+### Batch FW — compose the pinned Docker verifier for the signed service (R2 execution batch 136/136; 1 task)
+
+#### EXP-583 — construct the BrainBooster verifier runner from its immutable profile
+Статус: ACCEPTED
+Цель: give the signed verifier service a fixed production-shaped runner factory
+so a separate host can execute the exact already-tested image/code profile.
+Гипотеза: constructing `DockerContainerVerifier` exclusively from the pinned
+BrainBooster profile and timeout avoids repeating image/code values at a later
+service entrypoint while keeping this task free of container execution.
+Зависит от: accepted EXP-582 profile and existing `DockerContainerVerifier`
+network-none/resource-bound launcher.
+Среда исполнения: local/offline object construction and synthetic tests only.
+No Docker CLI invocation, image inspection, SSH, credentials, network, stage,
+approval or provider operation.
+Внешняя цель: none.
+Вне scope: running or deploying the container, key loading, remote service,
+trust enrollment, host independence claim or executor promotion.
+Разрешённые пути:
+- src/app_contracts/signed_verifier_service.py
+- tests/test_signed_verifier_service.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- factory requires an absolute Docker executable path and creates a
+  `DockerContainerVerifier` with the exact pinned image ID, verifier code digest
+  and container timeout;
+- factory has no subprocess/Docker side effect;
+- tests inspect the constructed config and prove a malformed executable is
+  rejected before any process call;
+- no independent-host trust is claimed; focused, full offline suite and
+  `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_verifier_service -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: ALLOWED by Control Plane on 2026-10-08, following the user's explicit
+request to commit and push the current project work to origin.
+Остановись, если фабрика запускает subprocess/container или принимает profile
+values from the untrusted request.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added `create_brainbooster_verifier_runner`, which
+  constructs `DockerContainerVerifier` using only the absolute Docker executable
+  input and the fixed profile's image/code IDs plus pinned container timeout.
+  Construction has no process side effect; tests inspected the exact config and
+  confirmed malformed relative executable rejection without a process call.
+  Focused suite: 7 tests passed; full offline suite: 1074 tests (1065 passed,
+  9 skipped); `git diff --check` clean. No Docker command/container, credential,
+  network, SSH, stage write or provider effect occurred. Independent-host trust
+  and deployment remain unproven; R2/MVP remain open.
+
+Публикация Control Plane: 2026-10-08 пользователь явно запросил один commit и
+push всего описанного выше текущего проверенного изменения проекта в
+`SoldatovAlexander/Agent00X`, `main` → `origin/main`. Это решение разрешает
+только эту публикацию и supersedes предыдущие `Commit: DENIED` для включённых в
+этот конкретный снимок изменений; push создаёт только Git-коммит и не запускает
+PR, deployment, Docker, SSH или provider operation.

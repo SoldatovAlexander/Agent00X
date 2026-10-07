@@ -7,7 +7,7 @@ independent; key provisioning and the verifier runtime remain separate gates.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -15,15 +15,21 @@ import re
 import secrets
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 from .executor import VerifierInput, VerifierResult
 from .verifier_process import (
+    MAX_VERIFIER_REQUEST_BYTES,
+    MAX_VERIFIER_RESPONSE_BYTES,
     VerifierProcessError,
     VerifierProcessRequest,
     VerifierProcessResponse,
     bind_verifier_response,
     parse_verifier_response,
+    parse_verifier_request,
     serialize_verifier_request,
 )
 
@@ -69,6 +75,77 @@ class VerifiedVerifierAttestation:
     attestation_digest: str
     signature_valid: bool = True
     independent_host_trust_established: bool = False
+
+
+def build_signed_verifier_response(
+    request_bytes: object,
+    response_bytes: object,
+    *,
+    invocation_nonce: object,
+    verifier_profile_digest: object,
+    key_id: object,
+    signing_key: object,
+    issued_at: datetime,
+) -> bytes:
+    """Sign one bounded typed verifier response without exporting its key.
+
+    This is the verifier-side wire builder. It deliberately does not load a
+    key, establish key custody, or assert that the signer runs on an
+    independent host; those remain deployment and Control Plane trust gates.
+    """
+
+    try:
+        if (
+            type(request_bytes) is not bytes
+            or not request_bytes
+            or len(request_bytes) > MAX_VERIFIER_REQUEST_BYTES
+            or type(response_bytes) is not bytes
+            or not response_bytes
+            or len(response_bytes) > MAX_VERIFIER_RESPONSE_BYTES
+            or type(invocation_nonce) is not str
+            or _NONCE_RE.fullmatch(invocation_nonce) is None
+            or type(verifier_profile_digest) is not str
+            or _DIGEST_RE.fullmatch(verifier_profile_digest) is None
+            or type(key_id) is not str
+            or _KEY_ID_RE.fullmatch(key_id) is None
+            or not isinstance(signing_key, Ed25519PrivateKey)
+        ):
+            raise ValueError
+
+        request = parse_verifier_request(request_bytes)
+        if serialize_verifier_request(request) != request_bytes:
+            raise ValueError
+        response = parse_verifier_response(response_bytes)
+        if _canonical_json(asdict(response)) != response_bytes:
+            raise ValueError
+        bound_result = bind_verifier_response(request, response)
+        if bound_result.verifier_id != invocation_nonce:
+            raise ValueError
+
+        moment = _validate_now(issued_at)
+        unsigned = {
+            "schema": ATTESTATION_SCHEMA,
+            "key_id": key_id,
+            "invocation_nonce": invocation_nonce,
+            "request_digest": _digest(request_bytes),
+            "verifier_profile_digest": verifier_profile_digest,
+            "issued_at": moment.isoformat().replace("+00:00", "Z"),
+            "response": asdict(response),
+        }
+        signature = signing_key.sign(verifier_attestation_signing_bytes(unsigned))
+        if type(signature) is not bytes or len(signature) != 64:
+            raise ValueError
+        envelope = {**unsigned, "signature": signature.hex()}
+        encoded = _canonical_json(envelope)
+        if len(encoded) > MAX_ATTESTATION_BYTES:
+            raise ValueError
+        return encoded
+    except VerifierAttestationError:
+        raise
+    except Exception:
+        raise VerifierAttestationError(
+            "verifier attestation: response signing failed"
+        ) from None
 
 
 def verifier_attestation_signing_bytes(envelope: object) -> bytes:

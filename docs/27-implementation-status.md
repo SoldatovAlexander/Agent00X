@@ -29,7 +29,13 @@ read-only CLI проверки внешнего подписанного approva
 production end-to-end система: происхождение snapshot — GitHub API claim,
 verifier доверен только в same-host/container контуре, signer синтетический,
 mock и fake-provider evidence не равны реальной publication, а текущий project
-working tree не содержит persisted SQLite stage из EXP-520. Production runtime,
+working tree не содержит persisted SQLite stage из EXP-520. При этом на
+2026-10-08 записанная временная SQLite-стадия EXP-548 всё ещё существует на
+текущем host: read-only `stage_preview` подтвердил её точный digest, PASS и
+`backend/routes.py` patch. Байтово-идентичная копия сохранена вне Git в
+локальном каталоге evidence для продолжения review; это не резервная копия и
+не production durability guarantee. Approval на этой стадии не создавался.
+Production runtime,
 independent verifier trust, signer enrollment, durable recovery и real PR
 остаются открытыми; observer collector, отчёты и учебные ветки также не
 реализованы.
@@ -215,9 +221,12 @@ multi-process writer safety или authenticated user approval.
 production execution: fixed runner теперь поддерживает одноразовый
 `TerminalPromptCredentialSource` с запретом небезопасного echo fallback, но
 секрет не вводился и новый live run не выполнялся; account/provider-level spend
-cap не подтверждён. Текущий checkout не содержит stage DB, а точные временные
-пути stage DB из EXP-520 и EXP-548 сейчас также отсутствуют. Поэтому approval
-CLI на фактическом candidate stage пока не запускался. Остаются independently
+cap не подтверждён. Текущий checkout не содержит stage DB. Временные пути
+EXP-520 и EXP-548 были повторно проверены 2026-10-08: EXP-548 stage присутствует
+и его byte-identical copy сохранена вне Git в локальном evidence-каталоге;
+EXP-520 source stage отдельно не перепроверялся. Эти host-local файлы не дают
+backup/production durability guarantee. Поэтому approval CLI на фактическом
+candidate stage пока не запускался. Остаются independently
 trusted verifier и authenticated snapshot provenance; hard transport/runtime
 timeout (включая синхронный credential callback, DNS и upload interruption);
 доверенный human signer enrollment и production approval точного digest;
@@ -581,8 +590,14 @@ stage experiment, not as R2 exit evidence.
 | Worker change | Batch DK / EXP-520 made one expressly authorized live DeepSeek call against the exact pinned public snapshot; it produced a useful single-file `backend/routes.py` proposal and verified stage. EXP-548 rehydrated that stored output unchanged and reproduced PASS with a new exact-digest stage through the same pinned target/verifier pipeline, without another model call. | Independent verifier trust, authenticated snapshot provenance, verified provider/account-level spend cap, and a trust boundary around the in-process credential callback remain open; no retry or publication was performed. |
 | Bounded execution and test | Batch BA directly executed the exact pinned route blob; Batch BE exercised selected pinned app modules with real Uvicorn loopback HTTP in exact Python 3.11.16 image, `container-network-none`, `network_isolated=true`: malformed integer produced 500 / zero rows; valid produced 200 / one exact row. Batch BF (EXP-463) tested a fixed Control Plane patch in only the writable container copy: every malformed numeric field plus overflow returned HTTP 422 / zero writes, while valid input remained 200 / one exact row. EXP-548 replayed the live Worker candidate from the persisted stage against the full 23-blob exact snapshot; the pinned HTTP/DB verifier returned PASS and the new exact SQLite stage/readback matched the verified contents. | Independently governed verifier trust and authenticated snapshot provenance remain open; pin full app runtime/dependencies, timeouts and production recovery. |
 | Independent verification | Verifier input/result cross a bounded child-process JSON boundary and re-run the test. EXP-510 also completed a synthetic stage through the actual pinned Docker verifier image. | Verifier in a separately trusted implementation/environment with an authenticated, replay-resistant result; same-host process/container separation is insufficient. |
-| Durable stage and human approval | Validated canonical stage artifact is stored/reloaded through local SQLite; exact-digest readback is required before VERIFIED. EXP-552 exports an unsigned review request; EXP-553/554 use a synthetic signer for policy/mock-chain evidence. EXP-558 rebuilds that request from the saved stage and verifies a signed envelope through policy without effects. EXP-563 wraps the exact-stage signed verification and controlled mock path in a bounded local operator CLI. | No historical EXP-520/548 stage DB currently exists at its recorded paths, so the verifier CLI has not consumed the live Worker stage. Authenticated production approval, trusted human signer enrollment and production durability/recovery guarantees remain absent; the supplied trust profile itself is not authenticated. |
+| Durable stage and human approval | Validated canonical stage artifact is stored/reloaded through local SQLite; exact-digest readback is required before VERIFIED. EXP-552 exports an unsigned review request; EXP-553/554 use a synthetic signer for policy/mock-chain evidence. EXP-558 rebuilds that request from the saved stage and verifies a signed envelope through policy without effects. EXP-563 wraps the exact-stage signed verification and controlled mock path in a bounded local operator CLI. On 2026-10-08 the recorded EXP-548 temporary stage DB and a byte-identical local evidence copy outside Git were found; exact-digest preview passed read-only. | The stage is not in the project tree or backed up/replicated. No signed approval was created and the approval CLI has not consumed the live Worker stage. Authenticated production approval, trusted human signer enrollment and production durability/recovery guarantees remain absent; the supplied trust profile itself is not authenticated. |
 | Controlled Pull Request publication and recovery | Fake-only GitHub App composition binds the verified manifest to the seed and journals before branch/file effects (EXP-541); post-loss exact read-only blob-SHA confirmation (EXP-542), reopen file-state evidence (EXP-543), and fake PR receipt recovery without duplicate POST (EXP-537/538). EXP-545 binds explicit base branch; EP/EQ (EXP-550/551) bind source slug and installation-scoped ID and exercise fake provider response-loss recovery. EXP-554 proves the approval format passes controlled mock gates; EXP-563 adds a local mock-only CLI. EXP-573 adds a fixed-target live-capable GitHub App CLI behind an exact-digest terminal confirmation, tested only with fake transports and synthetic approval. | EXP-573 has not been run and provides no live PR receipt. No current project artifact contains the persisted EXP-520/548 Worker stage; the publication CLI has not consumed a real Worker stage or authenticated human approval. Still missing: trusted signer enrollment, fresh authorization for provider use, real PR receipt, independently trusted verifier, and production-grade durable recovery demonstrated against the approved provider without blind retry. No direct credentials to Worker or verifier; no multi-file atomicity claim. |
+
+EXP-577 performed one anonymous metadata-only GET for the fixed public source on
+2026-10-08. GitHub reported numeric repository ID `1040264611`, default branch
+`master`, `visibility=public` and `archived=false`. This confirms source-repository
+metadata only; it does not identify an App installation, grant permissions or
+change the pinned commit/tree.
 
 **R2 decision: OPEN.** At the checkpoint before DI—DL, the execution continuation
 had reached batch 70: 63 accepted and 7 blocked (CN, CO, CS, CT, CW, CZ and CX).
@@ -1122,3 +1137,39 @@ Focused suite: 106 tests passed; full offline suite: 1065 tests (1056 passed,
 credential, key, network, GitHub call, provider write, branch, PR, Docker, SSH
 or deployment occurred. R2/MVP remain OPEN; real recovery still requires a
 separate exact task card and fresh user confirmation.
+
+Batch FU / EXP-581 adds a verifier-side builder for the existing
+`signed-verifier-response/v1` envelope. It accepts only canonical bounded
+request/response records, checks exact request/result binding and nonce echo,
+then signs the canonical response with an already-held Ed25519 key object. It
+does not load/export a key, deploy a service, enroll key custody or assert host
+independence; the verifier receipt still has
+`independent_host_trust_established=false`, and audit-only executor behavior is
+unchanged. Focused suite: 11 tests passed; full offline suite: 1067 tests
+(1058 passed, 9 skipped); `git diff --check` clean. No key file, credential,
+network, verifier execution, stage write or provider effect was used. A
+separately trusted verifier host and out-of-band pinned key remain required;
+R2/MVP remain OPEN.
+
+Batch FV / EXP-582 adds `signed_verifier_service.py`, a transport-neutral
+one-request core with an immutable profile digest. The BrainBooster profile
+binds the selected repository and commit, normalized full-snapshot content
+digest/file count, sole allowed change path, exact HTTP/DB command and timeout,
+verifier image/code IDs and signer key ID. Requests are checked against that
+profile before the injected verifier is called; results must carry the exact
+runtime identity before the service signs the challenge-bound response.
+Synthetic tests prove valid receipt verification, profile-digest sensitivity,
+pre-run rejection of changed request fields and rejection of a spoofed runtime
+ID. Focused suite: 5 tests passed; full offline suite: 1072 tests (1063 passed,
+9 skipped); `git diff --check` clean. No key file, service transport, Docker
+run, SSH, credential, stage write or provider effect was used. This is only
+service-core wiring: deployment, out-of-band key pinning, independent host
+trust and executor promotion remain unproven; R2/MVP remain OPEN.
+
+Batch FW / EXP-583 adds a construction-only factory for the BrainBooster
+`DockerContainerVerifier`. It takes an absolute Docker executable and sources
+the image ID, verifier code digest and container timeout only from the fixed
+profile; construction itself launches no process. Focused and full offline
+suite evidence is recorded in WORK_QUEUE.md. No Docker command, container,
+credential, network, SSH, stage write or provider effect was used. This does
+not establish independent-host trust or deployment; R2/MVP remain OPEN.

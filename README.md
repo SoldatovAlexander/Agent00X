@@ -95,8 +95,8 @@ python3 -m pip install -e .
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Полный offline suite после Batch FN / EXP-574 на 2026-10-08: 1065 тестов,
-1056 прошли, 9 пропущены.
+Полный offline suite после Batch GC / EXP-589 на 2026-10-08: 1096 тестов,
+1087 прошли, 9 пропущено.
 Это подтверждает только покрытые тестами локальные свойства на текущей машине,
 не безопасность всей цепочки, live Worker, независимость verifier или реальную
 публикацию. Подробнее — в документе 27.

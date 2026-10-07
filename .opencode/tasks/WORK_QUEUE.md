@@ -21726,7 +21726,7 @@ Commit: DENIED.
 ### Batch GA — define a bounded one-shot wire protocol for the verifier (R2 execution batch 140/140; 1 task)
 
 #### EXP-587 — serialize signed verifier invocation and add its pure service handler
-Статус: READY
+Статус: ACCEPTED
 Цель: make the EXP-584 client and EXP-582 service core composable across a
 future process/SSH boundary using one exact bounded stdin record and one signed
 stdout response.
@@ -21810,3 +21810,113 @@ trust gate или provider effect.
 `tests/test_signed_verifier_protocol.py`; оно supersedes `Commit: DENIED` только
 для этого снимка. Push создаёт только Git-коммит и не запускает PR, deployment,
 Docker, SSH или provider operation.
+
+### Batch GB — reconcile the published status baseline (R2 execution batch 141/141; 1 task)
+
+#### EXP-588 — align README suite count and finalize EXP-587 status
+Статус: ACCEPTED
+Цель: make the project front page and queue agree with the verified,
+published post-EXP-587 state.
+Гипотеза: updating the README's suite baseline to the observed EXP-587 run and
+marking its accepted card terminal prevents misleading status and duplicate
+execution.
+Зависит от: published commit `0a055b5` and accepted EXP-587 evidence.
+Среда исполнения: local documentation-only. No network, credentials, runtime,
+Docker, SSH, stage access or provider operation.
+Внешняя цель: none.
+Вне scope: source changes, new tests, additional execution, commit or push.
+Разрешённые пути:
+- README.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- README reports the post-Batch GA / EXP-587 full-suite result: 1091 tests,
+  1082 passed and 9 skipped, with its local-only limitation intact;
+- EXP-587 status is ACCEPTED, consistent with its Control Plane result;
+- the new card records the exact edits and `git diff --check` passes.
+Проверки:
+- `rg -n -A 2 'Полный offline suite после Batch GA' README.md`
+- `rg -n -A 3 '#### EXP-587' .opencode/tasks/WORK_QUEUE.md`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: README now reports the observed post-EXP-587 offline
+  suite (1091 total, 1082 passed, 9 skipped) and retains the limitation that
+  this is local test evidence only. EXP-587 is marked ACCEPTED, matching its
+  accepted Control Plane result. Both direct consistency searches and
+  `git diff --check` pass. No runtime, credential, network or external effect.
+
+### Batch GC — execute the verifier wire protocol across a bounded local process boundary (R2 execution batch 142/142; 1 task)
+
+#### EXP-589 — add a one-shot bounded subprocess transport for signed verification
+Статус: ACCEPTED
+Цель: exercise the canonical EXP-587 invocation protocol across a real local
+stdin/stdout process boundary while keeping transport policy explicit.
+Гипотеза: one configured executable invocation per request, isolated from the
+caller's environment, with a bounded input/output and hard wall-clock timeout,
+will provide a reusable transport primitive for a future independently hosted
+verifier without claiming that same-host process separation is independent trust.
+Зависит от: accepted EXP-581/582 service core, EXP-584 signed client and
+EXP-587 canonical invocation envelope.
+Среда исполнения: local/offline subprocess only; synthetic test response
+bytes/keys. No network, SSH/testdev, Docker, real key, credential, stage write,
+approval, provider call or external effect.
+Внешняя цель: none.
+Вне scope: remote command/SSH, HTTP, service/key loading, verifier trust
+enrollment, executor trust promotion or deployment.
+Разрешённые пути:
+- src/app_contracts/signed_verifier_client.py
+- tests/test_signed_verifier_client.py
+- docs/27-implementation-status.md
+- README.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- add an immutable configured command transport that requires an absolute
+  executable path, uses no shell, inherits no caller environment or cwd, and
+  sends exactly one invocation record on stdin;
+- stdout is read incrementally and rejected immediately above
+  `MAX_ATTESTATION_BYTES`; stderr is never captured or surfaced; the child is
+  killed on output overflow, timeout or transport failure;
+- no retry; only successful bounded stdout bytes are returned, with all errors
+  sanitized; input type/size is checked before process creation;
+- tests exercise an actual local child process for exact byte round-trip and a
+  valid synthetic signed service response, plus invalid config, oversized
+  output, nonzero exit and timeout; client remains audit-only and still
+  validates the signed response itself;
+- README suite count matches the observed full-suite result;
+- docs explicitly say this is same-host process separation, not independent
+  verifier trust; focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_verifier_client tests.test_executor -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `rg -n -A 2 'Полный offline suite после Batch GC' README.md`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если реализация требует ambient credentials, arbitrary shell,
+network/SSH, key loading, stage/approval/publication side effect or trust
+promotion.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: `SignedVerifierSubprocessTransport` now launches one
+  explicitly configured absolute executable without a shell, caller cwd or
+  caller environment. It validates input before spawn, writes the exact
+  invocation bytes once, incrementally bounds stdout to `MAX_ATTESTATION_BYTES`,
+  discards stderr, times out/kills the child, sanitizes failures and never
+  retries. Five process-boundary tests cover byte round-trip/environment and
+  cwd isolation, a valid synthetic signed service response verified by the
+  client, invalid configuration/input before spawn, over-limit output, nonzero
+  exit with hidden stderr, and timeout. Focused client/executor suite:
+  67 passed; full offline suite: 1096 tests (1087 passed, 9 skipped);
+  `git diff --check` clean. README and implementation status match the observed
+  suite. No network, SSH/testdev, Docker, credential, real key, stage write,
+  approval, provider effect or deployment. Same-host process separation is not
+  independent verifier trust; R2/MVP remain OPEN.
+
+Публикация Control Plane: 2026-10-08 пользователь явно запросил один commit и
+push текущего проверенного снимка EXP-589 в `SoldatovAlexander/Agent00X`,
+`main` → `origin/main`. Разрешение ограничено только изменениями в этой карточке,
+README.md, docs/27-implementation-status.md,
+src/app_contracts/signed_verifier_client.py и
+tests/test_signed_verifier_client.py; оно supersedes `Commit: DENIED` только
+для этого снимка. Push создаёт только Git-коммит; PR, deployment, SSH, Docker,
+credentials и provider operations не запускаются.

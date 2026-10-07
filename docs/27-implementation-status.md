@@ -1210,7 +1210,20 @@ verifier execution, then returns only the existing signed response bytes.
 `SignedVerifierClient` now passes this single envelope to an injected transport;
 the full fake remote-snapshot executor test uses the actual envelope/handler and
 still stops before stage save because independent-host trust is false. No
-process or real transport is implemented; key enrollment, deployment and trust
-promotion remain open. Focused protocol/client/executor suite: 66 passed; full
-offline suite: 1091 tests (1082 passed, 9 skipped); `git diff --check` clean.
-R2/MVP remain OPEN.
+remote process or service key enrollment was included in EXP-587; subsequent
+Batch GC adds only a local subprocess transport. Key enrollment, deployment
+and trust promotion remain open. Focused protocol/client/executor suite: 66
+passed; full offline suite at EXP-587: 1091 tests (1082 passed, 9 skipped);
+`git diff --check` clean. R2/MVP remain OPEN.
+
+Batch GC / EXP-589 adds a synchronous one-shot subprocess transport for the
+signed-verifier wire envelope. It requires an explicit absolute executable,
+uses no shell, caller environment or caller working directory, sends the
+bounded invocation on stdin, drains stdout incrementally to the signed-response
+limit, discards stderr, and kills a child that exceeds the output or time limit.
+Transport failures are sanitized and never retried. Focused client/executor
+suite: 67 passed; full offline suite: 1096 tests (1087 passed, 9 skipped).
+The process is still same-host, is not sandboxed or host-authenticated, and
+does not establish independent verifier trust or change the executor trust
+gate. No credential, real key, network, SSH, Docker, stage write, approval,
+provider call or external effect occurred. R2/MVP remain OPEN.

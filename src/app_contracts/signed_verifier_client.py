@@ -8,12 +8,20 @@ audit-only until an external trust enrollment is governed separately.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
+import math
+import os
+from pathlib import Path
+import tempfile
 from typing import Protocol
 
 from .executor import VerifierInput
 from .signed_verifier_service import VerifierProfile
-from .signed_verifier_protocol import serialize_signed_verifier_invocation
+from .signed_verifier_protocol import (
+    MAX_SIGNED_VERIFIER_INVOCATION_BYTES,
+    serialize_signed_verifier_invocation,
+)
 from .verifier_attestation import (
     MAX_ATTESTATION_BYTES,
     VerifiedVerifierAttestation,
@@ -29,6 +37,143 @@ from .verifier_process import (
 
 class SignedVerifierClientError(ValueError):
     """A remote verifier request or signed response was rejected."""
+
+
+class SignedVerifierSubprocessTransportError(ValueError):
+    """A bounded one-shot verifier process could not complete safely."""
+
+
+class SignedVerifierSubprocessTransport:
+    """Run one explicitly configured local service command per invocation.
+
+    This is a process boundary only. It does not sandbox the child, authenticate
+    its host, provision signing keys, or establish independent verifier trust.
+    """
+
+    MAX_TIMEOUT_SECONDS = 300.0
+    _OUTPUT_CHUNK_BYTES = 64 * 1024
+
+    def __init__(
+        self,
+        command: object,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        try:
+            if (
+                type(command) is not tuple
+                or not command
+                or len(command) > 64
+                or any(
+                    type(argument) is not str
+                    or not argument
+                    or "\0" in argument
+                    or len(argument.encode("utf-8")) > 16_384
+                    for argument in command
+                )
+                or not Path(command[0]).is_absolute()
+                or not Path(command[0]).is_file()
+                or not os.access(command[0], os.X_OK)
+                or isinstance(timeout_seconds, bool)
+                or not isinstance(timeout_seconds, (int, float))
+                or not math.isfinite(float(timeout_seconds))
+                or not 0 < float(timeout_seconds) <= self.MAX_TIMEOUT_SECONDS
+            ):
+                raise ValueError
+            self._command = command
+            self._timeout_seconds = float(timeout_seconds)
+        except Exception:
+            raise SignedVerifierSubprocessTransportError(
+                "signed verifier transport: configuration rejected"
+            ) from None
+
+    def request(self, invocation_bytes: object) -> bytes:
+        """Send one bounded wire record and return bounded child stdout bytes."""
+
+        if (
+            type(invocation_bytes) is not bytes
+            or not invocation_bytes
+            or len(invocation_bytes) > MAX_SIGNED_VERIFIER_INVOCATION_BYTES
+        ):
+            raise SignedVerifierSubprocessTransportError(
+                "signed verifier transport: request rejected"
+            )
+        try:
+            return asyncio.run(self._exchange(invocation_bytes))
+        except SignedVerifierSubprocessTransportError:
+            raise
+        except Exception:
+            raise SignedVerifierSubprocessTransportError(
+                "signed verifier transport: process request failed"
+            ) from None
+
+    async def _exchange(self, invocation_bytes: bytes) -> bytes:
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="agent00x-signed-verifier-"
+            ) as working_directory:
+                process = await asyncio.create_subprocess_exec(
+                    *self._command,
+                    cwd=working_directory,
+                    env={
+                        "PATH": os.defpath,
+                        "LANG": "C.UTF-8",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                    },
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    limit=self._OUTPUT_CHUNK_BYTES,
+                )
+                assert process.stdin is not None
+                assert process.stdout is not None
+
+                async def send_request() -> None:
+                    process.stdin.write(invocation_bytes)
+                    await process.stdin.drain()
+                    process.stdin.close()
+                    await process.stdin.wait_closed()
+
+                async def read_response() -> bytes:
+                    response = bytearray()
+                    while True:
+                        remaining = MAX_ATTESTATION_BYTES + 1 - len(response)
+                        chunk = await process.stdout.read(
+                            min(self._OUTPUT_CHUNK_BYTES, remaining)
+                        )
+                        if not chunk:
+                            return bytes(response)
+                        response.extend(chunk)
+                        if len(response) > MAX_ATTESTATION_BYTES:
+                            raise SignedVerifierSubprocessTransportError(
+                                "signed verifier transport: response limit exceeded"
+                            )
+
+                try:
+                    send_task = asyncio.create_task(send_request())
+                    read_task = asyncio.create_task(read_response())
+                    wait_task = asyncio.create_task(process.wait())
+                    response, return_code, _ = await asyncio.wait_for(
+                        asyncio.gather(read_task, wait_task, send_task),
+                        timeout=self._timeout_seconds,
+                    )
+                except Exception:
+                    if process.returncode is None:
+                        process.kill()
+                        await process.wait()
+                    raise
+
+                if return_code != 0 or type(response) is not bytes or not response:
+                    raise SignedVerifierSubprocessTransportError(
+                        "signed verifier transport: process request failed"
+                    )
+                return response
+        except SignedVerifierSubprocessTransportError:
+            raise
+        except Exception:
+            raise SignedVerifierSubprocessTransportError(
+                "signed verifier transport: process request failed"
+            ) from None
 
 
 class SignedVerifierTransport(Protocol):

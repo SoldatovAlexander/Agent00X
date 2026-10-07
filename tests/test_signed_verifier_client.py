@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -23,6 +25,8 @@ from app_contracts.executor import (
 from app_contracts.signed_verifier_client import (
     SignedVerifierClient,
     SignedVerifierClientError,
+    SignedVerifierSubprocessTransport,
+    SignedVerifierSubprocessTransportError,
 )
 from app_contracts.signed_verifier_service import (
     SignedVerifierServiceError,
@@ -30,6 +34,7 @@ from app_contracts.signed_verifier_service import (
     handle_signed_verifier_invocation,
 )
 from app_contracts.signed_verifier_protocol import (
+    MAX_SIGNED_VERIFIER_INVOCATION_BYTES,
     parse_signed_verifier_invocation,
     serialize_signed_verifier_invocation,
 )
@@ -299,6 +304,164 @@ class SignedVerifierClientTests(unittest.TestCase):
         keys[KEY_ID] = b"x" * 32
 
         self.assertTrue(client.verify(prepared_input()).signature_valid)
+
+    def test_subprocess_transport_round_trips_exact_bytes_without_parent_environment(self):
+        repository_path = str(ROOT)
+        echo = (
+            sys.executable,
+            "-c",
+            "import os,sys; "
+            f"assert os.getcwd() != {repository_path!r}; "
+            "assert os.environ.get('AGENT00X_TEST_CANARY') is None; "
+            "sys.stdout.buffer.write(sys.stdin.buffer.read())",
+        )
+        transport = SignedVerifierSubprocessTransport(echo, timeout_seconds=2)
+        invocation = b'{"schema":"synthetic-test-record"}'
+
+        with patch.dict(os.environ, {"AGENT00X_TEST_CANARY": "not-for-child"}):
+            self.assertEqual(transport.request(invocation), invocation)
+
+    def test_signed_client_accepts_exact_synthetic_attestation_from_child_process(self):
+        selected_profile = profile()
+        synthetic_seed = bytes(range(32))
+        signing_key = Ed25519PrivateKey.from_private_bytes(synthetic_seed)
+        public_key = signing_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        source_root = str(ROOT / "src")
+        service_script = f"""
+import sys
+sys.path.insert(0, {source_root!r})
+from datetime import datetime, timezone
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from app_contracts.executor import VerifierResult, VerifierVerdict
+from app_contracts.signed_verifier_service import VerifierProfile, handle_signed_verifier_invocation
+profile = VerifierProfile(
+    repository_id='fixture/repository',
+    base_commit={'a' * 40!r},
+    snapshot_tree_digest={TREE_DIGEST!r},
+    snapshot_file_count=1,
+    allowed_change_paths=('src.py',),
+    test_command=('python3', '-m', 'unittest'),
+    test_timeout_seconds=30,
+    verifier_image_id={'sha256:' + '1' * 64!r},
+    verifier_code_digest={'sha256:' + '2' * 64!r},
+    signer_key_id={KEY_ID!r},
+)
+class PassingVerifier:
+    def verify(self, prepared):
+        return VerifierResult(
+            process_id=prepared.process_id,
+            base_commit=prepared.base_commit,
+            snapshot_tree_digest=prepared.snapshot_tree_digest,
+            replay_result_digest=prepared.replay_result_digest,
+            verifier_id=profile.expected_verifier_id,
+            patch_digest=prepared.patch_digest,
+            evidence_digest=prepared.evidence_digest,
+            verification_digest=prepared.verification_digest,
+            verified_contents_digest=prepared.verified_contents_digest,
+            verdict=VerifierVerdict.PASS,
+            evidence_origin='local_test',
+        )
+response = handle_signed_verifier_invocation(
+    sys.stdin.buffer.read(),
+    profile=profile,
+    verifier=PassingVerifier(),
+    signing_key=Ed25519PrivateKey.from_private_bytes(bytes(range(32))),
+    issued_at=datetime.now(timezone.utc),
+)
+sys.stdout.buffer.write(response)
+"""
+        transport = SignedVerifierSubprocessTransport(
+            (sys.executable, "-c", service_script), timeout_seconds=5
+        )
+        client = SignedVerifierClient(
+            selected_profile, transport, {KEY_ID: public_key}
+        )
+
+        attestation = client.verify(prepared_input())
+
+        self.assertTrue(attestation.signature_valid)
+        self.assertFalse(attestation.independent_host_trust_established)
+        self.assertEqual(attestation.verifier_result.verdict, VerifierVerdict.PASS)
+
+    def test_subprocess_transport_rejects_bad_config_and_input_before_spawn(self):
+        invalid_commands = (
+            [sys.executable, "-c", "pass"],
+            ("python3", "-c", "pass"),
+            (sys.executable, "-c", "pass", "\0"),
+        )
+        for command in invalid_commands:
+            with self.subTest(command=repr(command)[:40]):
+                with self.assertRaises(SignedVerifierSubprocessTransportError):
+                    SignedVerifierSubprocessTransport(command)
+        for timeout in (0, float("nan"), 301, True):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(SignedVerifierSubprocessTransportError):
+                    SignedVerifierSubprocessTransport(
+                        (sys.executable, "-c", "pass"),
+                        timeout_seconds=timeout,
+                    )
+
+        transport = SignedVerifierSubprocessTransport(
+            (sys.executable, "-c", "raise SystemExit('must not run')")
+        )
+        with patch(
+            "app_contracts.signed_verifier_client.asyncio.create_subprocess_exec"
+        ) as create_process:
+            for invocation in (
+                None,
+                bytearray(b"record"),
+                b"",
+                b"x" * (MAX_SIGNED_VERIFIER_INVOCATION_BYTES + 1),
+            ):
+                with self.subTest(input_type=type(invocation).__name__):
+                    with self.assertRaises(SignedVerifierSubprocessTransportError):
+                        transport.request(invocation)
+            create_process.assert_not_called()
+
+    def test_subprocess_transport_bounds_stdout_and_sanitizes_nonzero_exit(self):
+        oversized = SignedVerifierSubprocessTransport(
+            (
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * "
+                f"{MAX_ATTESTATION_BYTES + 1})",
+            ),
+            timeout_seconds=5,
+        )
+        with self.assertRaisesRegex(
+            SignedVerifierSubprocessTransportError,
+            "^signed verifier transport: response limit exceeded$",
+        ):
+            oversized.request(b"record")
+
+        failing = SignedVerifierSubprocessTransport(
+            (
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('private diagnostic'); "
+                "raise SystemExit(7)",
+            ),
+            timeout_seconds=2,
+        )
+        with self.assertRaisesRegex(
+            SignedVerifierSubprocessTransportError,
+            "^signed verifier transport: process request failed$",
+        ) as caught:
+            failing.request(b"record")
+        self.assertNotIn("private diagnostic", str(caught.exception))
+
+    def test_subprocess_transport_kills_child_after_timeout_without_retry(self):
+        transport = SignedVerifierSubprocessTransport(
+            (sys.executable, "-c", "import time; time.sleep(5)"),
+            timeout_seconds=0.05,
+        )
+        with self.assertRaisesRegex(
+            SignedVerifierSubprocessTransportError,
+            "^signed verifier transport: process request failed$",
+        ):
+            transport.request(b"record")
 
 
 if __name__ == "__main__":

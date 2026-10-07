@@ -582,11 +582,11 @@ snapshot provenance remains an unauthenticated GitHub API claim, and the
 same-host verifier is not independently trusted. Accepted as a live Worker-to-
 stage experiment, not as R2 exit evidence.
 
-### R2 exit matrix (remote metadata rechecked 2026-10-07; local suite updated 2026-10-08)
+### R2 exit matrix (remote metadata rechecked 2026-10-08; local suite updated 2026-10-08)
 
 | Gate | What current evidence demonstrates | Evidence still required for R2 exit |
 |---|---|---|
-| Fixed remote repository snapshot | One fresh anonymous fixed-CLI intake returned `snapshot_ready`, `authenticated=false`, exact pinned commit/tree, 23/23 file metadata and full content digest; each Git blob ID and the complete recursive root tree ID are recomputed from content/entries. | Commit-object bytes, signature/authorship and remote provenance evidence; API/TLS claim alone is insufficient. |
+| Fixed remote repository snapshot | One fresh anonymous fixed-CLI intake returned `snapshot_ready`, `authenticated=false`, exact pinned commit/tree, 23/23 file metadata and full content digest; each Git blob ID and the complete recursive root tree ID are recomputed from content/entries. EXP-586 separately fetched the exact pinned commit anonymously and recomputed its raw Git SHA-1 object ID and root-tree header, matching both pins. | This object-byte check is not yet wired into runtime snapshot intake. Signature/authorship and remote provenance still require a separately trusted signature/provenance path; GitHub/TLS remains the source transport trust. |
 | Worker change | Batch DK / EXP-520 made one expressly authorized live DeepSeek call against the exact pinned public snapshot; it produced a useful single-file `backend/routes.py` proposal and verified stage. EXP-548 rehydrated that stored output unchanged and reproduced PASS with a new exact-digest stage through the same pinned target/verifier pipeline, without another model call. | Independent verifier trust, authenticated snapshot provenance, verified provider/account-level spend cap, and a trust boundary around the in-process credential callback remain open; no retry or publication was performed. |
 | Bounded execution and test | Batch BA directly executed the exact pinned route blob; Batch BE exercised selected pinned app modules with real Uvicorn loopback HTTP in exact Python 3.11.16 image, `container-network-none`, `network_isolated=true`: malformed integer produced 500 / zero rows; valid produced 200 / one exact row. Batch BF (EXP-463) tested a fixed Control Plane patch in only the writable container copy: every malformed numeric field plus overflow returned HTTP 422 / zero writes, while valid input remained 200 / one exact row. EXP-548 replayed the live Worker candidate from the persisted stage against the full 23-blob exact snapshot; the pinned HTTP/DB verifier returned PASS and the new exact SQLite stage/readback matched the verified contents. | Independently governed verifier trust and authenticated snapshot provenance remain open; pin full app runtime/dependencies, timeouts and production recovery. |
 | Independent verification | Verifier input/result cross a bounded child-process JSON boundary and re-run the test. EXP-510 also completed a synthetic stage through the actual pinned Docker verifier image. | Verifier in a separately trusted implementation/environment with an authenticated, replay-resistant result; same-host process/container separation is insufficient. |
@@ -1173,3 +1173,44 @@ profile; construction itself launches no process. Focused and full offline
 suite evidence is recorded in WORK_QUEUE.md. No Docker command, container,
 credential, network, SSH, stage write or provider effect was used. This does
 not establish independent-host trust or deployment; R2/MVP remain OPEN.
+
+Batch FX / EXP-584 adds `SignedVerifierClient`, which validates the immutable
+profile and canonical bounded request before one injected transport call, then
+checks the signed response against a copied pinned public key, fresh nonce,
+request digest, profile digest and freshness bounds. Synthetic integration tests
+cover both service/client sides without real transport or key storage. The
+result remains `independent_host_trust_established=false` and audit-only; no
+transport, deployment, key enrollment or executor trust promotion exists.
+Focused suite: 8 passed; full offline suite: 1082 tests (1073 passed, 9
+skipped); `git diff --check` clean. R2/MVP remain OPEN.
+
+Batch FY / EXP-585 composes `SignedVerifierClient` with a complete fake
+remote-snapshot execution. The valid synthetic signature and PASS are retained
+as audit evidence, but the executor still returns
+`verifier-trust-unestablished` and performs no durable stage save/read until an
+independent trust domain is established. Focused executor/client suite: 61
+passed; full offline suite: 1083 tests (1074 passed, 9 skipped);
+`git diff --check` clean. No external service was contacted; R2/MVP remain OPEN.
+
+Batch FZ / EXP-586 adds a bounded parser for raw Git commit objects and
+recomputes the exact SHA-1 framing before accepting the unique root-tree header
+only when it matches the pinned GitHub commit claim. One anonymous fetch of the
+fixed public commit produced a 1065-byte object whose hash and tree matched the
+repository pins. The temporary bare repository was removed. This verifies
+content addressing, not authorship, a commit signature, GitHub identity, or the
+HTTPS/TLS source; the fixed runtime intake still does not consume this check.
+Focused snapshot parser suite: 43 passed; full offline suite: 1086 tests (1077
+passed, 9 skipped); `git diff --check` clean. R2/MVP remain OPEN.
+
+Batch GA / EXP-587 defines `signed-verifier-invocation/v1`: one canonical,
+bounded JSON stdin record contains Base64 of the exact canonical verifier
+request, a fresh nonce and the expected profile digest. The pure service handler
+rejects malformed/duplicate/noncanonical records and profile mismatch before
+verifier execution, then returns only the existing signed response bytes.
+`SignedVerifierClient` now passes this single envelope to an injected transport;
+the full fake remote-snapshot executor test uses the actual envelope/handler and
+still stops before stage save because independent-host trust is false. No
+process or real transport is implemented; key enrollment, deployment and trust
+promotion remain open. Focused protocol/client/executor suite: 66 passed; full
+offline suite: 1091 tests (1082 passed, 9 skipped); `git diff --check` clean.
+R2/MVP remain OPEN.

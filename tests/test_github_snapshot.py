@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import hashlib
 from pathlib import Path
 import sys
 import unittest
@@ -11,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from app_contracts.github_snapshot import (
     GitHubBlobClaim,
     GitHubCommitClaim,
+    GitCommitObject,
     GitHubSnapshotClaim,
     GitHubSnapshotContents,
     GitHubSnapshotError,
@@ -19,6 +21,7 @@ from app_contracts.github_snapshot import (
     GitHubTreeEntry,
     parse_github_blob,
     parse_github_commit,
+    parse_git_commit_object,
     parse_github_tree,
     read_github_snapshot,
     read_github_snapshot_contents,
@@ -330,6 +333,73 @@ class CommitResponseBindingTests(unittest.TestCase):
             GitHubSnapshotError, "^github snapshot: request shape is invalid$"
         ):
             parse_github_commit({"commit_oid": VALID_COMMIT_OID}, valid_commit_response())
+
+
+class GitCommitObjectTests(unittest.TestCase):
+    @staticmethod
+    def make_object(tree_oid: str, headers: bytes | None = None):
+        object_headers = headers or (
+            b"tree " + tree_oid.encode("ascii")
+            + b"\nauthor Fixture <fixture@example.invalid> 1 +0000"
+            + b"\ncommitter Fixture <fixture@example.invalid> 1 +0000"
+        )
+        raw = object_headers + b"\n\nfixture commit message\n"
+        object_oid = hashlib.sha1(
+            b"commit " + str(len(raw)).encode("ascii") + b"\0" + raw
+        ).hexdigest()
+        claim = GitHubCommitClaim(
+            owner=VALID_OWNER,
+            repository=VALID_REPOSITORY,
+            commit_oid=object_oid,
+            tree_oid=tree_oid,
+        )
+        return claim, raw
+
+    def test_exact_git_object_hash_and_root_tree_are_verified(self):
+        claim, raw = self.make_object(VALID_TREE_OID)
+
+        parsed = parse_git_commit_object(claim, raw)
+
+        self.assertEqual(
+            parsed,
+            GitCommitObject(commit_oid=claim.commit_oid, tree_oid=VALID_TREE_OID),
+        )
+
+    def test_hash_tree_and_header_mutations_fail_closed(self):
+        claim, raw = self.make_object(VALID_TREE_OID)
+        other_tree_claim = GitHubCommitClaim(
+            owner=claim.owner,
+            repository=claim.repository,
+            commit_oid=claim.commit_oid,
+            tree_oid="f" * 40,
+        )
+        malformed_claims_and_objects = (
+            (claim, raw + b"mutation"),
+            (other_tree_claim, raw),
+            self.make_object(VALID_TREE_OID, b"author Fixture <fixture@example.invalid> 1 +0000"),
+            self.make_object(
+                VALID_TREE_OID,
+                b"tree " + VALID_TREE_OID.encode() + b"\ntree " + VALID_TREE_OID.encode(),
+            ),
+            self.make_object("f" * 40, b"tree " + b"g" * 40),
+        )
+        for malformed_claim, malformed_raw in malformed_claims_and_objects:
+            with self.subTest(size=len(malformed_raw)):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: commit object is invalid$",
+                ):
+                    parse_git_commit_object(malformed_claim, malformed_raw)
+
+    def test_invalid_types_empty_and_over_limit_objects_are_rejected(self):
+        claim, _raw = self.make_object(VALID_TREE_OID)
+        for malformed in (None, bytearray(b"tree"), b"", b"x" * 1_000_001):
+            with self.subTest(type=type(malformed).__name__, size=len(malformed or b"")):
+                with self.assertRaisesRegex(
+                    GitHubSnapshotError,
+                    "^github snapshot: commit object is invalid$",
+                ):
+                    parse_git_commit_object(claim, malformed)
 
 
 def valid_tree_response(**overrides):

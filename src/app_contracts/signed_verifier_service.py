@@ -39,6 +39,7 @@ from .brainbooster_target_profile import (
     VERIFIER_RUNTIME_IMAGE_ID,
 )
 from .verifier_container import DockerContainerVerifier, VerifierContainerConfig
+from .signed_verifier_protocol import parse_signed_verifier_invocation
 from .verifier_process import (
     VerifierProcessRequest,
     VerifierProcessResponse,
@@ -252,6 +253,39 @@ def run_signed_verifier_request(
     except Exception:
         raise SignedVerifierServiceError(
             "signed verifier service: request rejected"
+        ) from None
+
+
+def handle_signed_verifier_invocation(
+    invocation_bytes: object,
+    *,
+    profile: VerifierProfile,
+    verifier: VerifierRunner,
+    signing_key: object,
+    issued_at: datetime,
+) -> bytes:
+    """Handle one canonical wire record and return only the signed envelope."""
+
+    try:
+        invocation = parse_signed_verifier_invocation(invocation_bytes)
+        if (
+            type(profile) is not VerifierProfile
+            or invocation.verifier_profile_digest != profile.profile_digest
+        ):
+            raise ValueError
+        return run_signed_verifier_request(
+            invocation.request_bytes,
+            invocation_nonce=invocation.invocation_nonce,
+            profile=profile,
+            verifier=verifier,
+            signing_key=signing_key,
+            issued_at=issued_at,
+        )
+    except SignedVerifierServiceError:
+        raise
+    except Exception:
+        raise SignedVerifierServiceError(
+            "signed verifier service: invocation rejected"
         ) from None
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, asdict, replace
 import ast
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -325,6 +326,129 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
             self.assertEqual(seed.snapshot_origin, "github_rest_api_claim")
             self.assertEqual(seed.snapshot_tree_digest, result.snapshot_tree_digest)
             self.assertEqual(seed.snapshot_claim_digest, result.snapshot_claim_digest)
+
+    def test_signed_client_remains_audit_only_before_durable_stage(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from app_contracts.signed_verifier_client import SignedVerifierClient
+        from app_contracts.signed_verifier_service import (
+            VerifierProfile,
+            handle_signed_verifier_invocation,
+        )
+        from app_contracts.signed_verifier_protocol import (
+            parse_signed_verifier_invocation,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "remote-snapshot"
+            base = b"def add(left, right):\n    return left + right\n"
+            remote_snapshot = self.make_snapshot(snapshot_path, base)
+            profile = VerifierProfile(
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=remote_snapshot.claim.commit_oid,
+                snapshot_tree_digest=remote_snapshot.claim.content_digest,
+                snapshot_file_count=len(remote_snapshot.files),
+                allowed_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                test_timeout_seconds=30,
+                verifier_image_id="sha256:" + "1" * 64,
+                verifier_code_digest="sha256:" + "2" * 64,
+                signer_key_id="synthetic-executor-client-v1",
+            )
+            signing_key = Ed25519PrivateKey.generate()
+            public_key = signing_key.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+
+            class PassingRemoteVerifier:
+                def verify(self, prepared: VerifierInput) -> VerifierResult:
+                    return VerifierResult(
+                        process_id=prepared.process_id,
+                        base_commit=prepared.base_commit,
+                        snapshot_tree_digest=prepared.snapshot_tree_digest,
+                        replay_result_digest=prepared.replay_result_digest,
+                        verifier_id=profile.expected_verifier_id,
+                        patch_digest=prepared.patch_digest,
+                        evidence_digest=prepared.evidence_digest,
+                        verification_digest=prepared.verification_digest,
+                        verified_contents_digest=prepared.verified_contents_digest,
+                        verdict=VerifierVerdict.PASS,
+                    )
+
+            class InProcessTransport:
+                calls = 0
+
+                def request(self, invocation_bytes: bytes) -> bytes:
+                    self.calls += 1
+                    invocation = parse_signed_verifier_invocation(invocation_bytes)
+                    if invocation.verifier_profile_digest != profile.profile_digest:
+                        raise AssertionError("client sent an unexpected profile")
+                    return handle_signed_verifier_invocation(
+                        invocation_bytes,
+                        profile=profile,
+                        verifier=PassingRemoteVerifier(),
+                        signing_key=signing_key,
+                        issued_at=datetime.now(timezone.utc),
+                    )
+
+            class NoTouchStage:
+                save_calls = 0
+                load_calls = 0
+
+                def save(self, artifact):
+                    self.save_calls += 1
+                    raise AssertionError("untrusted verifier must not stage")
+
+                def load(self, digest):
+                    self.load_calls += 1
+                    raise AssertionError("untrusted verifier must not stage")
+
+            transport = InProcessTransport()
+            client = SignedVerifierClient(
+                profile, transport, {profile.signer_key_id: public_key}
+            )
+            stage = NoTouchStage()
+            worker_content = base.decode() + "\n# signed client integration\n"
+
+            class FakeWorker:
+                def propose(self, _worker_input: WorkerInput) -> WorkerProposal:
+                    return WorkerProposal((("calculator.py", worker_content),))
+
+            with materialize_github_snapshot(remote_snapshot) as workspace:
+                request = ExecutionRequest(
+                    process_id="process-signed-client-audit-only",
+                    task_id="task-signed-client-audit-only",
+                    repository_id="fixture-owner/fixture-repository",
+                    base_commit=remote_snapshot.claim.commit_oid,
+                    snapshot_path=workspace.path,
+                    allowed_commands=frozenset({"python3"}),
+                    declared_change_paths=("calculator.py",),
+                    test_command=("python3", "-m", "unittest"),
+                    test_timeout_seconds=30,
+                    remote_snapshot=remote_snapshot,
+                    remote_workspace=workspace,
+                )
+                result = run_local_execution(
+                    request,
+                    FakeWorker(),
+                    verifier=client,
+                    sandbox_backend=self.FakeBackend(),
+                    stage_sink=stage,
+                )
+
+            self.assertEqual(transport.calls, 1)
+            self.assertEqual(result.status, ExecutionStatus.FAILED)
+            self.assertEqual(result.failure_code, "verifier-trust-unestablished")
+            self.assertTrue(result.verifier_signature_valid)
+            self.assertFalse(result.verifier_independent_host_trust_established)
+            self.assertEqual(
+                result.verifier_attestation_key_id, profile.signer_key_id
+            )
+            self.assertEqual(
+                result.verifier_attestation_profile_digest, profile.profile_digest
+            )
+            self.assertEqual((stage.save_calls, stage.load_calls), (0, 0))
 
     def test_remote_replay_failure_closes_both_sessions_before_verifier(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

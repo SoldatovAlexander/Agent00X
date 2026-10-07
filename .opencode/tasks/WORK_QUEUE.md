@@ -21546,3 +21546,267 @@ push всего описанного выше текущего проверен�
 только эту публикацию и supersedes предыдущие `Commit: DENIED` для включённых в
 этот конкретный снимок изменений; push создаёт только Git-коммит и не запускает
 PR, deployment, Docker, SSH или provider operation.
+
+### Batch FX — connect the signed verifier protocol to an audit-only client (R2 execution batch 137/137; 1 task)
+
+#### EXP-584 — add a single-attempt signed remote-verifier client boundary
+Статус: ACCEPTED
+Цель: let the existing executor call a future separately hosted verifier through
+an injected transport and independently verify the bounded signed response.
+Гипотеза: one client that validates the fixed request before transport, creates
+a fresh nonce, performs exactly one transport call and verifies the signature,
+nonce, request digest and profile digest will connect EXP-581/582 service-side
+contracts to the executor without itself assuming deployment trust.
+Зависит от: accepted EXP-569/571 receipt contracts and EXP-581/582 signed
+verifier service core/profile.
+Среда исполнения: local/offline synthetic Ed25519 keys and fake transport only.
+No real key, credential, network, SSH/testdev, Docker, stage write, approval,
+provider call or external write.
+Внешняя цель: none.
+Вне scope: HTTP/SSH transport, key loading/enrollment, changing executor's
+audit-only trust gate, promoting a receipt to VERIFIED, deployment or PR.
+Разрешённые пути:
+- src/app_contracts/signed_verifier_client.py (new)
+- tests/test_signed_verifier_client.py (new)
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- client accepts a validated immutable `VerifierProfile`, one callable
+  request/nonce/profile-digest transport, and exactly that profile's one
+  32-byte trusted public key; key mapping is copied and malformed trust input
+  fails before transport;
+- `verify(prepared)` validates the fixed profile and canonical bounded request
+  before transport, creates one fresh nonce, makes exactly one transport call
+  with exact request bytes and profile digest, and never retries;
+- response must be bytes within `MAX_ATTESTATION_BYTES`; signature, key ID,
+  nonce, request digest, freshness, profile digest and typed result are checked
+  by the existing verifier-attestation validator;
+- errors are sanitized, executor integration remains audit-only with
+  `independent_host_trust_established=false`, and tests cover success plus
+  transport/malformed/signature/replay/profile denial without a real key;
+- focused suite, full offline suite and `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_verifier_client -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если реализация требует внешнего transport, реального ключа,
+изменения trust gate или подписи не по точным request/profile bindings.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: `SignedVerifierClient` now validates the profile and
+  canonical bounded request before making exactly one injected transport call,
+  then verifies the bounded signed receipt against the copied pinned key,
+  fresh nonce, exact request digest and expected profile digest. Synthetic tests
+  cover a valid receipt, pre-transport profile denial, wrong nonce, invalid
+  signature, validly re-signed wrong profile digest, over-limit/non-byte
+  response, sanitized transport failure, no retry and defensive key-map copy.
+  The returned attestation explicitly remains
+  `independent_host_trust_established=false`/audit-only. Focused suite: 8 passed;
+  full offline suite: 1082 tests (1073 passed, 9 skipped); `git diff --check`
+  clean. No real key, credential, network, SSH/testdev, Docker, stage write,
+  approval, provider call or external write occurred. A real transport and
+  separately governed key enrollment remain open; R2/MVP remain OPEN.
+
+### Batch FY — prove the signed client cannot bypass executor trust gating (R2 execution batch 138/138; 1 task)
+
+#### EXP-585 — compose SignedVerifierClient with remote-snapshot execution
+Статус: ACCEPTED
+Цель: prove the concrete signed-response client composes with repository-change
+execution while its cryptographically valid response remains untrusted for
+staging until an independent trust domain is established.
+Гипотеза: a complete fake remote-snapshot → worker → replay → signed-client
+round-trip should preserve the executor's fail-closed `verifier-trust-unestablished`
+decision and must not touch the durable stage sink.
+Зависит от: EXP-571 audit-only executor integration and accepted EXP-584 client.
+Среда исполнения: local offline fixture snapshot, fake sandbox, in-process fake
+transport and ephemeral synthetic Ed25519 key only. No credentials, network,
+SSH/testdev, Docker, approval, provider, stage write or external effect.
+Внешняя цель: none.
+Вне scope: changing executor trust semantics, making the synthetic host trusted,
+real remote transport, Worker provider call, approval or publication.
+Разрешённые пути:
+- tests/test_executor.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Критерии приёмки:
+- execution reaches `SignedVerifierClient` after remote snapshot validation,
+  worker preparation and independent replay;
+- fake service returns a genuinely valid, exact request/nonce/profile-bound
+  Ed25519 response with verifier PASS;
+- executor returns `FAILED` / `verifier-trust-unestablished`, preserves
+  signature/profile metadata with `independent_host_trust_established=false`,
+  and performs zero stage saves/loads;
+- existing R2 behavior is unchanged; focused tests, full offline suite and
+  `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_executor tests.test_signed_verifier_client -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если тест требует смены trust gate, реального ключа, transport,
+credentials, network, Docker, stage write or provider effect.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: a full fake remote-snapshot execution reached the
+  `SignedVerifierClient` after worker preparation and independent replay. The
+  in-process fake service returned a cryptographically valid exact-bound PASS
+  receipt; executor retained `FAILED` / `verifier-trust-unestablished`, preserved
+  signature/key/profile metadata with the independent-host flag false, and made
+  zero stage-store save/load calls. Focused executor/client suite: 61 tests
+  passed; full offline suite: 1083 tests (1074 passed, 9 skipped);
+  `git diff --check` clean. No real key, network, SSH/testdev, Docker, stage
+  write, approval, provider call or external effect occurred. R2/MVP remain OPEN.
+
+### Batch FZ — validate the pinned remote commit object bytes (R2 execution batch 139/139; 1 task)
+
+#### EXP-586 — verify the commit object hash and root-tree binding
+Статус: ACCEPTED
+Цель: strengthen fixed-snapshot evidence by validating the actual Git commit
+object bytes for the pinned public BrainBooster commit, beyond REST metadata and
+the already-recomputed recursive tree.
+Гипотеза: recomputing SHA-1 over Git's exact `commit <size>\0<payload>` framing
+and extracting the commit's unique root `tree` header will independently check
+the content-addressed commit identity and bind it to the existing tree pin.
+Зависит от: pinned commit/tree in `brainbooster_target_profile.py`, EXP-557
+recursive tree recomputation, and the anonymous public source selection.
+Среда исполнения: local/offline parser tests plus one anonymous read-only fetch
+of the exact public commit. No credentials, provider write, branch/PR, Docker,
+SSH/testdev, deployment or mutation of the project checkout.
+Внешняя цель: public repository
+`SoldatovAlexander/brainbooster_full_v11`, exact commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`.
+Вне scope: commit signature verification, authorship, trust in GitHub/TLS,
+changing the pin, or claiming authenticated remote provenance.
+Разрешённые пути:
+- src/app_contracts/github_snapshot.py
+- tests/test_github_snapshot.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Разрешённые внешние действия: one anonymous public Git fetch of only the exact
+commit OID, with system/global Git config and credential helpers disabled,
+terminal prompts disabled, and the object stored only in a new temp bare repo;
+then one local `git cat-file commit` read of that fetched OID. No other network.
+Критерии приёмки:
+- parser takes a bounded exact commit payload plus the fixed `GitHubCommitClaim`,
+  verifies Git SHA-1 object framing against its full commit OID, and returns
+  only exact commit/root-tree identities;
+- reject wrong OID/tree, malformed/duplicate/missing root-tree header, non-byte,
+  empty and over-limit commit objects with stable bounded error;
+- exact public fetched object verifies to commit
+  `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
+  `2007066217aadafd9887fb3e3069220333b4fddb`;
+- docs state that content-address checking does not prove authorship, signed
+  provenance or the remote TLS trust path; focused/full suite and diff check pass.
+Проверки:
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_github_snapshot -q
+- PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q
+- git diff --check
+Разрешённые внешние команды:
+- `git -c credential.helper= -c protocol.version=2 -C <new-temp-bare-repo> fetch --no-tags --depth=1 https://github.com/SoldatovAlexander/brainbooster_full_v11.git 2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`
+- `git -C <same-temp-bare-repo> cat-file commit 2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`
+Остановись, если Git требует credential, commit OID fetch недоступен, remote
+object hash/tree mismatch или какой-либо write/branch/PR предлагается.
+Commit: DENIED.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: `parse_git_commit_object` now enforces bounded raw
+  commit bytes, Git's exact SHA-1 object framing, a unique first root-tree
+  header and equality with the fixed API tree claim. Three focused parser tests
+  passed; the full snapshot parser suite passed 43 tests. One anonymous HTTPS
+  Git fetch of only the pinned public commit ran with system/global config and
+  credential helpers disabled and prompts off. The 1065-byte raw object
+  recomputed to commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
+  `2007066217aadafd9887fb3e3069220333b4fddb`. Full offline suite: 1086 tests
+  (1077 passed, 9 skipped); `git diff --check` clean. Temporary bare repository
+  was removed. This does not prove authorship, signature or the HTTPS/GitHub
+  trust path; runtime snapshot intake is not yet wired to this object check.
+  No credentials, provider writes, branches, PRs, Docker, SSH or deployment.
+  R2/MVP remain OPEN.
+
+### Batch GA — define a bounded one-shot wire protocol for the verifier (R2 execution batch 140/140; 1 task)
+
+#### EXP-587 — serialize signed verifier invocation and add its pure service handler
+Статус: READY
+Цель: make the EXP-584 client and EXP-582 service core composable across a
+future process/SSH boundary using one exact bounded stdin record and one signed
+stdout response.
+Гипотеза: a canonical invocation envelope that binds the exact existing
+`VerifierProcessRequest` bytes, fresh nonce and profile digest, plus a pure
+service handler that rejects profile mismatch before verifier execution, gives
+future transports a deterministic replay-resistant protocol without choosing or
+opening a network endpoint.
+Зависит от: accepted EXP-581/582 service-side signing core and EXP-584/585
+client/executor composition.
+Среда исполнения: local/offline synthetic keys and in-process fake transport.
+No process spawn, network, SSH/testdev, Docker, credentials, real key, stage
+write, approval, provider call, deployment or external effect.
+Внешняя цель: none.
+Вне scope: concrete HTTP/SSH implementation, key loading/enrollment, host trust,
+executor trust promotion, deployment or publication.
+Разрешённые пути:
+- src/app_contracts/signed_verifier_protocol.py (new)
+- src/app_contracts/signed_verifier_service.py
+- src/app_contracts/signed_verifier_client.py
+- tests/test_signed_verifier_protocol.py (new)
+- tests/test_signed_verifier_client.py
+- tests/test_executor.py
+- docs/27-implementation-status.md
+- .opencode/tasks/WORK_QUEUE.md
+Wire contract:
+- canonical UTF-8 JSON object with exactly `schema`, `request_base64`,
+  `invocation_nonce`, `verifier_profile_digest`; schema is
+  `signed-verifier-invocation/v1`, request bytes are canonical standard
+  Base64 of one canonical bounded `VerifierProcessRequest`, nonce is 64 lower
+  hex chars and profile digest is `sha256:<64 lower hex>`;
+- duplicate keys, noncanonical JSON/Base64, unknown/missing fields, oversized
+  envelope or malformed nested request are rejected with a sanitized stable
+  error before the verifier is called;
+- service handler accepts an immutable service-configured profile plus
+  verifier/signer/time, requires the envelope profile digest to equal that
+  profile before execution, and
+  returns the existing canonical signed-verifier-response bytes unchanged;
+- client calls a transport exactly once with the serialized envelope bytes;
+  transport stdout is exactly the signed response bytes; no retry/framing text.
+Критерии приёмки:
+- client↔handler fake round-trip verifies nonce/profile/request/result binding;
+- wrong profile, duplicate keys, malformed/noncanonical/over-limit request and
+  invalid signature are rejected before verifier execution or with no retry;
+- no claim of independent host trust is added and EXP-585 executor integration
+  still stops before stage save/load;
+- protocol/client/executor focused tests, full offline suite and `git diff --check` pass.
+Проверки:
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest tests.test_signed_verifier_protocol tests.test_signed_verifier_client tests.test_executor -q`
+- `PYTHONPATH=src:/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/site-packages PYTHONDONTWRITEBYTECODE=1 /Users/aleksandrsoldatov/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -q`
+- `git diff --check`
+Разрешённые внешние команды: none.
+Commit: DENIED.
+Остановись, если требуется endpoint, subprocess, credential/key file, изменение
+trust gate или provider effect.
+Результат Control Plane:
+- ACCEPTED 2026-10-08: added canonical `signed-verifier-invocation/v1` JSON
+  framing with standard Base64 of the exact canonical bounded process request,
+  fresh nonce and profile digest. Duplicate keys, noncanonical JSON/Base64,
+  malformed nested requests and oversize records fail with a stable sanitized
+  error. `handle_signed_verifier_invocation` rejects a profile-digest mismatch
+  before verifier execution and returns the existing canonical signed response.
+  `SignedVerifierClient` now sends one serialized envelope to its injected
+  transport; the executor fake round-trip uses the real envelope/handler and
+  still refuses durable staging because host trust is unestablished. Protocol
+  tests: 4 passed; focused protocol/client/executor suite: 66 passed; full
+  offline suite: 1091 tests (1082 passed, 9 skipped); `git diff --check` clean.
+  No process, network, SSH/testdev, Docker, credential, real key, stage write,
+  approval, provider effect or deployment occurred. R2/MVP remain OPEN.
+
+Публикация Control Plane: 2026-10-08 пользователь явно запросил commit и push
+текущего проверенного снимка изменений до EXP-587 включительно в
+`SoldatovAlexander/Agent00X`, `main` → `origin/main`. Это разрешение ограничено
+текущими изменениями в `.opencode/tasks/WORK_QUEUE.md`,
+`docs/27-implementation-status.md`,
+`src/app_contracts/github_snapshot.py`,
+`src/app_contracts/signed_verifier_client.py`,
+`src/app_contracts/signed_verifier_protocol.py`,
+`src/app_contracts/signed_verifier_service.py`, `tests/test_executor.py`,
+`tests/test_github_snapshot.py`, `tests/test_signed_verifier_client.py` и
+`tests/test_signed_verifier_protocol.py`; оно supersedes `Commit: DENIED` только
+для этого снимка. Push создаёт только Git-коммит и не запускает PR, deployment,
+Docker, SSH или provider operation.

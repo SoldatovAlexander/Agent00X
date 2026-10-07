@@ -53,6 +53,8 @@ _GITHUB_API_BASE = "https://api.github.com"
 _GITHUB_API_VERSION = "2026-03-10"
 _GITHUB_ACCEPT_HEADER = "application/vnd.github+json"
 _MAX_COMMIT_RESPONSE_BYTES = 1_000_000
+MAX_GIT_COMMIT_OBJECT_BYTES = 1_000_000
+_MAX_GIT_COMMIT_HEADER_BYTES = 65_536
 _MAX_TREE_RESPONSE_BYTES = MAX_SNAPSHOT_TREE_LIST_BYTES
 _MAX_BLOB_RESPONSE_BYTES = _MAX_BLOB_WIRE_BYTES
 
@@ -93,6 +95,81 @@ class GitHubCommitClaim:
         _validate_oid(self.tree_oid, "github snapshot: tree OID is invalid")
         if self.evidence_origin != "github_rest_api_claim":
             raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
+
+
+@dataclass(frozen=True)
+class GitCommitObject:
+    """Content-address-checked commit/tree IDs; not authorship provenance."""
+
+    commit_oid: str
+    tree_oid: str
+
+    def __post_init__(self) -> None:
+        _validate_oid(self.commit_oid, "github snapshot: commit object is invalid")
+        _validate_oid(self.tree_oid, "github snapshot: commit object is invalid")
+
+
+def parse_git_commit_object(
+    claim: GitHubCommitClaim, raw_commit: object
+) -> GitCommitObject:
+    """Verify exact Git SHA-1 framing and the claimed unique root-tree header.
+
+    A successful result proves that these bytes hash to the requested commit
+    OID and name the API-claimed root tree. It does not verify a commit
+    signature, author identity, GitHub identity or the transport that supplied
+    the bytes.
+    """
+
+    if type(claim) is not GitHubCommitClaim:
+        raise GitHubSnapshotError("github snapshot: commit object claim is invalid")
+    if (
+        type(raw_commit) is not bytes
+        or not raw_commit
+        or len(raw_commit) > MAX_GIT_COMMIT_OBJECT_BYTES
+    ):
+        raise GitHubSnapshotError("github snapshot: commit object is invalid")
+    try:
+        object_header = b"commit " + str(len(raw_commit)).encode("ascii") + b"\0"
+        calculated_oid = hashlib.sha1(object_header + raw_commit).hexdigest()
+        header_end = raw_commit.find(b"\n\n")
+        if header_end <= 0 or header_end > _MAX_GIT_COMMIT_HEADER_BYTES:
+            raise ValueError
+        header_bytes = raw_commit[:header_end]
+        if b"\0" in header_bytes or b"\r" in header_bytes:
+            raise ValueError
+        header_lines = header_bytes.split(b"\n")
+        if any(not line for line in header_lines):
+            raise ValueError
+        tree_lines = [line for line in header_lines if line.startswith(b"tree ")]
+        if len(tree_lines) != 1 or not header_lines[0].startswith(b"tree "):
+            raise ValueError
+        tree_oid_bytes = header_lines[0][5:]
+        if re.fullmatch(rb"[0-9a-f]{40}", tree_oid_bytes) is None:
+            raise ValueError
+        previous_header = False
+        for line in header_lines:
+            if line.startswith(b" "):
+                if not previous_header:
+                    raise ValueError
+                continue
+            key, separator, value = line.partition(b" ")
+            if (
+                not separator
+                or re.fullmatch(rb"[a-z][a-z0-9-]*", key) is None
+                or not value
+            ):
+                raise ValueError
+            previous_header = True
+        tree_oid = tree_oid_bytes.decode("ascii")
+        if calculated_oid != claim.commit_oid or tree_oid != claim.tree_oid:
+            raise ValueError
+        return GitCommitObject(commit_oid=calculated_oid, tree_oid=tree_oid)
+    except GitHubSnapshotError:
+        raise
+    except Exception:
+        raise GitHubSnapshotError(
+            "github snapshot: commit object is invalid"
+        ) from None
 
 
 def parse_github_commit(request: GitHubSnapshotRequest, response: object) -> GitHubCommitClaim:

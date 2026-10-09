@@ -64,6 +64,11 @@ EXPECTED_SEED_FIELDS = frozenset(
         "snapshot_origin",
         "snapshot_claim_digest",
         "source_repository_id",
+        "verifier_attestation_digest",
+        "verifier_attestation_key_id",
+        "verifier_attestation_profile_digest",
+        "verifier_trust_enrollment_digest",
+        "verifier_host_trust_decision_digest",
     }
 )
 

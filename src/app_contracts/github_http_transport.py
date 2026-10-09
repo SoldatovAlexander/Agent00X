@@ -53,9 +53,12 @@ _API_VERSION = "2026-03-10"
 _USER_AGENT = "Agent00X-ReadOnly-Snapshot/1"
 _MAX_RESPONSE_BYTES = 8_000_000
 _MAX_TIMEOUT_SECONDS = 30.0
-_ALLOWED_GIT_PATH = re.compile(
+_ALLOWED_REPOSITORY_PATH = re.compile(
     r"/repos/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/"
     r"([A-Za-z0-9_.-]{1,100})/(commits|git/trees|git/blobs)/([0-9a-f]{40})\Z"
+)
+_ALLOWED_PUBLIC_GPG_KEYS_PATH = re.compile(
+    r"/users/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/gpg_keys\Z"
 )
 
 
@@ -262,10 +265,13 @@ def _validate_url(url: object) -> str:
             or parsed.fragment
         ):
             raise ValueError()
-        match = _ALLOWED_GIT_PATH.fullmatch(parsed.path)
-        if match is None:
-            raise ValueError()
-        if match.group(2) in {".", ".."}:
+        public_keys_match = _ALLOWED_PUBLIC_GPG_KEYS_PATH.fullmatch(parsed.path)
+        if public_keys_match is not None:
+            if parsed.query:
+                raise ValueError()
+            return parsed.path
+        match = _ALLOWED_REPOSITORY_PATH.fullmatch(parsed.path)
+        if match is None or match.group(2) in {".", ".."}:
             raise ValueError()
         query = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
         endpoint_kind = match.group(3)

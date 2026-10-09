@@ -28,6 +28,7 @@ def run_remote_snapshot_execution(
     test_timeout_seconds: int = 30,
     stage_sink: object | None = None,
     require_durable_stage: bool = True,
+    observation_store: object | None = None,
 ) -> ExecutionResult:
     """Run one exact snapshot through an injected Worker/verifier boundary.
 
@@ -79,14 +80,15 @@ def run_remote_snapshot_execution(
             remote_snapshot=workspace.snapshot,
             remote_workspace=workspace,
         )
-        result = run_local_execution(
-            request,
-            worker,
-            verifier=verifier,
-            sandbox_backend=sandbox_backend,
-            stage_sink=stage_sink,
-            require_durable_stage=require_durable_stage,
-        )
+        execution_options = {
+            "verifier": verifier,
+            "sandbox_backend": sandbox_backend,
+            "stage_sink": stage_sink,
+            "require_durable_stage": require_durable_stage,
+        }
+        if observation_store is not None:
+            execution_options["observation_store"] = observation_store
+        result = run_local_execution(request, worker, **execution_options)
         if type(result) is not ExecutionResult:
             raise ValueError("remote CLI execution result is invalid")
         return result

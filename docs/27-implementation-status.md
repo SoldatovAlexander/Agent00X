@@ -4,7 +4,7 @@
 
 Версия: 1.1
 
-Дата сверки: 2026-10-08
+Дата сверки: 2026-10-09
 
 Этот документ отвечает на вопрос «что существует и что подтверждено сейчас».
 План работ находится в [документе 24](24-mvp-final-plan.md); замысел широкого
@@ -26,7 +26,8 @@ approval-request CLI (EXP-552) и synthetic signer round-trip через policy 
 controlled local mock PR chain (EXP-553/554). Batch EX / EXP-558 добавил
 read-only CLI проверки внешнего подписанного approval request по точному stage
 и операторскому, неаутентифицированному trust profile. Это всё ещё не подтверждённая
-production end-to-end система: происхождение snapshot — GitHub API claim,
+production end-to-end система: commit signature объявлена GitHub API как valid,
+но ключ/авторство независимо не проверялись, а source transport доверяет GitHub/TLS;
 verifier доверен только в same-host/container контуре, signer синтетический,
 mock и fake-provider evidence не равны реальной publication, а текущий project
 working tree не содержит persisted SQLite stage из EXP-520. При этом на
@@ -35,12 +36,224 @@ working tree не содержит persisted SQLite stage из EXP-520. При �
 `backend/routes.py` patch. Байтово-идентичная копия сохранена вне Git в
 локальном каталоге evidence для продолжения review; это не резервная копия и
 не production durability guarantee. Approval на этой стадии не создавался.
+Проверка EXP-599 подтвердила, что `AI_PROCESS_API` не инъецирован в текущий
+runner. EXP-600 проверил только README назначенного проекта AI Process
+Architect: он описывает настройку серверной переменной окружения, но не
+документирует поддерживаемый нераскрывающий интерфейс передачи значения в
+Agent00X. Это не доказывает, что ключ отсутствует в проекте; файлы секретов и
+значение переменной не проверялись. До безопасной инъекции credential-source
+live Worker остаётся закрыт.
+Batch ID / EXP-641 added a limited lazy `NativeKeyringCredentialSource` for the
+fixed `Agent00X/AI_PROCESS_API` item, explicitly selecting only allowlisted
+macOS Keychain, Windows Credential Manager or Linux Secret Service backends.
+It does not transfer a key from AI Process Architect. Synthetic tests passed;
+the status CLI intentionally checks only backend availability and never looks
+up the item. The current check runtime has no `keyring` package installed, so
+backend status was `unavailable` (`credential_item_checked=false`,
+`value_read=false`, exit 3). No real backend/item or OS-specific security
+properties were tested. EXP-634 remains BLOCKED and does not authorize a run
+through this new source.
+At this point in the historical sequence, the user reported that no suitable
+injector was available and the hidden `TerminalPromptCredentialSource` was
+proposed as an MVP fallback. A later Control Plane amendment and fresh
+confirmation authorized one EXP-634 attempt; that invocation stopped at the
+hidden credential prompt before the DeepSeek channel opened HTTPS. EXP-634 is
+spent and cannot be retried. EXP-725 later prepared the separate EXP-726
+profile, which remains DRAFT. A subsequent terminal inspection showed the
+operator command was not running and the credential value was entered as shell
+input; treat it as compromised and revoke it before any new attempt. No
+DeepSeek request is evidenced, and revocation has not been confirmed.
+Batch IU / EXP-662 now exercises a synthetic remote-snapshot execution with a
+persistent observer through the signed-approval CLI and the existing
+approval→policy→gateway→broker→mock-publication gates, continuing the exact
+process/run and staged digest. The signed-mock CLI's optional resume uses a
+deterministic atomic one-shot claim; repeated use is refused. This is local
+SQLite, fake Worker/verifier, synthetic signature and in-memory mock evidence
+only. It does not consume EXP-634 authorization or establish real Worker,
+authenticated approval, independent verifier trust, complete collection or a
+real PR. EXP-634 remains BLOCKED pending a supported credential source or a
+freshly approved source amendment.
+Batch IV / EXP-663 moves observer-run creation ahead of the one-shot readiness
+request and records bounded readiness-fetch and permit-eligibility decisions.
+The same `JournaledProposalWorker` instance is handed into the pinned runtime,
+which continues with permit consumption and snapshot intake; a readiness
+transport failure or low quota leaves a redacted partial run and never starts
+runtime. Only fake/offline tests exercised this path; no readiness request,
+credential or live Worker was used.
+Batch IW / EXP-664 adds one synthetic composition test that invokes the actual
+pinned operator CLI with fake readiness/runtime, exercises the one-shot permit,
+remote snapshot executor, exact SQLite stage, approval-request CLI, synthetic
+signature and signed-mock CLI, and confirms a contiguous same-run history from
+readiness through mock receipt. Approval/stage inputs remain unchanged, repeat
+continuation is rejected, and the mock receipt has the exact staged digest.
+This is local fake evidence only; it does not establish a live Worker,
+authenticated signer, real provider effect or production collector completeness.
+Batch IX / EXP-665 adds only a metadata declaration for a new simulation branch.
+It requires a schema-valid correction targeting an event within the source
+checkpoint history, a complete checkpoint explicitly marked `simulation`, and
+no pending action, in-flight invocation or known external effect. It appends a
+causally linked `branch_created` event under a distinct run/branch ID and does
+not restore artifacts/workspace or expose any execution/dispatch API. Synthetic
+memory and SQLite-reopen tests confirm the source history is unchanged and
+refuse partial/unsafe/duplicate branch inputs. Criterion 15 remains partial:
+no alternative step, replay isolation or learning evaluation is implemented.
+Batch IY / EXP-666 carried the preserved exact EXP-614 stage from the accepted
+live Worker result/replay through the actual approval-request CLI and
+signed-mock CLI using only the deterministic synthetic test signer and
+operator-supplied synthetic trust profile. The mock receipt binds the same
+stage digest and synthetic provider ID; stage and same-volume backup hashes and
+SQLite sidecar state were unchanged. The receipt explicitly reports
+`external_write=false` and `identity_authenticated=false`: it is neither a
+human approval nor a real PR, and the temporary approval/signature files were
+deleted automatically.
+Batch IZ / EXP-667 repeats that exact-digest local-mock continuation with a
+persistent observer DB at `/Volumes/DATA/Agent00X-local-evidence/exp667-observer.sqlite3`.
+It records the approval/publication gates in one 15-event, 7-checkpoint run;
+the source Worker/verifier stage predates this run and is deliberately not
+claimed as observed in it. Sequence and gate order were confirmed from the
+read-only journal rows; the redacted structural report remains `partial`, with
+an absent agent terminal event and unverified collector coverage. The exact
+stage and same-volume copy remain byte-identical; the synthetic repeat was
+refused without journal mutation. No provider effect occurred.
 Production runtime,
 independent verifier trust, signer enrollment, durable recovery и real PR
-остаются открытыми; observer collector, отчёты и учебные ветки также не
+остаются открытыми; есть structural report загруженных journal rows (EXP-642)
+и opt-in journal вызовов Worker/verifier (EXP-643—645), но полный runtime
+collector, полнота истории, artifact resolution, replay и учебные ветки не
 реализованы.
+EXP-667 was accepted after read-only journal inspection confirmed the persisted
+gate order. Its initial evidence harness exited after the successful CLI call
+because it expected gate labels in the report's intentionally redacted facts;
+no publication retry was made. The journal was inspected read-only and the
+report remains explicitly partial.
+Batch JA / EXP-668 strengthens the same structural report: self-referential or
+forward causal event IDs now appear as `causal_reference_not_prior` gaps with
+the referenced IDs. This improves detection of malformed ordering, but does
+not authenticate local journal contents or establish collector completeness.
+The full offline suite after EXP-671 passed: 1256 tests (1247 passed, 9
+skipped). Python emitted existing `ResourceWarning`s for unclosed SQLite
+connections in other tests; this batch did not alter those fixtures.
+Batch JF / EXP-673 adds an explicit colorless `--format text` mode to the
+read-only stage preview CLI while preserving JSON as its default. It displays
+the exact staged-change, artifact and verified-content digests, repository/base,
+declared paths, verifier identity/verdict/digest, approval/publication state and
+patch. Terminal control and directional-format characters are escaped; the
+text mode opens SQLite read-only and does not invoke approval/publication code.
+Focused stage-preview tests: 7 passed; full offline suite: 1258 tests (1249
+passed, 9 skipped), with existing SQLite `ResourceWarning`s; `git diff --check`
+passed. Only synthetic stages were used. Criterion 9 advances locally, but no
+usability study or authenticated human approval is established.
+Batch JG / EXP-674 connects the terminal review output to the existing exact
+synthetic-canary scanner: clean preview passes, while a marker injected only
+into a synthetic patch is localized to `stage-preview`; the failure diagnostic
+does not echo the marker. Focused preview tests: 8 passed; full offline suite:
+1259 tests (1250 passed, 9 skipped), with existing SQLite `ResourceWarning`s;
+`git diff --check` passed. This covers one synthetic output surface only; there
+is no scan of all actual runtime/evidence surfaces. Criterion 3 remains open.
+Batch JH / EXP-675 extends the canary regression through the fake pinned-CLI →
+Worker → stage → approval-request → signed-mock composition. A synthetic
+credential is resolved exactly once by the fake Worker callback, then checked
+against stdout/stderr, stage and observer SQLite bytes, approval/signature/trust
+files, observer report and mock receipt. No canary is present. Focused composed
+test: 1 passed; full offline suite: 1259 tests (1250 passed, 9 skipped), with
+existing SQLite `ResourceWarning`s; `git diff --check` passed. This remains
+fake/synthetic evidence: criterion 3 still lacks a real Worker/verifier run and
+a scan of every actual runtime surface.
+Batch JI / EXP-676 removes unbounded `json.dumps(default=str)` from exact-canary
+scanning. The scanner now traverses only supported JSON-like values under fixed
+surface-count, per-surface byte, node and depth limits; cycles, unsupported
+objects and limit overflows fail closed as findings without echoing values.
+Focused scanner/preview/composition suite: 30 passed; full offline suite: 1261
+tests (1252 passed, 9 skipped), with existing SQLite `ResourceWarning`s;
+`git diff --check` passed. The heuristic remains synthetic and exact-canary
+based; it is not a general secret detector or complete live-run scan.
+Batch JJ / EXP-677 adds a subprocess regression with a newly constructed parent
+environment containing only a synthetic `AI_PROCESS_API`; the actual local
+sandbox child reports that variable absent. A mocked Docker exec command is
+also asserted to carry exactly its three fixed environment entries, and the
+existing `--network none` profile assertions remain intact. Focused sandbox
+suite: 19 tests (18 passed, one Docker opt-in skipped); full offline suite:
+1263 tests (1254 passed, 9 skipped), with existing SQLite `ResourceWarning`s;
+`git diff --check` passed. The `python:3.12-alpine` image is absent locally; no
+pull was attempted, so actual Docker network/env isolation was not revalidated.
+Batch JK / EXP-678 then ran the opt-in integration exactly once using the
+already-local pinned target image
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`
+(`linux/arm64`). The parent test process had a synthetic `AI_PROCESS_API`; the
+container environment and `docker inspect Config.Env` lacked that variable.
+The test confirmed no network/DNS, `NetworkMode=none`, read-only root and source
+snapshot, dropped capabilities, no-new-privileges, fixed memory/CPU/PID limits,
+and a writable isolated workspace. The temporary container was removed; a
+read-only Docker listing showed none running from that image. Opt-in test: 1
+passed; standard full offline suite: 1263 tests (1254 passed, 9 skipped), with
+existing SQLite `ResourceWarning`s; `git diff --check` passed. No image was
+pulled and no public network, repository, credential or provider effect was
+used. This is strong target-container evidence, not full Worker orchestration
+or production host/daemon attestation.
+Batch JB / EXP-669 adds an opt-in observer run to the stored-candidate replay
+CLI. On synthetic tests, one run spans readiness/quota, snapshot source calls,
+fixed pin decision, the stored proposal, sandbox, verifier and stage save/readback.
+It does not call a live Worker/model; the output remains `partial` and
+`local_unattested`, and the CLI has not been run against GitHub or Docker here.
+Batch JC / EXP-670 then made one authorized read-only replay attempt using that
+observer, but stopped at snapshot intake before the tree GET. Read-only journal
+metadata and route-code inspection localized the cause to the observer's
+incorrect tree/blob URL matcher. The source stage and same-volume copy remained
+byte-identical; no target test or verifier ran. Batch JD / EXP-671 corrected
+the exact commit/tree/blob route shapes and added allowlist regressions. The
+replay has not yet been repeated under EXP-670; that card remains blocked and
+its partial run has no target/verifier evidence. A distinct, separately-carded
+EXP-672 run then passed snapshot intake and reached target tests but failed the
+expanded SQLite signed-64 boundary case (`target-test-sqlite-range-status`). Its
+partial journal recorded 67 events/33 checkpoints and sandbox close; verifier
+and stage persistence were not reached. The candidate is stale against the
+newer regression, while the source and backup remain unchanged. No second
+attempt is authorized under EXP-672.
 Нельзя заявлять production-ready, отсутствие всех утечек секретов или доказанную
 неуязвимость Gateway.
+
+### Сверка критериев Thin Vertical Slice из документа 24, раздел 10 (2026-10-09)
+
+Статусы ниже относятся к требуемому сквозному evidence, а не к наличию
+отдельного класса или unit-теста. `Частично` означает только локальные,
+synthetic/fake или same-host доказательства; это не закрывает production gate.
+
+| № | Критерий | Текущее evidence | Статус / что ещё требуется |
+|---|---|---|---|
+| 1 | PR из одобренного staged digest | EXP-520/548/614 дают сохранённый live Worker result/replay candidate и verifier PASS; EXP-648/664 compose synthetic execution through actual approval-request and signed-mock CLIs; EXP-666/667 carry the preserved EXP-614 exact stage through those CLIs to a same-digest mock receipt; EXP-686/687 compose enrolled synthetic approval through mock gates; EXP-693 carries the enrolled mock receipt from a Docker target/verifier stage; EXP-699/703 cover the actual snapshot reader/parser through enrolled mock receipt; EXP-723/745/748 cover public snapshot with fake Worker; EXP-781 passes the exact 23-file pinned snapshot through `ContainerProposalWorker`, target, pinned verifier, stage/readback, preview and same-digest local mock receipt, retaining the principal digests in fixed-schema evidence. | **Открыт:** receipt is local-mock-only (`external_write=false`, `identity_authenticated=false`); EXP-781 stage has not yet passed through operator-signed approval CLI, and no trusted human approval or real PR receipt exists. |
+| 2 | Worker без GitHub network path и credential | EXP-678/693 cover the pinned target image's `network=none`, synthetic parent-environment exclusion, resource limits, target tests and verifier boundary; EXP-723 uses a fake Worker; EXP-781 uses reusable `ContainerProposalWorker` in the pinned target image after public read-only snapshot fetch, with one injected fake-channel response and no credential/provider call. | **Частично:** direct GitHub egress is blocked for the container Worker and local boundary passed; no live model credential or separate host/daemon trust boundary is proven; local Worker fallback has no network isolation. |
+| 3 | Canary credential отсутствует на проверяемых поверхностях | Existing exact-canary tests cover synthetic nested agent/evidence/audit surfaces; EXP-674 scans terminal stage-review output; EXP-675 checks CLI, stage/observer DB, approval inputs, report and receipt across a fake composition; EXP-676 bounds scanner work and fails closed on unscannable surfaces. | **Открыт:** no reproducible scan of an actual live Worker/verifier run and all runtime/persisted surfaces; pattern checks remain heuristic. |
+| 4 | Изменение digest отзывает approval | Approval и intent привязаны к digest; mutation/неверная подпись отклоняются локальными policy regressions (EXP-547, EXP-553/554, EXP-558). | **Частично закрыт локально:** повторить как gate реального staged approval и signer enrollment. |
+| 5 | Повтор intent не создаёт второй side effect | Idempotency и lost-response reconciliation покрыты mock/fake provider тестами (EXP-537/538, EXP-550/551). | **Частично закрыт локально:** нет подтверждённого recovery после реального provider side effect. |
+| 6 | Недоступная policy запрещает publication | Composed mock-chain и fast/slow/degraded policy paths имеют fail-closed regression coverage (EXP-247/248 и последующие gateway/broker suites). | **Частично закрыт локально:** нет production policy service/runtime evidence. |
+| 7 | Audit восстанавливает цепочку без секрета | SQLite journal and observer store verify local event causality/reopen; EXP-667 persists 15 bounded approval/publication events; EXP-687/693 exercise same-run synthetic Worker/verifier through receipt; EXP-699/703 carry actual snapshot parser events through mock receipt; EXP-723/745/748 link public pinned snapshot intake to fake Worker, target/verifier, exact stage, enrolled mock approval and receipt in one observer run; EXP-748 retains the observer run ID and stage digest without source content. | **Открыт:** EXP-748's temporary observer DB was not retained; this is not a live Worker/trusted independent host; collector completeness and operational durability remain unproven. |
+| 8 | Crash recovery не делает слепой повтор | Unknown/lost outcomes переходят в reconciliation; fake GitHub и SQLite reopen cases не повторяют подтверждённый side effect. | **Частично закрыт локально:** нет production crash/recovery evidence против provider. |
+| 9 | Personal пользователь понимает действие до approval | EXP-629/630 дают bounded read-only preview точного stage и patch; EXP-673 adds a colorless terminal view with all three exact digests and escaped patch text while retaining JSON by default. | **Частично:** readable CLI evidence exists, but no usability study or authenticated human approval has validated the operator experience. |
+| 10 | Эксперт через CLI видит identity, policy, evidence и receipt | CLI выдаёт bounded stage/verifier/approval/publication evidence (EXP-552/558/563/573); EXP-682/683 adds verifier-enrollment digest evidence; EXP-685–687 compose synthetic enrollment and local mock gates; EXP-723/745/748 assert same-digest enrolled mock receipt and observer-run linkage through the operator CLIs; EXP-781 adds fixed-schema stdout evidence with pinned snapshot, candidate, stage, verified-content, verifier and mock-receipt identities. | **Частично:** EXP-781 is test output, not the operator CLI; enrollment is synthetic and `identity_authenticated=false`; authority governance and a real provider receipt/identity remain unproven. |
+| 11 | MVP технически отключает неготовые возможности | Fixed CLIs ограничивают target, operation, endpoint и повтор; unapproved write paths требуют отдельного permit/approval. | **Частично:** нет доказательства единого production deployment, где все незакрытые функции невозможно включить/обойти. |
+| 12 | Записаны время и затраты | EXP-723's public-read-only fake-worker integration test took about 24 seconds; EXP-745 took 21.516 seconds and EXP-748 took 23.124 seconds; EXP-781 took 17.127 seconds for the pinned snapshot/Docker Worker/target/verifier/stage/mock composition. These runs made no model call or provider write. EXP-634's one-call USD 1 ceiling is user-set, not account-enforced. | **Открыт:** no live end-to-end model time/cost or provider-enforced spend cap. |
+| 13 | Checkpoint каждого решения/вызова записан до исполнения | EXP-643—647 cover Worker/verifier/test/replay/stage gates; EXP-649—664 cover snapshot intake, permit, lifecycle and synthetic approval gates; EXP-687/693 cover ordered mock-publication events; EXP-699/703 carry synthetic snapshot events through mock receipt; EXP-723/745/748 assert the public-read-only snapshot path through fake Worker, target/verifier, stage and mock receipt in one observer run; EXP-748 retained exact call counts and a content-free stage/run evidence line. | **Частично:** no live Worker-to-publication trace, production collector completeness or real publication; the temporary observer DB was not retained and earlier replay reports remain partial/local-unattested. Cleanup evidence can still be absent if the journal is unavailable. |
+| 14 | Observer восстанавливает сохранённую историю и показывает пробелы | EXP-642/653/668 provide bounded reports and explicit gap markers; EXP-687/693/699/703 prove synthetic same-run continuity; EXP-723 validates public snapshot-intake events linked through fake Worker, target/verifier, stage and mock receipt; EXP-730/731 resolve content-addressed event and declared checkpoint refs from an optional local SQLite store; EXP-740 validates a referenced workspace manifest and materializes bounded file bytes in memory for a complete simulation checkpoint. | **Частично:** the report still lists metadata rather than restoring state/workspace into an execution environment; artifact origin, external-state reconciliation and collector completeness remain unproven; output remains partial/local-unattested. |
+| 15 | Учебная ветка не меняет историю и не повторяет effects | EXP-665 adds a metadata-only simulation-branch declaration; EXP-740 adds strict content-addressed in-memory workspace materialization for a complete simulation checkpoint. Tests preserve source event/checkpoint and artifact DB bytes; no dispatch API is exposed. | **Частично:** no alternative execution/replay isolation proof or learning evaluation; the restored bytes are not run and the API cannot perform external actions. |
+| 16 | Оценены функция, вклад организации данных и перенос корректировки | Batch KM / EXP-706 preregistered дизайн, oracle и decision rules в docs/33; EXP-707 добавил versioned casebook и проверку 100-попыточного расписания. | **Подготовлен, не исполнен:** нет результатов Worker-run, повторов, baseline-vs-context сравнения или оценки переноса; гипотеза не оценена. |
+
+**Итог:** из 16 критериев ни один пока не подтверждён как завершённый на
+сквозном production-уровне. Локально частично доказаны пункты 4—6, 8—10 и
+13—15; пункты 1—3, 7, 11—12 остаются открытыми, пункт 16 подготовлен, но не
+исполнен. Отдельный
+препятствующий этап R2 сохраняется: опубликованный signer key не проверил
+подпись pinned commit (EXP-639 BLOCKED). EXP-634 получил свежее подтверждение
+и был израсходован на одну попытку, остановившуюся до DeepSeek-запроса;
+EXP-726 остаётся DRAFT. Терминальный ввод предыдущей попытки раскрыл
+credential, поэтому его требуется отозвать; факт отзыва не подтверждён.
+Критерий 14 дополнен разрешением event refs (EXP-730/731) и ограниченной
+in-memory materialization workspace snapshot (EXP-740), но отчёт не восстанавливает
+исполняемое состояние и полнота collector не доказана. Критерий 15 продвинут от
+metadata-only declaration до валидации и in-memory materialization simulation
+workspace; изолированное исполнение/replay и обучение не реализованы;
+протокол и casebook критерия 16 подготовлены, эксперимент не проводился. Эта
+сверка не меняет статусы
+исторических карточек и не является закрытием MVP.
 
 Batch AM закрыт: все 5 карточек EXP-400—404 приняты, причём EXP-404 — как
 раскрытое локальное исключение. Карточки добавили pinned verifier snapshot
@@ -73,8 +286,11 @@ outcomes без повторного lookup/publish (55 targeted tests). Это 
 GET закрепил публичный `master` на commit
 `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` и tree
 `2007066217aadafd9887fb3e3069220333b4fddb` (28 entries; `truncated=false`);
-blob contents не читались. Это public API claim, не signature/authorship
-evidence. General caller-selected remote input не поддержан; фиксированный
+blob contents не читались. EXP-606 позднее зафиксировал ответ точечного GitHub
+commit endpoint: `verified=true`, `reason=valid` для того же commit, author login
+`SoldatovAlexander`, committer login `web-flow`. Это GitHub verification
+assertion, не independent local signature verification или доказательство
+человеческой личности. General caller-selected remote input не поддержан; фиксированный
 pinned metadata CLI существует. EXP-407
 заблокирован до конкретного полезного MVP change и отдельного подтверждения
 provider write; произвольная публикация ради демонстрации исключена. EXP-409
@@ -124,18 +340,31 @@ Batch BK позднее добавил same-process watchdog для закрыт
 активные read phases на loopback HTTPS/SSLSocket с ephemeral SAN-matching
 сертификатом; Batch BN подтвердил interrupt зависшего loopback TLS handshake
 до ServerHello. Batch BO не смог заблокировать допустимый upload в loopback TCP
-на текущей ОС и явно пропускает узкий тест с объяснением. Key-provider callback,
-DNS cancellation и upload backpressure остаются без доказательства.
+на текущей ОС и явно пропускает узкий тест с объяснением. Upload backpressure
+остаётся без доказательства; EXP-603 ограничивает caller wait на source, но не
+отменяет сам callback. EXP-602 отдельно ограничил
+ожидание DNS общим deadline и доказал fail-closed поведение без late connect;
+сам системный resolver отменить нельзя, поэтому зависший вызов удерживает один
+daemon resolver slot до возврата и временно блокирует новые DNS-попытки.
 Batch BP connected `DeepSeekProposalWorker` to the real channel and a loopback
 verified HTTPS stub, producing only a fixed synthetic proposal. It verifies
 adapter composition, not model inference or useful target work.
 EXP-508 now starts the monotonic budget before credential lookup and rejects a
 callback that returns after expiry before constructing the HTTP connection. A
 synthetic slow-callback test proves no request is initiated. The synchronous
-callback still cannot be interrupted if it never returns, and DNS resolution
-runs inside `connection.request` before a socket may exist for the watchdog to
-shut down. Thus this is not an end-to-end hard deadline; loopback interruption
-evidence still does not prove cancellation of a blocked callback or DNS lookup.
+callback still cannot be interrupted if it never returns. EXP-603 bounds the
+caller wait by the same deadline using one process-wide daemon callback slot;
+late success/exception cannot initiate HTTP, and other calls fail closed while
+the slot remains occupied. The callback itself continues if it is stuck; a late
+source return may briefly retain source-owned memory and is not zeroized.
+EXP-602 moved DNS
+resolution into one process-wide bounded daemon slot, limits the caller wait by
+the same deadline and connects only to timely numeric results. Tests prove that
+a late/failed resolver cannot create the HTTP connection and that blocked
+resolver threads cannot accumulate without bound. The OS resolver call itself
+is not cancellable: one timed-out resolver may remain until it returns and
+occupy the slot, denying later DNS attempts. This is not an end-to-end hard
+deadline; callback cancellation and upload backpressure remain unproven.
 Batch BQ defines the runtime-checkable, platform-neutral `CredentialSource`
 callable protocol for one opaque credential and checks the existing synthetic
 in-memory test provider against it. The DeepSeek channel remains injected and
@@ -227,8 +456,9 @@ EXP-520 и EXP-548 были повторно проверены 2026-10-08: EXP-
 EXP-520 source stage отдельно не перепроверялся. Эти host-local файлы не дают
 backup/production durability guarantee. Поэтому approval CLI на фактическом
 candidate stage пока не запускался. Остаются independently
-trusted verifier и authenticated snapshot provenance; hard transport/runtime
-timeout (включая синхронный credential callback, DNS и upload interruption);
+trusted verifier и independently validated snapshot provenance/authorship;
+hard transport/runtime
+timeout для синхронного credential callback и upload interruption;
 доверенный human signer enrollment и production approval точного digest;
 production runtime composition, crash-safe recovery и controlled real PR
 publication. CLI-гейт частично открыт:
@@ -445,7 +675,10 @@ artifact digest
 The new stage database is in the task temp directory
 `/var/folders/ck/vsbcwwq12jb6y77nhglk61qc0000gn/T/agent00x-exp548-stage-jfcd5so9/stage.sqlite3`.
 This is a deterministic replay, not another live model call; Docker is still
-same-host evidence and the snapshot remains an unsigned GitHub API claim.
+same-host evidence. At EXP-548 time no commit-signature metadata had been
+queried; EXP-606 later recorded GitHub API `verified=true, reason=valid` for
+this pinned commit. That is GitHub's assertion, not independent local
+signature verification or proof of authorship.
 Focused suite: 65 tests (3 skipped); full suite: 978 tests (969 passed, 9
 skipped); `git diff --check` clean. No approval, credential, model call, provider
 write, branch, PR, commit, push or deployment occurred. R2/MVP remain OPEN.
@@ -578,20 +811,22 @@ The user authorized one-time lazy in-memory use of `AI_PROCESS_API` from the
 AI Process Architect project and set a USD 1 ceiling. The credential value was
 not emitted or copied into Agent00X. One live call only; no retry, approval or
 provider write. The USD 1 ceiling is user-set, not an account-enforced cap;
-snapshot provenance remains an unauthenticated GitHub API claim, and the
-same-host verifier is not independently trusted. Accepted as a live Worker-to-
+at EXP-520 time commit-signature metadata had not been checked. EXP-606 later
+recorded GitHub's `verified=true, reason=valid` assertion for the pinned commit;
+independent local verification/authorship and transport provenance remain open.
+The same-host verifier is not independently trusted. Accepted as a live Worker-to-
 stage experiment, not as R2 exit evidence.
 
 ### R2 exit matrix (remote metadata rechecked 2026-10-08; local suite updated 2026-10-08)
 
 | Gate | What current evidence demonstrates | Evidence still required for R2 exit |
 |---|---|---|
-| Fixed remote repository snapshot | One fresh anonymous fixed-CLI intake returned `snapshot_ready`, `authenticated=false`, exact pinned commit/tree, 23/23 file metadata and full content digest; each Git blob ID and the complete recursive root tree ID are recomputed from content/entries. EXP-586 separately fetched the exact pinned commit anonymously and recomputed its raw Git SHA-1 object ID and root-tree header, matching both pins. | This object-byte check is not yet wired into runtime snapshot intake. Signature/authorship and remote provenance still require a separately trusted signature/provenance path; GitHub/TLS remains the source transport trust. |
-| Worker change | Batch DK / EXP-520 made one expressly authorized live DeepSeek call against the exact pinned public snapshot; it produced a useful single-file `backend/routes.py` proposal and verified stage. EXP-548 rehydrated that stored output unchanged and reproduced PASS with a new exact-digest stage through the same pinned target/verifier pipeline, without another model call. | Independent verifier trust, authenticated snapshot provenance, verified provider/account-level spend cap, and a trust boundary around the in-process credential callback remain open; no retry or publication was performed. |
-| Bounded execution and test | Batch BA directly executed the exact pinned route blob; Batch BE exercised selected pinned app modules with real Uvicorn loopback HTTP in exact Python 3.11.16 image, `container-network-none`, `network_isolated=true`: malformed integer produced 500 / zero rows; valid produced 200 / one exact row. Batch BF (EXP-463) tested a fixed Control Plane patch in only the writable container copy: every malformed numeric field plus overflow returned HTTP 422 / zero writes, while valid input remained 200 / one exact row. EXP-548 replayed the live Worker candidate from the persisted stage against the full 23-blob exact snapshot; the pinned HTTP/DB verifier returned PASS and the new exact SQLite stage/readback matched the verified contents. | Independently governed verifier trust and authenticated snapshot provenance remain open; pin full app runtime/dependencies, timeouts and production recovery. |
-| Independent verification | Verifier input/result cross a bounded child-process JSON boundary and re-run the test. EXP-510 also completed a synthetic stage through the actual pinned Docker verifier image. | Verifier in a separately trusted implementation/environment with an authenticated, replay-resistant result; same-host process/container separation is insufficient. |
-| Durable stage and human approval | Validated canonical stage artifact is stored/reloaded through local SQLite; exact-digest readback is required before VERIFIED. EXP-552 exports an unsigned review request; EXP-553/554 use a synthetic signer for policy/mock-chain evidence. EXP-558 rebuilds that request from the saved stage and verifies a signed envelope through policy without effects. EXP-563 wraps the exact-stage signed verification and controlled mock path in a bounded local operator CLI. On 2026-10-08 the recorded EXP-548 temporary stage DB and a byte-identical local evidence copy outside Git were found; exact-digest preview passed read-only. | The stage is not in the project tree or backed up/replicated. No signed approval was created and the approval CLI has not consumed the live Worker stage. Authenticated production approval, trusted human signer enrollment and production durability/recovery guarantees remain absent; the supplied trust profile itself is not authenticated. |
-| Controlled Pull Request publication and recovery | Fake-only GitHub App composition binds the verified manifest to the seed and journals before branch/file effects (EXP-541); post-loss exact read-only blob-SHA confirmation (EXP-542), reopen file-state evidence (EXP-543), and fake PR receipt recovery without duplicate POST (EXP-537/538). EXP-545 binds explicit base branch; EP/EQ (EXP-550/551) bind source slug and installation-scoped ID and exercise fake provider response-loss recovery. EXP-554 proves the approval format passes controlled mock gates; EXP-563 adds a local mock-only CLI. EXP-573 adds a fixed-target live-capable GitHub App CLI behind an exact-digest terminal confirmation, tested only with fake transports and synthetic approval. | EXP-573 has not been run and provides no live PR receipt. No current project artifact contains the persisted EXP-520/548 Worker stage; the publication CLI has not consumed a real Worker stage or authenticated human approval. Still missing: trusted signer enrollment, fresh authorization for provider use, real PR receipt, independently trusted verifier, and production-grade durable recovery demonstrated against the approved provider without blind retry. No direct credentials to Worker or verifier; no multi-file atomicity claim. |
+| Fixed remote repository snapshot | EXP-594 made one fresh anonymous header-only preflight (HTTP 200, 60 remaining), then one integrated REST intake: exactly 25 GETs, fixed commit/tree/content digest, 23/23 verified blobs (240290 bytes), plus matching depth-1 raw commit proof. EXP-606 records GitHub API `verification.verified=true`, `reason=valid`; EXP-614 replayed through raw-commit-gated intake with the same 23-file snapshot and matching raw object. Later EXP-784 made one anonymous codeload GET and reproduced the pinned 23-file content digest; EXP-788 completed the codeload snapshot intake through a pinned Worker/verifier, exact stage save/readback and local mock receipt. No file names or contents were emitted. | GitHub's verification assertion is not independent local signature/key verification or proof of authorship; both transports rely on GitHub/TLS. Codeload archive claims do not include a raw commit object. The exact request count for EXP-614 was not emitted. Provider writes and credentials remain outside snapshot evidence. |
+| Worker change | Batch DK / EXP-520 made one expressly authorized live DeepSeek call against the exact pinned public snapshot and produced the `backend/routes.py` proposal/stage. EXP-548 replayed the stored output unchanged through pinned target/verifier; EXP-614 repeated after raw-commit proof enforcement without another model call. EXP-781/788 also exercised one synthetic `ContainerProposalWorker` proposal through exact pinned snapshot and verifier paths to local mock receipt, with no live model request. | The historical live call does not establish a verified account-level spend cap or host trust for the in-process credential callback. Recent composed evidence uses a synthetic Worker, not a new model call. Independent verifier trust, snapshot authorship and real publication remain open. |
+| Bounded execution and test | Batch BA directly executed the exact pinned route blob; Batch BE exercised selected pinned modules with Uvicorn loopback HTTP in exact Python 3.11.16 image, `container-network-none`, `network_isolated=true`: malformed integer produced 500 / zero rows; valid produced 200 / one exact row. Batch BF tested the fixed patch in only the writable container copy: malformed values and overflow returned HTTP 422 / zero writes; valid remained 200 / one row. EXP-548/614 replayed the stored Worker candidate against the full 23-blob snapshot; EXP-781/788 repeated pinned target test, container verifier, exact stage save/readback and local mock receipt. | These runs establish bounded local/container behavior, not a separately governed verifier host or authenticated snapshot authorship; pin full app runtime/dependencies and production recovery. |
+| Independent verification | Verifier input/result cross a bounded child-process JSON boundary and re-run the test. EXP-510 also completed a synthetic stage through the actual pinned Docker verifier image. EXP-609 adds a fixed one-shot stdin/stdout service CLI bound to `BRAINBOOSTER_VERIFIER_PROFILE`; it accepts no profile/image/test/endpoint overrides and lazily reads only `AGENT_VERIFIER_SIGNING_SEED` through `ProcessEnvironmentCredentialSource` at the final signing boundary. EXP-680—683 define and compose signed enrollment, exact HTTPS endpoint/host binding and a separate signed OOB host decision, but the recorded integration used a fake HTTPS connection and remained audit-only. EXP-791 carries synthetic signed verifier provenance through codeload-origin execution, approval request reconstruction and enrolled local-mock receipt. EXP-792 adds a real loopback HTTP exchange with the verifier service in a distinct same-host child process and verifies the signature; it still asserts `independent_host_trust_established=false`. | No separately governed verifier host, real authority key, remote key custody, authenticated host identity or OOB-reviewed host-separation evidence is established. EXP-791 and EXP-792 use synthetic verifier/authority fixtures and do not promote trust. Same-host process/container separation is insufficient; real endpoint deployment and review of host evidence are still required before any trust promotion. |
+| Durable stage and human approval | Canonical stage artifacts are saved/reopened through SQLite and exact-digest readback precedes VERIFIED. EXP-548/614 stages and the EXP-624 byte-identical copy pass read-only preview. EXP-789 exercised request and signed-mock CLIs against the retained EXP-788 stage, but review found that stage lacked signed verifier proof; EXP-790 now rejects it before emitting a request and leaves its DB unchanged. EXP-791 separately proves a synthetic codeload stage with caller-pinned signed verifier provenance can reconstruct an approval request and reach only an enrolled in-memory mock receipt, with `identity_authenticated=false` and `external_write=false`. | All approval signs/enrollments used synthetic keys; they do not authenticate a human or establish real authority governance. The retained EXP-788 stage remains ineligible because verifier provenance is absent. No OOB signer identity or production durability/recovery proof exists. |
+| Controlled Pull Request publication and recovery | Fake-only GitHub App composition binds verified manifest to seed, journals before branch/file effects, and covers response-loss recovery without duplicate POST (EXP-537—543, 545, 550/551). EXP-573 adds a fixed-target live-capable CLI but tests only fake transports/synthetic approvals. EXP-666/667 and EXP-687/791 reach only local enrolled-mock receipts; receipts explicitly report `external_write=false`. | No real PR receipt exists. All recent continuations terminate at a synthetic local mock, not GitHub. Missing: real/OOB signer enrollment, fresh exact authorization for provider use, approved provider identity, real PR evidence, independently trusted verifier, and durable recovery demonstrated against the approved provider without blind retry. No multi-file atomicity claim. |
 
 EXP-577 performed one anonymous metadata-only GET for the fixed public source on
 2026-10-08. GitHub reported numeric repository ID `1040264611`, default branch
@@ -1015,10 +1250,10 @@ preparation и последовательный stale-manifest отказ, но 
 |---|---|---|
 | R0: наблюдение и память | Концепция готова | JSON Schema, валидаторы и негативные тесты ObservationEvent/Checkpoint/LearningCorrection/MemorySummary |
 | R1: целостность и фиксация действий | Частично проверено | Нарушения 1–2 закрыты локальными regression; composed local harness, gateway-before-broker enforcement и deterministic workspace interleaving приняты, но production orchestration, real concurrent-writer evidence и external proof отсутствуют |
-| R2: сквозной исполнитель | Локальная серия Batch AF–AH завершена: 3/3 батча по 20 карточек; Batch AI: 20/20; Batch AK: исходно 7/10 ACCEPTED и 3/10 исторически BLOCKED, bounded follow-ups EXP-392—394 приняты; AL: 4/5 + 1 DRAFT; AM: 5/5, у EXP-404 раскрыто локальное исключение; AN: 4/5 + 1 BLOCKED; execution continuation: AO—BI = 21 батч (AO 5/5, AP 4/5 + 1 DRAFT, AQ–AT 5/5, AU 1 ACCEPTED + 1 BLOCKED + 3 DRAFT, AV 5/5, AW 5/5, AX 1/1, AY 1/1, AZ 1 BLOCKED, BA 1/1, BB–BD по 1 BLOCKED, BE 1/1, BF 1/1, BG 1/1, BH 1/1, BI 1 BLOCKED); BJ — docs-only сверка; BK — 22-й рабочий батч, EXP-468 accepted 1/1; BL — 23-й рабочий батч, EXP-469 accepted 1/1; BM — 24-й рабочий батч, EXP-470 accepted 1/1; BN — 25-й рабочий батч, EXP-471 accepted 1/1; BO — 26-й рабочий батч, EXP-472 accepted with one explicit upload-backpressure skip; BP — 27-й рабочий батч, EXP-473 accepted 1/1; BQ — 28-й рабочий батч, EXP-474 portable credential-source contract (synthetic-only); BR — 29-й рабочий батч, EXP-475 sanitized HTTP-status diagnostic; BS — 30-й рабочий батч, EXP-476 safe CLI status code; BT — 31-й рабочий батч, EXP-477 accepted, anonymous rate-limit preflight `HTTP 200` / `60` remaining; BU — 32-й рабочий батч, EXP-478 one fresh-state pinned pipeline attempt, exact snapshot verified but stopped before code execution; BV — 33-й рабочий батч, EXP-479 candidate digest correction verified locally, full suite 905 tests / 4 skipped, pipeline gated because the one-shot preflight output was unavailable; BW — 34-й рабочий батч, EXP-480 accepted with `HTTP 200` / 35 remaining; BX — 35-й рабочий батч, EXP-481 blocked before target execution by trailing whitespace in test command; BY — 36-й рабочий батч, EXP-482 accepted with `HTTP 200` / 10 remaining, below the 25-call threshold; BZ — 37-й рабочий батч, EXP-483 enforces one fake-only provider attempt per channel instance; CB — 38-й рабочий батч, EXP-485 adds an offline command-shape regression for the EXP-481 error; CC — 39-й рабочий батч, EXP-486 proves lease cleanup on that rejection; CD — 40-й рабочий батч, EXP-487 wires fail-closed pinned remote execution CLI with sanitized digest evidence; latest suite: 916 tests, 912 passed, 4 skipped. Batch BE подтвердил actual local HTTP baseline (500/no-write); BF проверил control-plane-proposed 422 candidate только в ephemeral copy; BG добавил fake-only DeepSeek HTTPS channel; BH потребовал exact-readback durable stage в remote composition и связал его с preview и mock-only typed-digest approval; BK—BM подтвердили cancellation сетевых phases watchdog/loopback tests; BN подтвердил TLS handshake interruption; BO не смог reproducibly block bounded upload на текущей ОС; BP подтвердил только локальную синтетическую цепочку Worker/HTTPS/proposal; BQ закрепил только portable interface, без OS vault adapter; BR сохраняет только status code, не response body, без retries; BS пробрасывает только numeric status в CLI failure code. Полезное поведение тестировалось, но candidate не получен от Worker и не сохранён; live model, trusted verifier, authenticated approval, production durability, real PR/recovery остаются открыты. Provider writes require separate authorization. |
-| R3: исторический Observer | Не начат | Отчёты по сохранённой истории, причинности и пробелам |
-| R4: учебная ветка | Не начат | Simulation branch без переноса старых прав и external writes |
-| R5: эксперимент | Не начат | Сравнение полной и упрощённой организации данных по заранее заданному набору задач |
+| R2: сквозной исполнитель | Continuation through Batch #275; EXP-748's one-shot public snapshot composition now passed with retained exact stage digest, observer run ID and bounded request counts; EXP-756 (Batch MK #276) is next READY for Worker-egress boundary design. | **OPEN:** live Worker isolation, independently trusted verifier/host, authenticated human approval, real controlled PR receipt and production recovery remain unproven. EXP-726 is DRAFT; a previously exposed credential is treated as compromised and revocation is unconfirmed. No provider write is authorized by this status. |
+| R3: исторический Observer | Частично реализован: local SQLite journal/reopen, bounded structural reports with gap markers, content-addressed artifact resolution/materialization (EXP-642/653/668, EXP-730/731/740), and selected same-run event instrumentation. | **Частично:** collector is not comprehensive, journal/artifact origin and access control are not production-trusted, and the report does not restore and replay a full execution environment. |
+| R4: учебная ветка | Частично реализована: metadata-only simulation-branch declaration (EXP-665) and strict in-memory workspace materialization for an eligible complete checkpoint (EXP-740). | **Частично:** no isolated alternative-step execution/replay or learning-transfer evaluation; no historical permissions/effects are replayed. |
+| R5: эксперимент | Протокол и versioned casebook подготовлены (EXP-706/707); schedule consistency is tested locally. | **Не исполнен:** нет Worker-run repetitions, baseline/context comparison, transfer results or preregistered outcome analysis. |
 
 Исторические M0/M0.5/M1/M2/M3/M4 больше не являются шкалой текущего плана.
 Они обозначают происхождение имеющихся компонентов: базовые контракты и часть
@@ -1227,3 +1462,1411 @@ The process is still same-host, is not sandboxed or host-authenticated, and
 does not establish independent verifier trust or change the executor trust
 gate. No credential, real key, network, SSH, Docker, stage write, approval,
 provider call or external effect occurred. R2/MVP remain OPEN.
+
+Batch GD / EXP-590 adds `Ed25519SeedCredentialSource`, a narrow lazy adapter
+from the existing opaque `CredentialSource` protocol. It accepts only a
+canonical 32-byte seed encoded as 64 lowercase hexadecimal characters and
+resolves it once at the final signing boundary, after request/profile and
+verifier-result checks. The service does not cache the resulting key. This is
+not secure storage, key enrollment, or memory erasure: Python may retain the
+credential string/key in process memory, and no live API call is authorized by
+the adapter. Synthetic tests prove the source is not called on rejected
+requests or verifier identity and that malformed values are sanitized.
+Focused service suite: 11 passed; full offline suite: 1100 tests (1091 passed,
+9 skipped); `git diff --check` clean. No real credential or external effect
+occurred. Independent verifier trust and R2/MVP remain OPEN.
+
+Batch GE / EXP-591 makes the publication journal explicitly require SQLite
+WAL mode and `synchronous=FULL` for new databases. Existing-journal recovery
+first validates the schema without migration, then requires the persisted WAL
+mode and applies FULL synchronous mode to that connection before recovery
+writes. Tests verify both PRAGMAs, existing-file preservation on a no-write
+open, and fail-closed behavior for a valid non-WAL database. This is stronger
+local SQLite commit configuration only; it does not establish filesystem/power-loss behavior,
+backup, replication, cross-host or production durability. Focused publication
+suite: 40 passed; full offline suite: 1102 tests (1093 passed, 9 skipped);
+`git diff --check` clean. No credential or provider effect occurred. R2/MVP
+remain OPEN.
+
+Batch GF / EXP-592 adds `GitHubRawCommitObjectSource` and makes fixed runtime
+snapshot intake require a parsed raw commit object whose computed SHA-1 OID and
+root tree match the fixed pins before Worker/target execution. The initial
+source version used a commit-only filter; after that variant failed, Batch GH
+removed the filter. The current source uses an isolated temporary bare object
+directory, disabled credential helpers/global Git config/redirects, a
+15-second aggregate timeout, a 2 MiB pack-file cap, a bounded object-count
+check and cleanup. Offline tests cover source command constraints and failure
+sanitization, synthetic commit-byte binding, and proof-before-Worker ordering.
+Its first public attempt used a commit-only
+partial-clone filter and failed safely; it was not retried. Batch GH / EXP-593
+removed that unsupported filter, retained depth=1 and strict pack/object bounds,
+and fetched the exact public commit once. The 1065-byte object recomputed to
+commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and root tree
+`2007066217aadafd9887fb3e3069220333b4fddb`. The temporary object store was
+removed. This is content-address integrity, not authorship, signature or
+independent GitHub/TLS provenance. Focused
+suite: 95 tests (2 skipped); full offline suite: 1112
+tests (1103 passed, 9 skipped); `git diff --check` clean. No credential, provider
+write, branch, PR, push or deployment occurred. R2/MVP remain OPEN.
+
+Batch GI / EXP-594 then exercised the integrated intake once. Anonymous
+header-only preflight returned HTTP 200 / 60 remaining; the runtime REST path
+made exactly 25 GETs (commit, recursive tree, 23 blobs) and the depth-1 Git
+source verified the same pinned commit and root tree. Full snapshot digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`
+matched; 23 blobs totaled 240290 bytes. Output was metadata-only and the
+temporary Git object store was cleaned. No credentials, Worker, Docker, stage,
+approval, verifier or provider write was used. Snapshot intake is now freshly
+proven through the raw-object gate, but Worker-to-publication remains unproven;
+at EXP-594 time commit-signature metadata had not been checked. EXP-606 later
+recorded GitHub's `verified=true, reason=valid` assertion, but local signature
+verification/authorship and GitHub/TLS provenance remain independently
+unproven. The
+configured full offline suite was rerun after this integration: 1112 tests,
+1103 passed, 9 skipped. `git diff --check` clean. R2/MVP remain OPEN.
+
+Batch GJ / EXP-595 closes a proof bypass in `scripts/replay_staged_candidate.py`:
+the fixed production composition now injects `GitHubRawCommitObjectSource` into
+the REST snapshot reader, and the replay path requires the exact raw commit OID
+and root tree proof before sandbox creation, verifier invocation or output-stage
+creation. Successful replay evidence exposes only the fixed object identifiers
+and `verified-by-object-hash`; it does not claim signer, author or transport
+provenance. Regression tests cover source wiring and absent, malformed and
+mismatched proof fail-closed ordering. Focused suite: 10 passed; configured full
+offline suite: 1115 tests (1106 passed, 9 skipped); `git diff --check` clean.
+No replay, Docker, credentials, Worker or network call was made. This removes a
+local replay-path bypass but does not provide fresh Worker/verifier pipeline or
+independent trust evidence. R2/MVP remain OPEN.
+
+Batch GK / EXP-596 adds an explicit `--credential-source process-environment`
+mode to the fixed Worker CLI, backed by the existing lazy
+`ProcessEnvironmentCredentialSource(os.environ, "AI_PROCESS_API")`. After the
+exact one-run phrase, the CLI checks only that the assigned name is present;
+missing injection stops before readiness/network, and no mode falls back to
+another. The default hidden terminal source is unchanged. Tests use synthetic
+mappings only; focused suite: 7 passed; configured full suite: 1116 tests
+(1107 passed, 9 skipped); `git diff --check` clean. No real environment value,
+credential, network, Worker, Docker or stage was used. This is process
+credential plumbing, not a secret vault, project-to-project bridge, process
+isolation, or live Worker evidence. EXP-566 remains DRAFT pending fresh user
+authorization and trusted injection; R2/MVP remain OPEN.
+
+Batch GL / EXP-597 checked only whether the current task process contains the
+three non-secret names required by the unsigned approval-request CLI:
+`AGENT_GITHUB_TEST_REPOSITORY`, `AGENT_GITHUB_INSTALLATION_ID` and
+`AGENT_GITHUB_REPOSITORY_ID`. All three were absent. The check emitted only
+booleans and read no values, files or other projects. Thus no exact GitHub App
+target binding can currently be constructed from this process environment;
+the earlier public repository ID does not supply an installation identity.
+No stage, secret, network or provider action was used. This is configuration
+availability evidence only, not authorization or an App permission check.
+R2/MVP remain OPEN.
+
+Batch GM / EXP-598 adds a standalone Worker-CLI presence check selectable only
+with `--check-credential-source --credential-source process-environment`. It
+requires no stage path or run phrase and exits before Docker, readiness, network
+or runtime; output is restricted to source mode, availability and
+`value_read=false`. Synthetic tests cover present/missing mappings without
+reading values. Focused suite: 9 passed; configured full suite: 1118 tests
+(1109 passed, 9 skipped); `git diff --check` clean. The one authorized check of
+the current task process returned `unavailable`; no value, file or other
+environment data was read. This establishes that `AI_PROCESS_API` is not
+currently injected into this runner, not whether a secret exists in another
+project. EXP-566 remains DRAFT; R2/MVP remain OPEN.
+
+Batch GN / EXP-599 repeated that exact no-value presence check after the owner
+reiterated permission for necessary actions. The runner still reported
+`unavailable` and `value_read=false` (exit 3); no credential, file, other
+environment entry, readiness or network was accessed. The configured full
+offline suite passed 1118 tests (1109 passed, 9 skipped), with `git diff
+--check` clean. EXP-566 remains DRAFT.
+
+Batch GO / EXP-600 inspected only the designated AI Process Architect
+`README.md` and confirmed that no root `AGENTS.md` exists. The README documents
+`AI_PROCESS_API` as an application/server environment setting and shows empty
+configuration placeholders, but supplies no supported secret-manager
+interface for non-disclosing injection into Agent00X. No `.env`, credential
+store, value, unrelated source or process environment was read; no interface
+was invoked. The owner must connect a trusted injection mechanism or designate
+another supported interface before EXP-566 can proceed. This says nothing
+about whether a key exists in the source project. EXP-566 remains DRAFT;
+independent verifier trust, authenticated approval, controlled PR publication
+and R2/MVP remain OPEN.
+
+Batch GQ / EXP-602 bounds the caller's fixed DeepSeek HTTP deadline across DNS:
+the single process-wide daemon resolver slot returns only validated numeric
+addresses, the request waits no longer than its monotonic deadline, and the
+default HTTPS connection uses those addresses while retaining the fixed
+`api.deepseek.com` TLS hostname verification. A late DNS result is never used
+to start a connection; resolver errors are sanitized; a permanently blocked
+system resolver can occupy only one daemon slot and causes later attempts to
+fail closed. Synthetic tests passed for slow, late and failed DNS, slot
+exhaustion, and a loopback verified-HTTPS Worker round-trip through the default
+connection path. Focused suite: 28 tests (1 skipped); full offline suite: 1121
+tests (1112 passed, 9 skipped); `git diff --check` clean. No real DNS, provider,
+credential, Worker run, or network endpoint was used. The OS resolver itself is
+not cancellable; a synchronous credential-source callback and upload
+backpressure also remain unbounded/unproven. R2/MVP remain OPEN.
+
+Batch GR / EXP-603 bounds how long the HTTP caller waits for the synchronous
+credential-source callback. A single process-wide daemon slot prevents
+unbounded blocked callback threads; a timeout returns before connection
+construction, and late success or exception is discarded/sanitized, so it
+cannot start HTTP. Synthetic tests also prove that a stuck callback makes later
+channels fail closed without invoking another source. Focused suite: 29 tests
+(1 skipped); full offline suite: 1122 tests (1113 passed, 9 skipped);
+`git diff --check` clean. The callback itself is not cancelled: it may continue
+after the caller times out, a late source result may briefly remain in
+source-owned Python memory, and one permanent callback occupies the slot for
+the process lifetime. No memory-zeroization or hard cancellation claim is made.
+No credential, live provider request or external effect occurred. R2/MVP remain
+OPEN.
+
+Batch GU / EXP-606 made one anonymous, proxy-disabled HTTPS GET to the exact
+public commit endpoint using normal TLS verification. GitHub returned
+`verification.verified=true`, `reason=valid`, `verified_at=2025-08-18T17:57:01Z`,
+author login `SoldatovAlexander`, and committer login `web-flow` for
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`. Only these bounded fields were
+retained; the signature, payload and message were not printed or stored. This
+is GitHub's assertion that the signature is valid, not independent local
+cryptographic verification or proof of human authorship; provenance still
+relies on GitHub/TLS. No credential, retry or write occurred. EXP-606 accepted;
+R2/MVP remain OPEN.
+
+Batch GX / EXP-609 adds `scripts/run_signed_verifier_service.py`, a no-argument
+one-shot process entrypoint for the fixed BrainBooster verifier service. It
+reads at most one canonical invocation from non-interactive stdin, constructs
+the fixed-profile Docker verifier without launching it at construction time,
+resolves the signer seed lazily from the exact process-injected
+`AGENT_VERIFIER_SIGNING_SEED` source only after verifier validation, and writes
+only a bounded signed envelope to stdout. Errors produce one fixed stderr marker
+with no request/exception data and no retry. Five synthetic tests cover exact
+signed round-trip, verify-before-sign ordering, malformed/oversized/TTY input,
+argument rejection, output bounding and redaction. Focused suite: 5 passed; full
+offline suite: 1127 tests (1118 passed, 9 skipped); `git diff --check` clean.
+No Docker run, credential, SSH, host deployment or external effect occurred.
+This makes the service process invocable, but does not deploy it, establish key
+custody/enrollment, authenticate the host or promote its receipt to trusted
+executor evidence. R2/MVP remain OPEN.
+
+Batch GY / EXP-610 corrects stored-candidate replay limitation labels so they
+distinguish verified content/raw-commit object hashes from GitHub/TLS transport
+provenance and human authorship, which remain independently unverified. Its
+focused suite passed (10 tests) and the configured full offline suite passed
+(1127 tests: 1118 passed, 9 skipped). One exact bounded replay attempt against
+the preserved EXP-548 Worker stage then exited 2 with the fixed
+`replay: operation failed closed` marker in under one second. EXP-612 repeated
+the same source path/digest and classified it as `source-stage-invalid` before
+readiness; EXP-613 then found no row for that key. These later checks reveal
+that EXP-610 paired the replay DB with the earlier EXP-520 source digest, but
+do not retroactively add a phase marker to its original output. EXP-614 used
+the corrected EXP-548 path/digest below. No credential, provider write, branch,
+PR, push or deployment occurred. R2/MVP remain OPEN.
+
+Batch GZ / EXP-611 adds a fail-closed replay diagnostic marker with only
+allowlisted internal phase codes; unrecognized errors map to
+`operation-failed`, and no exception or response text is exposed. Synthetic
+tests cover readiness classification and redaction of secret-like/unknown
+messages. Focused replay suite: 13 passed; full offline suite: 1130 tests
+(1121 passed, 9 skipped); `git diff --check` clean. This improves diagnosis
+only: it is not evidence that any replay phase passed, and no live retry,
+network, Docker, credential, stage read or provider action was performed.
+R2/MVP remain OPEN.
+
+Batch HA / EXP-612 used the new bounded phase marker for one fixed replay
+attempt. It exited 2 with `source-stage-invalid` in 0.14 seconds. The card
+paired the EXP-548 temporary DB path with `a685…`, the earlier EXP-520 source
+stage key. Source-stage validation precedes readiness, snapshot intake and
+Docker, so this attempt made no network request and ran no container; the
+output database was not created. No retry occurred. The input pairing was
+corrected using the separately preserved EXP-548 evidence.
+
+Batch HB / EXP-613's value-free metadata check found no row for the supplied
+`a685…` key and left the source file unchanged; its suppressed SQLite errors
+mean the result alone cannot distinguish an absent row from a query/schema
+failure. Reconciliation against accepted EXP-548 evidence corrected the input:
+the replay stage is `/Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`
+at digest
+`sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`.
+The `a685…` key was the earlier EXP-520 source stage, so the EXP-612 failure was
+caused by pairing the wrong stage key with the replay-stage database; it does
+not establish that the preserved EXP-548 artifact is invalid. EXP-613 output
+contained only fixed booleans; no payload text was emitted or changed. A fresh
+corrected replay card was used for EXP-614 below.
+
+Batch HC / EXP-614 ran one bounded replay from the correct byte-preserved
+EXP-548 stage at `/Volumes/DATA/Agent00X-local-evidence/exp548-stage.sqlite3`,
+source digest `sha256:d9dab36eb53279b5707d05ddd3b73052a912366d613756cb2858b29d9eccf734`.
+The fixed pinned snapshot matched commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`,
+tree `2007066217aadafd9887fb3e3069220333b4fddb` and canonical content digest;
+the 23-file intake and depth-1 raw commit proof passed. The fixed target HTTP/DB
+probe ran in the network-isolated pinned target image, followed by the pinned
+Docker verifier. Exact-digest stage readback and separate read-only preview
+passed. New staged digest:
+`sha256:470903b354771e167879fde402cf900100b2ce0bfe267461d1fd547573b7d984`;
+artifact digest `sha256:9700cb4d14eb82dce02a99787db77a4b080bc2eb501f8db09465d6df9dbad1ea`.
+The new stage is preserved outside Git at
+`/Volumes/DATA/Agent00X-local-evidence/exp614-replay.sqlite3`, not backed up or
+production durable. The CLI did not report the REST request count. This is a
+replay of the accepted live Worker candidate, not a new model call; Docker
+verifier remains same-host evidence. No credential, approval, GitHub write,
+branch, PR, push or deployment occurred. GitHub/TLS provenance and human
+authorship remain unproven. R2/MVP remain OPEN.
+
+Batch HE / EXP-616 reviewed that exact staged patch read-only. It converts all
+five numeric fields before SQL and rejects booleans, non-finite/fractional
+floats and conversion errors. The fixed probe covers malformed strings and
+non-finite float overflow but not a finite Python integer outside SQLite's
+signed 64-bit range; such a value may still fail at INSERT with a server error.
+This edge remains an untested contract risk before approval. The review did not
+modify the stage, create approval or establish trust/publishability. No
+credentials, network, Docker or provider effect occurred; R2/MVP remain OPEN.
+
+Batch HF / EXP-617 extends the fixed target probe with both signed-64-bit
+out-of-range integer boundaries for each of the five numeric fields, requiring
+HTTP 422 and zero rows. Focused tests passed (4, 1 skipped); the configured
+offline suite passed (1130 tests: 1121 passed, 9 skipped). One read-only replay
+against the preserved EXP-614 source stage exited 2 with the fixed
+`operation-failed` marker after 18.7s. The replay CLI does not identify the
+failing phase, so this does not prove whether the candidate violated the new
+contract or whether the target/verifier gates were reached. No output stage was
+created; source database bytes were unchanged (file SHA-256
+`adb8a8ce…02715f95`). No retry or provider write occurred. The finite-integer
+contract remains unverified pending a separately scoped diagnostic; R2/MVP
+remain OPEN.
+
+Batch HG / EXP-618 adds a finite, fixed replay marker projection for the
+allowlisted HTTP/DB probe categories, including the two signed-range cases.
+Unknown, malformed, embedded or secret-like diagnostic text remains the generic
+`operation-failed` marker. Focused suites passed (repository process 38, replay
+CLI 15, target profile 4 with 1 skipped); full offline suite: 1132 tests
+(1123 passed, 9 skipped). This hardens diagnostics only; it neither retries nor
+explains EXP-617's prior failure, and no candidate/verifier gate is claimed.
+No stage, network, Docker, credential or provider operation occurred. R2/MVP
+remain OPEN.
+
+Batch HH / EXP-619 attempted one separately carded replay with the expanded
+SQLite-boundary probe and improved fixed diagnostics. It stopped at the
+readiness gate after 0.52s with `readiness-gate-failed`, before snapshot intake,
+target execution, verifier or stage write. The readiness output omitted the
+quota/reset detail; the exact cause is therefore unknown. EXP-614 source bytes
+remained unchanged and no EXP-619 output stage was created. No retry, credential,
+model call, approval or provider write occurred. The candidate's signed-range
+behavior remains unverified; R2/MVP remain OPEN.
+
+Batch HI / EXP-620 made one separate anonymous header-only readiness GET
+immediately after EXP-619. It returned HTTP 200 with `remaining=10` and reset
+`2026-10-08 11:15:20 UTC`; no body or repository endpoint was accessed. This
+quota snapshot is consistent with the EXP-619 readiness failure, but does not
+prove its exact response values. A replay needs at least 25 remaining and
+should not be attempted before reset; recheck once in its own card. No
+credential, stage access or provider write occurred. R2/MVP remain OPEN.
+
+Batch HJ / EXP-621 improves only local replay readiness diagnostics: non-200
+HTTP status, malformed quota/reset metadata, and insufficient quota now map to
+distinct fixed allowlisted codes; arbitrary exception text stays hidden. The
+focused replay suite passed (17 tests); full offline suite: 1134 tests (1125
+passed, 9 skipped). No network or stage access occurred. This does not rerun
+EXP-619 or change its unknown historical gate result. R2/MVP remain OPEN.
+
+Batch HM / EXP-624 adds `scripts/copy_staged_evidence.py`, a bounded local
+no-overwrite copy for an exact staged digest. One byte-identical copy of the
+EXP-614 SQLite stage was created outside Git; source and copy file SHA-256 both
+equal `adb8a8ce…02715f95`, and read-only exact-digest preview reports verifier
+PASS for the pinned repository/commit/path. Focused tests: 5 passed; full suite:
+1139 tests (1130 passed, 9 skipped). This is a second copy on the same volume,
+not independent backup, replication, power-loss proof or production durability.
+Approval remains absent; no network or provider effect occurred. R2/MVP remain
+OPEN.
+
+Batch HP / EXP-627 closes an observed local copy race window by checking
+source WAL/SHM sidecars and the main-file hash again after copy validation and
+before atomic no-overwrite publication. Synthetic tests simulate a sidecar
+appearing and a source-hash mismatch; neither publishes output or mutates the
+source fixture. Focused suite: 7 passed; full suite: 1141 tests (1132 passed,
+9 skipped). This is not a lock or proof of a race-free concurrent database
+snapshot, independent backup or production durability; the copy remains on the
+same volume. No real stage or external service was accessed. R2/MVP remain OPEN.
+
+Batch HK / EXP-622 performed one bounded replay after the observed reset and
+the embedded readiness/snapshot gates. It stopped at the expanded target probe
+with `target-test-sqlite-range-status`, exit 2. This marker proves that at least
+one signed-range case did not return the expected HTTP status; it does not show
+which field or the actual status. The source hash remained
+`adb8a8ce73cad24c66f5cd76b627243a62473030f45bc1f00705acce02715f95`; output
+`exp622-replay.sqlite3` remained absent. Verifier and new stage persistence
+were not reached. No retry, credential, Worker/model call, approval/signing or
+provider effect occurred. R2/MVP remain OPEN.
+Batch HR / EXP-629 prepared a bounded read-only preview of the exact EXP-614
+stage for human review before any approval decision. The stage digest is
+`sha256:470903b354771e167879fde402cf900100b2ce0bfe267461d1fd547573b7d984`;
+artifact digest is `sha256:9700cb4d14eb82dce02a99787db77a4b080bc2eb501f8db09465d6df9dbad1ea`.
+The pinned target is `SoldatovAlexander/brainbooster_full_v11` at commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`; only `backend/routes.py` is
+declared. The patch validates all five numeric fields before insert and rejects
+booleans, fractional/non-finite floats, and values that cannot be parsed as
+integers; this preview does not add new test evidence beyond the recorded replay.
+Verifier verdict is PASS, but the verifier remains same-host and untrusted for
+promotion. Approval is `not_created`; publication is `not_attempted`. The
+EXP-624 copy remains byte-identical on the same volume. No signing, network,
+credential, Worker/model, provider write, branch, PR, push or deployment
+occurred. Human approver identity, branch choice, independent verifier trust,
+durable recovery and controlled PR remain open. EXP-622 has the bounded
+target-probe failure recorded above; R2/MVP remain OPEN.
+
+Batch HS / EXP-630 documents `PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1
+python3 -m app_contracts.stage_preview <database> <staged-change-digest>` as an
+exact-digest, read-only patch preview separate from approval-request creation.
+The configured project runtime passed the existing five stage-preview CLI
+tests. This is command discoverability only; it adds no stage, verifier,
+approval, trust, or publication evidence. No database, network, credential,
+Docker, signing, or provider effect occurred. R2/MVP remain OPEN.
+
+Batch HT / EXP-631 states in README that a valid signed verifier response does
+not authenticate an independent host/trust domain. Transport remains injected;
+the available subprocess adapter is same-host, with no remote transport,
+deployment or out-of-band signer-key enrollment evidenced. Receipts remain
+audit-only and do not promote executor trust. This documents a limitation; it
+does not establish independent verification. R2/MVP remain OPEN.
+
+Batch HU / EXP-632 ran one in-memory Python SQLite binding check: signed-64
+minimum and maximum stored, while one value below and above the range each
+raised `OverflowError` and added no row. This is a plausible mechanism for the
+EXP-622 marker, not proof of the actual failing target field or HTTP status.
+Docs 24 and 27 record the exact EXP-622 failure, unchanged source hash, absent
+output and the fact that verifier/stage gates were not reached. No replay,
+stage, network, Docker, credential, approval or provider operation occurred.
+R2/MVP remain OPEN.
+
+Batch HV / EXP-633 updates the fixed future Worker runner instruction to reject
+booleans, malformed/non-finite/fractional inputs and values outside signed-64
+range for all five database-bound numeric fields before writes. The next
+invocation now has fresh EXP-634 confirmation/process/task/permit IDs; offline
+tests assert the exact prompt and identities. Focused CLI suite: 9 passed;
+full offline suite: 1141 tests (1132 passed, 9 skipped); `git diff --check`
+passed. At preparation time no readiness, network, credential, Worker, Docker,
+approval or provider operation occurred. On 2026-10-08 the user explicitly
+authorized exactly one EXP-634 DeepSeek call via the previously named
+`AI Process Architect` source, with a user-set USD 1 ceiling and no retries.
+The non-disclosing process-environment preflight returned `unavailable`,
+`value_read=false` (exit 3); the stage path was absent. The card is BLOCKED
+before readiness/network; no credential was read and no Worker, Docker,
+approval or provider operation occurred. A full offline suite in an isolated
+temporary venv passed: 1141 tests, 9 skipped. The default system Python lacked
+project dependencies; no repository environment was changed. This adds no new
+Worker candidate or verifier evidence. R2/MVP remain OPEN.
+
+Batch HX / EXP-635 adds `SignedVerifierHTTPSTransport`: explicitly configured
+HTTPS host, fixed `/v1/verify` POST, default port, hostname-verified TLS,
+single total DNS/connect/TLS/write/read deadline, bounded request/response,
+no auth/redirect/retry and sanitized failures. Fake-only focused suite: 22
+passed; full offline suite: 1149 tests (1140 passed, 9 skipped);
+`git diff --check` passed. No endpoint was selected or contacted. The adapter
+is not wired to an operational remote service; its signed response remains
+audit-only and `independent_host_trust_established=false`. No credentials,
+Docker, signing, approval, provider write, branch, PR, push or deployment was
+used. EXP-634 remains BLOCKED on safe credential-source availability; R2/MVP
+remain OPEN.
+
+Batch HY / EXP-636 exercises the EXP-635 transport against an ephemeral TLS
+server bound only to `127.0.0.1`: a trusted SAN-matching certificate completed
+one POST; a trusted wrong-host certificate and an untrusted certificate failed
+before HTTP; a stalled response was interrupted by the total deadline. The test
+uses an ephemeral certificate/key in a temporary directory and maps only the
+HTTPS connection to the loopback port; no external DNS or endpoint was used.
+Focused suite: 24 passed; full offline suite: 1151 tests (1142 passed, 9
+skipped). No real endpoint, credential, Worker, Docker, stage, signing,
+approval or provider action occurred. This validates local TLS mechanics only;
+it does not establish remote host governance, signer enrollment or independent
+verifier trust. R2/MVP remain OPEN.
+
+Batch HZ / EXP-637 adds `SignedVerifierHTTPService` and a one-shot operator
+entrypoint bound exclusively to `127.0.0.1` on an explicit unprivileged port.
+It accepts only POST `/v1/verify`, exact JSON media types, one canonical bounded
+Content-Length and fixed headers; it rejects malformed/profile-mismatched
+requests before verifier or lazy signer-source invocation. Responses are
+bounded signed JSON or fixed sanitized errors; the HTTP handler suppresses
+request/exception logging. Tests include a full synthetic
+client → actual loopback TLS → HTTP service → fake verifier → in-memory signer
+exchange; the attestation remains `audit_only` and does not establish
+independent-host trust. Focused service suite: 8 passed; full offline suite:
+1159 tests (1150 passed, 9 skipped); `git diff --check` passed. The server
+entrypoint was not run, no process credential was read, and no Docker, remote
+endpoint, Worker, stage, approval, provider write or deployment occurred. A
+separately governed TLS/access-control proxy, remote host, signer enrollment
+and independent verifier trust remain open. R2/MVP remain OPEN.
+
+Batch IA / EXP-638 adds `verify_git_commit_signature`: it rechecks the raw
+commit OID/tree, imports one bounded public OpenPGP key into an isolated
+short-path GnuPG home, requires its exact primary fingerprint, stores only the
+exact commit in an isolated temporary Git repository, and accepts exactly one
+`VALIDSIG` from that primary key. Prompts, external Git/GPG configuration,
+credential helpers and key retrieval are disabled; tool output/errors are
+bounded and sanitized. Synthetic integration tests exercise real Git/GnuPG
+for valid signature, wrong pin/key, altered and unsigned objects, and deadline
+failure. The typed proof explicitly leaves `identity_authenticated=false` and
+`independent_transport_trust_established=false`; the snapshot origin is not
+promoted. Focused signature + snapshot suites: 50 passed. No target commit/key,
+network, credential, Worker, Docker, approval or provider effect was used.
+This is a local verification primitive, not real owner identity or independent
+source provenance; R2/MVP remain OPEN.
+Full offline suite: 1164 tests (1155 passed, 9 skipped); `git diff --check`
+clean. No real repository key was authenticated, so this does not close the
+snapshot provenance gate.
+
+Batch IB / EXP-639 made one exact-pin anonymous read-only attempt to compare the
+commit signature against the selected signer's published public-key set. The
+bounded pipeline reached local cryptographic verification, but no returned key
+verified the exact raw commit; it emitted only the fixed sanitized
+`signature-not-verified` marker and stopped without retry. No credential,
+Worker, Docker, stage write, approval, provider write or publication occurred.
+Focused tests: 22 passed; full offline suite: 1172 tests (1163 passed, 9
+skipped); `git diff --check` passed. This is negative provenance evidence, not
+identity authentication or independent source trust; R2/MVP remain OPEN.
+
+Batch ID / EXP-641 adds an experimental lazy native credential source for the
+single `Agent00X` / `AI_PROCESS_API` item. It explicitly selects only the
+platform backend (macOS Keychain, Windows Credential Manager, Linux Secret
+Service), never provisions/imports secrets, and passes the source lazily to the
+fixed Worker runtime. The preflight reports backend availability only and
+cannot establish that the item exists or is valid. Synthetic focused tests: 24
+passed; full offline suite using the configured temporary venv: 1179 tests
+(1170 passed, 9 skipped); `git diff --check` clean. The default system Python
+lacks `cryptography`, so its full-suite attempt could not run; no project or
+system dependencies were installed. The isolated status check returned
+`unavailable`, `credential_item_checked=false`, `value_read=false` because the
+check runtime lacks optional package `keyring`. No actual native manager/item,
+credential, network, Worker, Docker, stage, approval or provider effect was
+accessed. EXP-634 remains BLOCKED; R2/MVP remain OPEN.
+
+Batch IE / EXP-642 adds `scripts/report_observation_history.py`, a deterministic
+read-only report over one existing versioned SQLite observation journal. The
+CLI verifies database integrity, supported schema, event/checkpoint schemas,
+digests, cursor order and checkpoint trigger links before output. It emits only
+structural event metadata (not rationale or raw payload), applies validated
+process/run/branch and as-of-cursor filters, and marks collector coverage,
+unknown outcomes, sequence/causal/invocation gaps, redaction and unresolved
+artifact content explicitly. The source is always `local_unattested` and report
+completeness always `partial`; it does not resolve artifacts, prove a complete
+collector, reconstruct external state or implement replay. Focused suite: 5
+passed; full offline suite: 1184 tests (1175 passed, 9 skipped);
+`git diff --check` clean. Only synthetic journals were read; no credential,
+network, Worker, Docker, stage, approval, provider effect or publication was
+used. Criterion 14 is partially covered locally; R2/MVP remain OPEN.
+
+Batch IF / EXP-643 adds an opt-in `JournaledProposalWorker` adapter and threads
+an explicit observation-store option through `run_local_execution` and
+`run_remote_snapshot_execution`. It writes `agent_started`, then commits a
+valid tool-call checkpoint and sanitized `tool_requested` intent atomically
+before `ProposalWorker.propose`. After dispatch, only fixed success/failure
+metadata is recorded; raw Worker result and exception text are not persisted.
+If terminal evidence cannot be stored, the result is explicitly unknown and a
+later attempt using the same process/task and journal is refused. Focused
+observer/executor/CLI suites: 101 tests (99 passed, 2 skipped); full offline
+suite: 1189 tests (1180 passed, 9 skipped); `git diff --check` clean. Tests use
+synthetic Workers and journals. This is opt-in and covers only the proposal
+call; at that batch the fixed operator CLI was not wired, and
+sandbox/verifier/stage/Gateway/publication actions remained uninstrumented. R1,
+criterion 13, and R2/MVP remain OPEN/PARTIAL.
+
+Batch IG / EXP-644 adds an optional `--observation-database` to the fixed
+pinned runner. It accepts only a new absolute path with an existing non-symlink
+parent, opens `SQLiteObservationStore` after operator confirmation and closes it
+after the attempted run. The validated store is threaded through the fixed
+runtime profile and remote snapshot pipeline to the existing Worker-call gate;
+without this option prior behavior is unchanged. Synthetic tests prove an open
+failure stops before readiness, the store reaches the executor, and a completed
+synthetic proposal leaves three bounded events plus one checkpoint readable by
+EXP-642's report CLI after close/reopen. This records only
+`ProposalWorker.propose`: readiness, snapshot fetching, sandbox, verifier,
+stage, Gateway and publication are not comprehensively observed. Focused suites:
+60 tests (58 passed, 2 skipped); full offline suite: 1194 tests (1185 passed,
+9 skipped); `git diff --check` clean. No credential, live Worker, network,
+Docker, stage, approval, or provider action was used.
+Criterion 13 remains partial; R1/R2/MVP remain OPEN.
+
+Batch IH / EXP-645 extends that same optional journal run through
+`IndependentVerifier.verify`. The verifier intent is checkpointed before
+dispatch, references the preceding Worker terminal event, and continues the
+same run ID/event sequence. Only fixed success/failure metadata is recorded;
+verifier output and exception text are not stored. Pre-dispatch refusal blocks
+the verifier; an unrecorded terminal event maps to `verifier-outcome-unknown`
+and blocks reuse of the process/task journal. Focused observer/executor plus
+synthetic remote-pipeline suites: 63 tests, no skips; full offline suite: 1198
+tests (1189 passed, 9 skipped); `git diff --check` clean. Sandbox
+creation/commands, snapshot/readiness, stage/Gateway/publication remain outside
+this collector. Criterion 13 remains partial; R1/R2/MVP remain OPEN.
+
+Batch II / EXP-646 adds one-shot journaled adapters for the target-test command
+and the pinned/remote snapshot verifier-replay command. Batch IJ / EXP-647
+extends the same run through exact-digest stage save and readback. Each operation
+has a fixed label and pre-dispatch checkpoint/intent, followed only by fixed
+success/failure metadata; argv, repository and stage content, stdout/stderr and
+exception text are excluded. A failed gate blocks dispatch; loss of terminal
+evidence is unknown and prevents retry through the adapter. Synthetic SQLite
+pipeline tests verify shared-run order Worker → target test → replay → verifier
+→ stage save → stage readback. Sandbox creation/cleanup, readiness/snapshot
+checks, Gateway and publication remain unobserved. Criterion 13 remains partial;
+R1/R2/MVP remain OPEN. Focused observer/executor/pipeline tests: 71 passed; full
+offline suite: 1206 tests (1197 passed, 9 skipped); `git diff --check` clean.
+Two existing SQLite `ResourceWarning`s appeared during the full suite, which
+completed successfully. No credential or external effect.
+
+Batch IK / EXP-648 composes one synthetic remote-snapshot execution, temporary
+SQLite stage, the real unsigned approval-request CLI, deterministic test-key
+signature, and the real signed-mock CLI into one same-digest receipt. The
+repository/branch/base and staged digest match through every output; stage DB
+and approval inputs remain byte-identical. The receipt explicitly reports
+`identity_authenticated=false`, `external_write=false`, and
+`trust_profile_origin=operator_supplied_unverified`. Focused pipeline/approval
+suites: 20 tests (19 passed, 1 skipped); full offline suite: 1207 tests (1198
+passed, 9 skipped); `git diff --check` clean. This is local synthetic
+composition, not live Worker, authenticated human approval, real GitHub PR or
+production recovery; R2/MVP remain OPEN.
+
+Batch JL / EXP-679 then composed the fake Worker output through the same pinned
+target Docker image and pinned verifier image, saved the exact stage in SQLite,
+read it back by digest, and completed only a local mock receipt bound to that
+digest. The exact corrected opt-in command passed once (1 test, 0.989s); the
+full offline suite passed with 1263 tests (1254 passed, 9 skipped), and
+`git diff --check` was clean. Both containers used the pinned images; no
+containers from either image remained running afterward. This is local
+synthetic composition evidence only: it does not prove a live Worker,
+independent-host verifier, authenticated human approval, provider write or real
+PR. EXP-634 remains blocked because its designated process injector is
+unavailable; the existing hidden terminal prompt would require a separately
+approved source amendment and fresh one-call confirmation. R2/MVP remain OPEN.
+
+Batch JM / EXP-680 adds `verifier_trust_enrollment.py` and
+`verifier-trust-enrollment.schema.json`. It validates a bounded canonical
+Ed25519-signed enrollment against a caller-pinned authority public key, binding
+the fixed HTTPS route, verifier/profile identity, response key, distinct host
+IDs, host-separation evidence digest and expiry. Seven synthetic tests cover
+binding, wrong authority, tampering, endpoint/profile mismatch, malformed and
+duplicate JSON, expiry and schema. The parsed record explicitly keeps
+`independent_host_trust_established=false`; there is no runtime trust promotion,
+real enrollment key, OOB host evidence or remote deployment. R2/MVP remain OPEN.
+The full offline suite after EXP-680 passed: 1270 tests (1261 passed, 9
+skipped); `git diff --check` passed. Existing unrelated SQLite
+`ResourceWarning`s remain.
+
+Batch JN / EXP-681 wires the EXP-680 enrollment into
+`SignedVerifierClient.from_trust_enrollment`. The factory accepts only the
+fixed HTTPS transport with its exact validated endpoint, verifies the
+authority-signed verifier/profile/key binding, and compares both expected host
+IDs before constructing the client. Invalid authority, expiry, endpoint,
+profile, verifier/key identity, host or transport fails before dispatch. The
+successful synthetic exchange consumes the enrolled verifier key and exposes
+only the enrollment digest; attestation remains `audit_only` and
+`independent_host_trust_established=false`. Focused signed-verifier client
+suite: 27 passed; full offline suite: 1273 tests (1264 passed, 9 skipped);
+`git diff --check` clean. No real endpoint, key, deployment, host identity or
+independent-verifier evidence was used. R2/MVP remain OPEN.
+
+Batch JO / EXP-682 carries the validated enrollment digest through the signed
+verifier attestation, executor failure result and bounded CLI evidence. Raw-key
+clients leave it absent; malformed enrollment metadata is rejected without
+stage calls or echo. The executor remains `FAILED /
+verifier-trust-unestablished`, and host trust is still explicitly false. Focused
+client/executor/CLI suites: 131 tests (129 passed, 2 skipped); full offline
+suite: 1274 tests (1265 passed, 9 skipped); `git diff --check` clean. Synthetic
+keys/enrollment and fake transport only: no actual OOB review, independent host,
+remote endpoint or deployment. R2/MVP remain OPEN.
+
+Batch JP / EXP-683 composes a synthetic authority-signed enrollment, the
+enrollment-bound client, the HTTPS adapter type with a fake connection, the
+remote-snapshot executor and CLI projection. The one signed PASS carries the
+exact enrollment digest into bounded evidence but remains
+`FAILED / verifier-trust-unestablished`; no durable stage call occurs. Focused
+executor/CLI suites: 104 tests (102 passed, 2 skipped); full offline suite: 1274
+tests (1265 passed, 9 skipped). The injected connection bypasses real TLS and
+does not establish host separation, deployment or verifier independence.
+Authenticated approval and real PR publication remain open; R2/MVP remain OPEN.
+
+Batch JQ / EXP-684 defines a bounded canonical Ed25519 approver enrollment
+binding the authority key, approver/key, exact trust-profile digest, provider
+repository, fixed PR operation and expiry window. It validates only against a
+caller-pinned authority public key and explicitly does not authenticate the
+human behind the key. Six synthetic tests and the matching JSON Schema pass;
+full offline suite: 1280 tests (1271 passed, 9 skipped); `git diff --check`
+clean. This contract is not yet wired into approval verification and has no real
+authority key, identity review or provider effect. Trusted signer enrollment,
+authenticated approval and R2/MVP remain OPEN.
+
+Batch JR / EXP-685 adds an opt-in read-only `verify_signed_approval` path and CLI
+flag that require both an enrollment artifact and a caller-pinned authority key
+mapping. It validates exact trust-profile digest, approval principal, provider
+repository and fixed PR operation, then checks that the profile's key equals
+the enrolled key before policy evaluation. Evidence includes only enrollment
+and authority-key IDs/digests; `identity_authenticated=false` and
+`provider_write=false`. Legacy verification remains explicitly
+`operator_supplied_unverified`. Synthetic tests cover missing pins, wrong
+authority/scope/key, expiry and malformed enrollment without changing stage
+bytes. Focused suite: 15 passed; full offline suite: 1283 tests (1274 passed,
+9 skipped); `git diff --check` clean. No real identity review, stage publication
+or provider action. R2/MVP remain OPEN.
+
+Batch JS / EXP-686 closes that local wiring gap only for the mock destination:
+the new coordinator itself loads the exact signed approval and enrolled signer
+against caller-pinned authority keys, binds the resulting artifact to the
+publication seed, intent, provider/source identities and policy, then re-hashes
+the stage returned by the downstream loader. It accepts only the exact
+in-memory broker and mock endpoint before verification or stage loading, and
+reuses all existing freshness/policy/gateway/broker/journal gates. A synthetic
+run created one receipt with the exact staged digest and idempotency key; seed
+mismatch and loaded-stage tampering stopped before gateway/broker/journal/
+endpoint effects; provider-adapter attempts stopped before verifier/stage load.
+Focused suite: 16 passed; full offline suite: 1284 tests
+(1275 passed, 9 skipped). This remains synthetic local evidence: no human
+identity authentication, real authority governance, provider write or real PR.
+
+Batch JT / EXP-687 adds the enrolled signer path to the signed-stage mock CLI.
+The CLI requires enrollment, a bounded `control-plane-authority-key-set/v1`
+file and the independently supplied SHA-256 pin for that exact file; partial
+arguments fail closed, while omission of all enrolled flags retains the
+explicit legacy mode. The parser rejects symlinks, duplicate/unknown fields,
+malformed keys and oversized input. The output adds only the key-set digest and
+enrollment/authority IDs and digests, preserving `identity_authenticated=false`
+and `external_write=false`. A full synthetic pinned-CLI continuation carries
+the same observer run through enrolled approval to one exact-digest mock receipt;
+repeat continuation is refused without journal mutation. Focused suites: 61
+passed (49 schema/contracts, 11 mock CLI, 1 same-run integration); full offline
+suite: 1292 tests (1283 passed, 9 skipped). Authority key-set digest still requires independent OOB
+pinning, and the enrollment does not authenticate a human or enable real PR.
+
+Batch JV / EXP-689's first Docker-composition attempt stopped before stage with
+the fixed `pinned-worker-runtime-failed` marker; the initial test-only
+container-command diagnosis was not confirmed. Batch JW / EXP-690 switched the
+opt-in target test to `python3` but likewise did not reach stage. Batch JX /
+EXP-691's test-local diagnostic reported only `VerifierProcessError`; source
+inspection established that the Docker command had supplied a 63-hex verifier
+code digest, rejected before container launch. Batch JY / EXP-692 corrected
+that command value but its test guard still compared a truncated duplicate, so
+the command skipped and launched no container.
+
+Batch JZ / EXP-693 binds the opt-in guard to the constants imported from the
+pinned profile. The one same-run Docker integration passed in 3.898s: fake
+readiness/snapshot/Worker, target tests in the pinned `network=none` image,
+PASS from the pinned verifier container, exact verifier identity stored with
+the stage, enrolled approval, and one same-digest local mock receipt. The test
+also checked contiguous same-run observer events, unchanged inputs, canary
+absence and refusal to replay; post-run `docker ps` found no running containers
+from either pinned image. The default local same-run integration passed. Full
+offline suite: 1293 tests (1283 passed, 10 skipped); `git diff --check` clean.
+This remains synthetic/local-host evidence: no live model, real snapshot
+transport, independent verifier host, human identity proof or real GitHub PR.
+EXP-634 remains blocked pending the approved credential-source amendment;
+R2/MVP remain OPEN.
+
+Batch KA / EXP-694 strengthened only the pinned snapshot evidence: one
+anonymous readiness GET, 25 fixed REST GETs (commit/tree/23 blobs), and one
+bounded raw commit-object fetch all completed; the full pinned owner/repository,
+commit/tree, 23-file count, canonical content digest and object hash/root tree
+matched. The claim remains `github_rest_api_claim`; authorship, commit signature
+and authenticated remote provenance are unproven. In the single authorized
+composition attempt, the synthetic CLI runtime returned `pinned_code=1` and
+`runtime_code=1`; no exception class or safe inner failure code was retained.
+No verified stage, approval or receipt is claimed. No retry is authorized by
+EXP-694; a future diagnostic attempt requires a new task card. Post-run Docker
+filters showed no running containers from either image. Full offline suite:
+1294 tests (1283 passed, 11 skipped); `git diff --check` clean. No credentials,
+live model, provider write, branch, PR, push or deployment occurred. EXP-634
+remains BLOCKED; R2/MVP remain OPEN.
+
+Batch KB / EXP-695 changes only the test harness: on nonzero runtime status it
+extracts an explicitly allowlisted fixed `failure_code`, maps bounded HTTP
+status codes to a constant category, and otherwise reports `unavailable`.
+Synthetic cases verify malformed/unknown output and canary-like nested content
+are not copied. Focused projection and existing local same-run tests: 2 passed;
+full offline suite: 1295 tests (1284 passed, 11 skipped); `git diff --check`
+clean. This does not reveal EXP-694's prior failure cause and no public/Docker
+retry was made. EXP-694 remains BLOCKED; EXP-634 remains BLOCKED; R2/MVP remain
+OPEN.
+
+Batch KC / EXP-696 made one separate diagnostic attempt using the EXP-695
+allowlisted failure-code projection. The public snapshot and raw commit object
+again matched the fixed pin, but the CLI returned only
+`remote-snapshot-execution-failed` (`pinned_code=1`, `runtime_code=1`); no
+last-observer-stage marker or exception class was captured. No verified stage,
+approval or mock receipt is proven. Docker cleanup filters found no running
+containers. No retry is authorized by EXP-696. A future attempt requires
+bounded projection of only a recognized last observer event and a new card.
+EXP-634 remains BLOCKED; R2/MVP remain OPEN.
+
+Batch KD / EXP-697 added a test-only projection that returns only the latest
+recognized observer event/action label. Its sole integration attempt stopped
+before reading the snapshot or launching Docker: anonymous `/rate_limit`
+returned HTTP 200 with `remaining=10`, below the required 35. Full offline
+suite: 1296 tests (1285 passed, 11 skipped); `git diff --check` clean. Do not
+make another public read until a new rate-limit window and a separate exact
+card. EXP-634 remains BLOCKED; R2/MVP remain OPEN.
+
+Batch KE / EXP-698 refactors only the opt-in integration harness. Readiness and
+snapshot collaborators are now injected at the pinned CLI runtime seam; the
+public mode calls the bounded REST/raw-commit reader inside that runtime and
+checks the returned snapshot before the synthetic Worker proposes a candidate.
+The default local same-run and safe observer-marker tests passed (2 focused
+tests); full offline suite: 1296 tests (1285 passed, 11 skipped);
+`git diff --check` clean. No public API or Docker attempt was made; future
+execution needs a separate card and a passing rate-limit preflight. No approved
+credential injector is available, so EXP-634 remains blocked and no live
+provider call occurred. R2/MVP remain OPEN.
+
+Batch KF / EXP-699 adds an offline integration check for the real snapshot
+reader and journal wrappers: a synthetic REST source serves content-addressed
+blob/tree/commit data and a raw commit object; `_run_pinned_remote_execution`
+fetches and validates it before invoking the synthetic Worker. The resulting
+contiguous observer run includes commit/tree/blob reads, raw-object proof, pin
+decision, Worker, local target replay, verifier and exact stage save/readback.
+Three focused tests passed; full offline suite: 1297 tests (1286 passed,
+11 skipped); `git diff --check` clean. No public network or Docker execution
+occurred. This does not establish live snapshot transport, a real Worker,
+independent verifier trust or PR publication. EXP-634 remains blocked because
+no suitable injector is available; R2/MVP remain OPEN.
+
+Batch KG / EXP-700 inspected both exact cached `linux/arm64` Docker image IDs,
+then made one opt-in pinned composition invocation. The CLI failed before the
+runtime seam (`runtime_code=unavailable`), so there is no evidence of snapshot
+GETs, raw commit fetch, container execution, stage, approval or receipt. The
+test did not retain bounded readiness status/remaining; its precise cause is
+unknown and must not be inferred. No retry is authorized by EXP-700. Any later
+public attempt needs a separate card that captures only fixed readiness status
+and integer remaining. EXP-634 remains blocked; R2/MVP remain OPEN.
+
+Batch KH / EXP-701 adds a strict, offline-tested readiness projection for the
+opt-in public integration harness. It retains only a valid HTTP status and
+nonnegative integer remaining count (`http-<status>:remaining-<integer>`), or
+the constant `unavailable`; response bodies and arbitrary fields never enter
+the marker. Focused tests: 3 passed; full offline suite: 1298 tests (1287
+passed, 11 skipped); `git diff --check` clean. No readiness/network request was
+made under this card. EXP-700 remains closed without retry, and its precise
+readiness result is unknown. EXP-634 remains blocked; R2/MVP remain OPEN.
+
+Batch KI / EXP-702 adds an offline regression for the default hidden-terminal
+credential source: when synthetic GitHub readiness is below threshold, the
+operator CLI calls readiness once and stops before runtime, `getpass`, stage
+creation or credential resolution. Focused tests: 2 passed; full offline suite:
+1299 tests (1288 passed, 11 skipped); `git diff --check` clean. This validates
+the lazy input gate only; it does not authorize the DRAFT EXP-634 source change
+or any live model call. EXP-634 remains blocked; R2/MVP remain OPEN.
+
+Batch KJ / EXP-703 composes the production snapshot parser with the complete
+offline same-run publication path. A synthetic content-addressed REST/raw-
+commit source is fetched inside `_run_pinned_remote_execution`; the fetched
+bytes feed the Worker, verifier and exact SQLite stage, then the actual
+approval-request CLI and enrolled signed-mock CLI produce one receipt under
+the same observer run and staged digest. Replay is rejected and stage/approval
+inputs remain unchanged; receipt reports `external_write=false`. Focused tests:
+3 passed; full offline suite: 1300 tests (1289 passed, 11 skipped);
+`git diff --check` clean. This is synthetic/local evidence, not a live Worker,
+independent verifier or real PR. EXP-634 remains blocked; R2/MVP remain OPEN.
+
+Batch KK / EXP-704 (R2 continuation batch #227; 1 task) made one separately
+carded anonymous public-read-only attempt after bounded readiness projection
+was added. Both exact cached Docker image IDs and `linux/arm64` architectures
+matched. The single readiness GET returned HTTP 200 with 10 remaining, below
+the required 35; the CLI failed closed before snapshot REST reads, raw commit
+fetch, runtime or Docker. No stage, approval or receipt was created; no retry
+is authorized. This adds no successful execution evidence; R2/MVP remain OPEN.
+
+Control Plane amendment 2026-10-08T22:15:11Z approved `hidden-terminal` as the
+EXP-634 source, superseding the earlier process-environment-only amendment.
+The distinct run confirmation has not been provided, and the active MVP
+objective continues to prohibit credentials; no live call or secret input was
+performed.
+
+Batch KL / EXP-705 (R2 continuation batch #228; 1 task) adds strict bounded
+readiness/snapshot-REST/raw-commit/runtime attempt-count diagnostics to the
+opt-in public harness; request counts increment before dispatch and malformed
+values collapse to `unavailable`. Offline gate coverage uses synthetic
+`remaining=10`, confirms readiness once, no runtime/getpass/stage, and does not
+contact the public endpoint. Focused tests: 3 passed; full offline suite: 1301
+tests (1290 passed, 11 skipped); `git diff --check` clean. EXP-704's single
+public attempt returned HTTP 200 / remaining 10 (<35) and stopped before
+snapshot/runtime; no retry. This is not successful end-to-end evidence; R2/MVP
+remain OPEN.
+
+Batch KM / EXP-706 (R5 prep batch #1; 1 task) records a preregistered VP-21/22
+protocol in docs/33. It fixes the target function/snapshot, four experimental
+cells, transfer/regression oracle, five exploratory repetitions per cell,
+decision thresholds and reporting rules. No model run or evaluation result
+exists; R5 is prepared but not executed and criterion 16 remains incomplete.
+No credentials, network, Docker, target execution or external action was used.
+
+Batch KN / EXP-707 (R5 prep batch #2; 1 task) adds a machine-readable
+`fixtures/experiments/r5-repository-change.json` casebook and four offline
+integrity tests. The matrix expands to 25 unique invalid inputs, preserves the
+known valid control, freezes five process scenarios and the 100-attempt
+factorial schedule, and has no runtime results. Focused suite: 4 passed;
+`git diff --check` clean. Full suite and target were not run. R5 and criterion
+16 remain unfulfilled.
+
+Batch KO / EXP-708 (R2 continuation batch #229; 1 task) made one fresh
+anonymous read-only attempt using the exact cached `linux/arm64` images.
+Readiness returned HTTP 200 / remaining 10 (<35); failure diagnostics include
+one readiness GET, zero snapshot REST GETs, zero raw commit fetches and zero
+runtime invocations. No Docker, stage, approval or receipt was reached; no
+retry is authorized. This is the second separate carded observation of
+remaining=10, not a successful snapshot run. R2/MVP remain OPEN.
+
+Batch KP / EXP-709 (R2 continuation batch #230; 1 task) adds a bounded reset
+epoch marker to public readiness failure diagnostics, emitting only a strict
+Unix-seconds integer or `reset-unavailable`. Three focused projection tests
+passed; `git diff --check` clean. No network or integration attempt occurred.
+R2/MVP remain OPEN.
+
+Batch KQ / EXP-710 (R2 continuation batch #231; 1 task) verified the exact
+cached `linux/arm64` target/verifier image identities and made one public
+read-only composition attempt. Readiness returned HTTP 200 / `remaining=10`
+with reset `2026-10-08T22:47:09Z`; bounded counters were readiness=1, snapshot
+REST=0, raw commit=0, runtime=0. The pipeline failed closed before snapshot,
+runtime, Docker, stage or receipt; no retry is authorized under that card.
+Two focused safe readiness/reset marker tests passed and `git diff --check` is
+clean. No credentials, live model or provider write were used. R2/MVP remain
+OPEN.
+
+Supplemental full offline suite after Batch KQ / EXP-710:
+`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q` ran
+1306 tests, passed with 11 skipped. Two existing SQLite
+`ResourceWarning`s reported unclosed connections; no test failure occurred.
+This is local regression evidence only, not a snapshot success or R2/MVP exit.
+Control Plane records a precondition deviation for EXP-710: its prior-reset
+gate could not be verified because EXP-708 retained no reset epoch. The single
+bounded readiness GET established the first usable reset timestamp; EXP-711
+requires that timestamp to have elapsed before any new request.
+
+Batch KR / EXP-711 (R2 continuation batch #232; 1 task) made one post-reset
+public read-only attempt. Readiness returned HTTP 200 / remaining 60; the
+snapshot path issued 25 REST GETs and one bounded raw commit fetch, then invoked
+the runtime once. It returned the fixed generic safe code
+`remote-snapshot-execution-failed`; the last safe observer marker was
+`tool_requested:SandboxSession.close.target-execution`. The card produced no
+verifier, verified stage, approval or receipt evidence. The marker does not
+identify whether the failure came from the target command, cleanup or another
+runtime stage; retry is prohibited under that card.
+No credential, live model or provider write was used. R2/MVP remain OPEN.
+
+Batch KS / EXP-712 (R2 continuation batch #233; 1 task) compared two offline
+paths after EXP-711: synthetic REST snapshot through enrolled mock receipt and
+the pinned Docker synthetic composition. Both passed. The public failure did
+not reproduce, and these controls do not isolate its root cause; no code change
+or root-cause claim is made. No public network, credential, live model or
+provider effect occurred. R2/MVP remain OPEN. The exact pinned target commit
+is absent from the Agent00X Git object database; this checkout therefore cannot
+replay that source offline. This does not rule out other local caches and is
+not root-cause evidence.
+
+Batch KT / EXP-713 (R2 continuation batch #234; 1 task) extends the integration
+harness's safe observer marker to include only three exact sandbox failure
+categories under a valid failed event/action; malformed/canary values remain
+excluded. One focused projection test passed; no public attempt or runtime was
+made. This improves future diagnostics but does not establish EXP-711's cause.
+R2/MVP remain OPEN.
+Batch KV / EXP-715 (R2 continuation batch #236; 1 task) adds an offline-tested,
+strict allowlist projection for fixed target probe failure categories in the
+integration harness. Three focused tests passed; no public request, Docker or
+target execution occurred. EXP-714 remains the next separately carded public
+read-only attempt after its recorded reset.
+Supplemental full offline suite after EXP-715: 1307 tests (1296 passed,
+11 skipped), no failures. Two existing SQLite `ResourceWarning`s for unclosed
+connections remain; `git diff --check` is clean.
+Batch KW / EXP-716 (R2 continuation batch #237; 1 task) verifies that the
+integration harness retains only a fixed probe failure marker from a fake
+session and excludes synthetic canary stderr from evidence. Two focused tests
+passed; no network, Docker or target execution occurred.
+Supplemental full offline suite after EXP-716: 1308 tests (1297 passed,
+11 skipped), no failures; two existing SQLite warnings for unclosed
+connections remain.
+Supplemental full offline suite after EXP-713: 1306 tests (1295 passed,
+11 skipped), no failures. Two existing SQLite `ResourceWarning`s for unclosed
+connections remain; `git diff --check` clean.
+
+Batch KZ / EXP-719 (R2 continuation batch #240) captured one bounded result
+from the synthetic target Docker probe: fixed overflow input `level=1e309`
+returned HTTP 500 and left zero SQLite rows. The probe retained no response
+body or raw stderr. Exact cached image ID/architecture matched the pinned
+`linux/arm64` runtime; no container remained after cleanup. This does not
+establish behavior of the real pinned repository and does not resolve the
+EXP-711 public runtime failure. No retry or external effect occurred; R2/MVP
+remain OPEN.
+
+Batch LA / EXP-720 (R2 continuation batch #241) captured only the synthetic
+exception category `value`, but its middleware returned a replacement 500
+instead of re-raising. Its explicit acceptance criterion was not met; the
+card is BLOCKED and the category is provisional synthetic evidence only. No
+exception text, traceback or response body was exposed. This is not root-cause
+evidence for the pinned public repository's runtime failure. No public
+request, credential or external effect occurred; R2/MVP remain OPEN.
+
+Supplemental full offline suite after EXP-720 ran 1311 tests (1297 passed,
+14 skipped), with no failures; all Docker/public opt-in variables were unset.
+Two existing SQLite `ResourceWarning`s for unclosed connections remain.
+R2/MVP remain OPEN.
+
+Batch LB / EXP-721 (R2 continuation batch #242) confirmed the same fixed
+`value` exception category with a middleware that persisted only the category
+in a temporary in-container diagnostic table and re-raised the original
+exception. The parent did not read response body, traceback or exception text.
+This is synthetic-only evidence and does not resolve EXP-711. R2/MVP remain
+OPEN.
+Supplemental full offline suite after EXP-721, with Docker/public opt-in
+variables unset: 1312 tests (1297 passed, 15 skipped), no failures. Two
+existing SQLite `ResourceWarning`s for unclosed connections remain.
+
+Batch LC / EXP-722 (R2 continuation batch #243) updated the deterministic
+synthetic candidate's pre-insert validation and passed one exact-image,
+network-isolated Docker run: all 25 malformed cases plus `1e309` produced
+422/zero writes, and valid input produced 200/one exact row. This is fake
+Worker/test-harness evidence only; it does not verify the public repository's
+runtime or a live Worker proposal. R2/MVP remain OPEN.
+Supplemental full offline suite after EXP-722, with Docker/public opt-in
+variables unset: 1313 tests (1297 passed, 16 skipped), no failures. Two
+existing SQLite `ResourceWarning`s for unclosed connections remain.
+
+EXP-714's authorization expired without a request and was not reused. The new
+Batch LD / EXP-723 card passed once: readiness was eligible; the exact pinned
+public snapshot (REST commit/tree/23 blobs plus bounded raw commit) was
+validated, and the updated deterministic fake Worker candidate passed in the
+target container before the same-run pinned verifier and exact-digest stage.
+The enrolled synthetic approval and local mock CLI returned a same-digest
+`mock_published` receipt with `external_write=false`; it also explicitly
+reported `identity_authenticated=false`. This demonstrates the strongest
+current public-snapshot-to-local-mock composition, not a live Worker, real
+human authorization, independent-host trust or actual PR. No credential or
+provider write occurred. R2/MVP remain OPEN.
+
+EXP-634's separate fresh `RUN EXP-634 ONCE` confirmation arrived at
+`2026-10-09T08:16:27Z` UTC. The one operator invocation passed readiness and
+acquired the exact pinned snapshot, then stopped at the hidden credential prompt
+with bounded `worker-failed` evidence; no credential was entered. The
+`DeepSeekHTTPChannel` resolves the credential before opening HTTPS, so code
+ordering establishes that no DeepSeek HTTP request or model call occurred.
+CLI evidence reports exact commit/tree and a raw commit verified by object hash,
+with `approval=not_created`, `publication=not_attempted` and
+`external_write=false`. The designated output path exists and was preserved
+without reading its contents. No retry is permitted under this card. A new
+card and fresh authorization are needed for another attempt; EXP-634 remains
+BLOCKED and R2/MVP remain OPEN.
+
+Batch LE / EXP-724 closed two test-owned SQLite connections that emitted
+`ResourceWarning` under the full suite. Tracemalloc identified the exact
+`sqlite3.Connection` context-manager sites in `test_publication.py` and
+`test_worker_cli.py`; explicit close-on-exit preserves transaction semantics.
+Focused suites: 90 tests (88 passed, 2 skipped). Full suite with tracemalloc and
+ResourceWarnings enabled: 1313 tests (1297 passed, 16 skipped), no warnings or
+failures; `git diff --check` clean. This is test-harness hygiene only and does
+not change R2, independent verifier trust, authenticated approval or real PR
+publication status; MVP remains OPEN.
+
+Batch LF / EXP-725 added a second fixed authorization profile to the pinned
+Worker operator CLI without changing the EXP-634 default. The EXP-726 phrase,
+process/task IDs and permit ID remain bound together; wrong-phrase regression
+stops before readiness and credential lookup; an unknown card ID is rejected
+before preflight. Focused tests: 19 passed; full offline suite: 1316 tests
+(1300 passed, 16 skipped); `git diff --check` clean.
+No public request, Docker, credential prompt, live model or provider action
+occurred. Batch LG / EXP-726 is prepared as DRAFT for the user to run from their
+own interactive terminal after fresh `RUN EXP-726 ONCE` approval; its new stage
+path was absent at preflight. EXP-634's failed hidden prompt is not retried.
+R2/MVP remain OPEN.
+
+Batch LH / EXP-727 and Batch LI / EXP-728 add a sibling synthetic journaled
+snapshot composition whose in-process verifier service signs a PASS response
+with an ephemeral Ed25519 key. `SignedVerifierClient` validates the response
+signature, while correctly leaving it `audit_only` and
+`independent_host_trust_established=false`. The complete executor reports only
+`verifier-trust-unestablished`, makes zero stage save/readback calls and emits
+no stage events; the positive sibling still performs one exact stage
+save/readback. Focused cases: 2 passed; full offline suite: 1317 tests (1301
+passed, 16 skipped); `git diff --check` clean. This synthetic caller-supplied
+key proves neither verifier identity nor independent host trust; deployment
+and OOB evidence remain absent. No external service, credential, Docker,
+Worker/model or provider action occurred. R2/MVP remain OPEN.
+
+Supplemental verification on 2026-10-09 reran both EXP-728 focused journaled
+snapshot cases and the full offline suite against the current worktree. Focused
+cases: 2 passed; full suite: 1317 tests, 1301 passed and 16 skipped. No live
+network, Docker opt-in, credential or provider operation was enabled. The
+rerun adds no independent-host trust or publication evidence; R2/MVP remain
+OPEN.
+
+Batch LK / EXP-730 adds a content-addressed local SQLite artifact prototype and
+read-only event-ref resolution in the observer report. Only exact canonical
+JSON event input/output references are resolved; the report emits digest and
+size, never payload. Classification/redaction metadata is persisted and cannot
+be changed on an idempotent reference. The 10,000-reference limit, malformed/missing/tampered
+references, immutable insertion, redaction metadata and common credential
+patterns have synthetic tests. Focused suite: 14 passed with tracemalloc and
+ResourceWarnings enabled, no warnings. Full offline suite: 1325 tests (1309
+passed, 16 skipped), no ResourceWarnings; `git diff --check` clean. This does
+not resolve checkpoint/workspace artifacts or implement restore/replay, prove
+unknown-secret absence, or establish collector completeness; criterion 14
+remains partial, criterion 15 remains partial, and R2/MVP remain OPEN.
+
+Batch LL / EXP-731 extends the same resolver across all seven declared
+checkpoint reference fields, including state/context/workspace and authority
+refs. It records checkpoint-to-reference association without returning bytes or
+restoring any state. Focused report suite: 11 passed; full offline suite: 1326
+tests (1310 passed, 16 skipped), with tracemalloc and ResourceWarnings enabled
+and no warnings; `git diff --check` clean. This establishes only local
+content-addressed availability, not artifact authenticity, trusted history,
+checkpoint restore, replay, learning evaluation or complete collection.
+Criterion 14 remains partial, criterion 15 remains partial, and R2/MVP remain
+OPEN.
+
+Batch LM / EXP-732 adds a separately signed, short-lived Control Plane decision
+that is exact-bound to the verifier enrollment and host-separation evidence.
+Without that decision, the signed verifier client remains audit-only and the
+journaled snapshot execution stops before stage; a valid synthetic decision
+lets the actual client/executor test path reach exact local stage save/readback.
+The publication seed retains only attestation, enrollment and decision digests;
+the bounded CLI reports those digests and the derived trust status. The
+synthetic authority does not establish
+real OOB review, key governance or an independent host; no live endpoint,
+credential, deployment, human approval or provider write occurred. Criteria
+1–3, 7, 11–12 and the real external gates remain open; MVP is not complete.
+
+Batch LN / EXP-733 exposes the verifier attestation/key/profile, enrollment and
+host-trust-decision digests in the read-only review and includes the same
+record in the canonical approved intent, so a signed approval is bound to the
+exact provenance metadata as well as the staged change and publication intent.
+The stage preview explicitly says `recorded_digest_only_not_revalidated`
+because signed evidence bytes and independent host evidence are not preserved
+for revalidation after reopening; legacy stages report `not_recorded`. A
+synthetic signed approval traverses local policy/gateway/broker gates to an
+in-memory mock receipt with `external_write=false`. Focused suites: 79 passed;
+full offline suite: 1342 tests (1326 passed, 16 skipped); `git diff --check`
+clean. OOB verifier deployment/authority governance and authenticated human
+identity remain unproven; there was no live Worker or provider PR. R2/MVP
+remain OPEN.
+
+Batch LO / EXP-734 stores only public signed verifier evidence with a successful
+stage: canonical verifier attestation bytes, exact authority-signed enrollment
+and host-decision records when available, and the bound request digest. Stage
+revalidation checks record canonicalization, duplicate keys, bounded sizes,
+hashes and agreement with the persisted verifier result. SQLite save/readback
+preserved exact synthetic evidence; stage preview/CLI output omits raw bytes.
+Legacy records without the optional envelope remain readable and report proof
+unavailable. Focused suites: 107 tests (99 passed, 8 skipped); full offline
+suite: 1343 tests (1327 passed, 16 skipped); `git diff --check` clean. This
+does not revalidate authority signatures after reopen or reconstruct the
+source verifier request (the full snapshot is intentionally not duplicated in
+the stage). Real authority-key governance, OOB host review, live Worker,
+authenticated approval and PR publication remain open; R2/MVP remain OPEN.
+
+Batch LP / EXP-735 implements an explicit read-only revalidation step for
+persisted verifier provenance. The caller provides the independently pinned
+authority key set; enrollment and host-decision signatures are checked before
+the response signature is checked against the enrolled verifier key. The
+signed verifier result must equal the stored result, and its timestamp must be
+within 300 seconds old / 30 seconds future skew. Synthetic post-SQLite-reopen
+coverage accepts valid evidence and rejects a wrong authority key, modified
+enrollment/decision/verifier signatures, and stale/future attestations.
+Result flags preserve the boundaries: request input was not reconstructed,
+identity is unauthenticated, and no provider write occurred. Focused tests: 32
+passed; full offline suite: 1345 tests (1329 passed, 16 skipped);
+`git diff --check` clean. The original request reconstruction and integration
+of verified provenance into digest-bound authenticated approval are still
+open; caller-pinned test keys do not establish production key governance or
+OOB host separation. No credentials, network, Worker/model, approval or
+provider write was used. R2/MVP remain OPEN.
+
+Batch LQ / EXP-736 adds optional persisted verifier-evidence envelope v2.
+The successful signed client propagates the exact canonical request bytes into
+the stage; the bounded bytes are checked against the request digest before
+storage. Reopened-stage validation parses and reserializes them byte-for-byte,
+recomputes the full verifier snapshot-tree digest, compares all derivable
+request fields against the immutable stage and request context, and rejects
+noncanonical/duplicate/oversized/substituted input or candidate mismatch.
+The request snapshot is rechecked for known credential patterns. A synthetic
+SQLite round trip sets `request_input_reconstructed=true`; legacy v1 remains
+readable with the flag false. Focused suite: 131 tests (123 passed, 8
+skipped); full offline suite: 1345 tests (1329 passed, 16 skipped);
+`git diff --check` clean. This establishes no identity or production host
+trust, and is not yet bound into authenticated digest-bound approval. No
+credential, network, Worker/model or provider write was used. R2/MVP remain
+OPEN.
+
+Batch LR / EXP-737 requires independently caller-pinned authority keys when
+preparing approval for a remote-snapshot stage, revalidates the exact persisted
+verifier proof, requires reconstructed request input, and binds the verified
+provenance digests/status/key IDs into the signed intent. Signed-approval
+consumption reloads the stage and repeats that validation before policy
+evaluation. A synthetic end-to-end test verifies the positive path and rejects
+wrong pins; remote stages with no signed proof stop before approval and leave
+the stage database unchanged. Public key-set parsing is bounded, strict and
+does not echo payload data on failure. Focused suite: 156 tests (148 passed, 8
+skipped); full offline suite: 1348 tests (1332 passed, 16 skipped);
+`git diff --check` clean. Synthetic pins do not establish production authority
+governance or OOB host trust, and `identity_authenticated=false`; no live
+Worker, external write or PR publication occurred. R2/MVP remain OPEN.
+
+Batch LS / EXP-738 extends the synthetic signed-verifier snapshot path through
+the actual enrolled signed-mock CLI. After exact SQLite stage reopen, both
+verifier authority pins and approver enrollment are independently checked;
+one in-memory mock receipt carries the stage digest, repository, branch and
+idempotency key from the approval intent. Snapshot intake, Worker, sandbox,
+verifier, stage and controlled mock publication all remain under one SQLite
+observer run. Missing/wrong verifier pins and a mismatched observer-run ID
+fail before receipt; approval-stage bytes remain unchanged. The CLI now exposes
+the non-secret idempotency key in bounded receipt evidence. Focused suite: 37
+tests (29 passed, 8 skipped); full offline suite: 1348 tests (1332 passed, 16
+skipped); `git diff --check` clean. The test uses synthetic transport,
+synthetic Worker/verifier/signers and an in-memory provider double; observer
+completeness remains `partial`. Production authority/OOB trust, authenticated
+human identity, live Worker and real PR publication remain open. R2/MVP remain
+OPEN.
+
+Batch LT / EXP-739 updates the existing opt-in public pinned-snapshot
+composition to preserve signed verifier evidence/request bytes through stage
+reopen, pass caller-pinned verifier keys to approval preparation and pass them
+again through enrolled mock CLI consumption. Its local synthetic REST twin
+reaches one same-run mock receipt with the exact stage digest and
+idempotency key. Focused suite: 27 tests (19 passed, 8 skipped); full offline
+suite: 1349 tests (1333 passed, 16 skipped); `git diff --check` clean. The
+actual public/Docker test was skipped because both opt-ins were false and the
+exact pinned runtime was unavailable; no readiness/snapshot GET or Docker run
+occurred. This does not refresh public-runtime evidence after EXP-737. Worker
+and verifier remain synthetic/non-independent in the updated composition;
+authority/OOB trust, authenticated human identity and real PR publication stay
+open. R2/MVP remain OPEN.
+
+Batch LY / EXP-744 made its one authorized public-read-only attempt after the
+EXP-743 signed-profile assertion fix. Both exact cached Docker image
+preflights passed. The test made exactly one anonymous readiness GET and
+received HTTP 200 with `remaining=31`, below its required threshold of 35
+(reported reset epoch `1791545485`). It stopped before commit/tree/blob GETs,
+raw Git fetch, Docker containers, snapshot intake, stage, approval or mock
+receipt. No retry or other external request occurred. This result refreshes no
+snapshot/runtime evidence. No credential, live Worker/model, human approval,
+provider write, branch, PR, push or deployment occurred. A future public run
+requires a fresh exact card; R2/MVP remain OPEN.
+
+Batch LZ / EXP-745 passed its one fresh public/Docker integration after the
+recorded rate-limit reset. The test's assertions confirm eligible readiness,
+the exact pinned 23-file commit/tree/content digest, one bounded raw-commit
+fetch, one runtime invocation, target/verifier execution and a same-run
+in-memory mock receipt bound to the stage, with
+`identity_authenticated=false`, `external_write=false` and observer
+`completeness=partial`. The run took 21.516s. The test did not emit the concrete
+stage digest or observer run ID, and its temporary evidence stores were removed;
+therefore EXP-745 is blocked at evidence retention and does not provide a
+reusable receipt artifact. No live model/key, human approval, provider write,
+branch, PR or deployment occurred. EXP-747 adds opt-in sanitized success
+evidence without external access; R2/MVP remain OPEN.
+
+Batch MB / EXP-747 adds a test-only opt-in `AGENT00X_EMIT_PUBLIC_SNAPSHOT_EVIDENCE`
+to emit one validated, content-free JSON summary only after the guarded public
+integration has passed all assertions. It contains fixed snapshot/stage digest,
+observer ID, bounded request counts and mock-only flags; normal test runs remain
+quiet. Synthetic emitter test passed; remote pipeline suite: 28 tests (20
+passed, 8 skipped); full offline suite: 1353 tests (1337 passed, 16 skipped);
+`git diff --check` clean. No external access, Docker or credential was used in
+EXP-747. EXP-748 is a fresh one-shot public card after a conservative reset
+boundary; R2/MVP remain OPEN.
+Final offline review additionally requires the exact pinned commit/tree/content
+digest, 23-blob count and exact bounded request/runtime counters before emitting;
+an over-limit counter produces no record. The strengthened targeted test and
+same 28/1353-test suites passed.
+
+## Current R2 continuation — 2026-10-09
+
+Batch MY—ND / EXP-770—775 adds fixed-stage import diagnostics, stages only the
+two schema files needed by `observation_store`, separates the Worker wire
+protocol from the host HTTPS transport, and verifies environment entries
+without assuming Docker ordering. EXP-774 passed a complete synthetic
+`DeepSeekProposalWorker` round trip in pinned image
+`sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812`:
+network-none, read-only root, non-root, all capabilities dropped,
+no-new-privileges, bounded resources, exact fixed env, two read-only mounts,
+blocked direct-IP/DNS, one fake host response, exact proposal and cleanup.
+EXP-773's worker IPC now imports a transport-independent protocol module;
+53 focused tests passed at that boundary. EXP-775's standard full offline suite
+passed 1387 tests (19 skipped), and `git diff --check` passed.
+
+This evidence uses a synthetic task and fake model response. It does not show
+the reusable runtime adapter executing a real pinned repository snapshot, a
+live LLM call, independently deployed verifier, authenticated human approval,
+real GitHub PR publication, production authority governance or durable
+observer evidence. The older EXP-520 proposal and EXP-548 replay remain
+historical evidence with their documented trust and retention limitations; no
+new provider request or write occurred here. The next card, EXP-776, extracts
+the tested boundary into a reusable host-side `ProposalWorker` before composing
+it with the exact pinned snapshot/verifier/stage pipeline. R2/MVP remain OPEN.
+
+## R2 follow-up — reusable Worker and pinned-snapshot attempt
+
+Batch NE / EXP-776 extracted `ContainerProposalWorker`: the host keeps the
+model channel injected, while the actual proposal worker runs in the pinned
+network-none image. Focused offline suite: 32 tests (one opt-in skip); the
+single pinned-container run passed 15 tests, with one fake host response,
+isolation inspection and cleanup.
+
+Batch NF / EXP-777 connected it to the exact anonymous public snapshot for
+`SoldatovAlexander/brainbooster_full_v11` at
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`. The one opt-in composition reached
+the target test after the container Worker returned its proposal, then failed
+at fixed `sqlite-range-status`. The target test rejects out-of-range SQLite
+integers; the current synthetic candidate catches parse errors but lacks the
+signed-64-bit check. Independent verifier, exact stage/readback, preview and
+mock receipt were not reached. This is not a Worker transport failure and is
+not accepted as a passing repository-change slice. The public operation was
+read-only; no credential, live model, approval or provider write occurred.
+
+Batch NG / EXP-778 is the fresh follow-up to strengthen and test that synthetic
+candidate, then make one new pinned pipeline attempt. R2/MVP remain OPEN; live
+Worker, verifier independence, authenticated digest-bound approval, real PR,
+durability and production trust gates remain unproven.
+
+EXP-778 locally hardened only the synthetic route candidate: bool, fractional,
+non-finite, unparseable and signed-64-bit-overflow inputs across five numeric
+fields fail before writes; one valid row inserts once. The 7-test offline suite
+and `git diff --check` passed. Its one anonymous pinned-snapshot read for the
+new candidate digest returned HTTP 403 with no digest/source output. No Docker
+preflight or integration rerun occurred and no retry was made. The candidate
+digest was subsequently recovered under EXP-779 from the read-only preserved
+EXP-614 stage artifact for the same repository/commit, after validating the
+recorded Git blob SHA-1 for `backend/routes.py`. The resulting candidate digest
+is `sha256:6166fc4c2a73db910a064de140e71f7bfcbebe3b99846651a3c69770cce39a18`.
+This is reproducible historical local evidence, not a fresh public read or a
+new end-to-end run. HTTP 403 remains recorded without retry; no Docker
+preflight or integration rerun occurred, and no new verifier, stage, approval
+or publication evidence was added. R2/MVP remain OPEN.
+
+Batch NI / EXP-780's one fresh pinned run successfully fetched and validated
+the 23-blob target snapshot, obtained one ContainerProposalWorker proposal,
+passed the target regression and pinned Docker verifier, and verified the
+temporary durable-stage readback and preview assertions. It failed at the
+test's local-mock call with `TypeError` because a required `base_branch` was
+omitted. The mock function was not invoked, no receipt was created, and the
+temp stage/evidence was not retained. This exposes a stale test harness call,
+not a failure of the Worker/verifier or target fix. No retry or provider write
+occurred. EXP-781 permits one new full attempt after passing `master` as the
+local mock base branch; independent verifier trust, authenticated human
+approval and real PR publication remain unproven.
+
+Batch NJ / EXP-781 corrected the stale local-mock test call with base branch
+`master` and passed one fresh full pinned composition in 17.127s. The 23-file
+snapshot matched commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, and content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+The one Worker proposal produced candidate digest
+`sha256:6166fc4c2a73db910a064de140e71f7bfcbebe3b99846651a3c69770cce39a18`;
+target and pinned container verifier passed; stage readback and verified
+contents digest `sha256:1bbc49027fbf0a5dabe069bdf320b731c21ec346c95479ddefa216c3a439342d`
+matched; preview remained `not_created`/`not_attempted`; local mock receipt
+matched stage digest
+`sha256:5dd2032094128b666ba178b5fe1b76fbe91f0b65693f9132138f236e5293ef00`.
+The sanitized evidence record reported zero provider calls, no credential and
+no external write. This establishes a reproducible local composition, not
+independent trust-domain verifier operation, authenticated approval or real PR
+publication. R2/MVP remain OPEN.
+
+Batch NK / EXP-782 did not retain the new stage: after its 15-test focused
+suite and successful pinned image/path preflights, the only anonymous snapshot
+attempt returned sanitized HTTP 403 on a blob GET before Worker execution.
+No target/verifier run, stage output, receipt or retry occurred. The prescribed
+no-overwrite destination remains absent. A fresh task must use a distinct
+public read path/source or wait; this failure is not evidence against the
+Worker or verifier. R2/MVP remain OPEN.
+
+EXP-784 then made one codeload GET with the repository's verified TLS context;
+the returned in-memory archive had one root and 23 regular files, exact pinned
+content digest, and route Git blob SHA-1 matching EXP-614. No archive bytes
+were saved. Since the current snapshot evidence-origin model only accepts REST,
+this remains source-validation evidence and has not been passed into execution.
+EXP-785 added that typed archive source adapter. It keeps REST and codeload
+origins distinct, uses the existing verified CA context and a one-shot
+fixed-host transport, and validates blob, tree and content digests in memory
+with path/type/size limits. The archive origin propagates through executor and
+publication-seed binding with its own claim canonicalization. Offline focused
+suite: 224 tests (10 skipped); full suite: 1408 tests (19 skipped);
+`git diff --check` clean. EXP-786's one codeload GET reached the parser but
+failed the exact-permission check before candidate digest verification and
+before Worker execution; no stage output was written and no retry occurred.
+The archived mode format differs from Git's compressed executable/non-executable
+mode model. EXP-787 fixed this mapping and passed all 1409 offline tests (19
+skipped). Its single codeload composition passed archive, Worker, target,
+verifier and stage readback, but `stage_copy` rejected the temporary path
+because it was not canonical; the new destination and local mock receipt were
+not created. A local check confirmed tempdir paths need `.resolve()` on this
+macOS host. EXP-788 corrects that caller path and allows one fresh composition.
+No real approval/provider publication is authorized or performed.
+
+EXP-788 passed the fresh codeload-origin composition in 5.741s and retained
+the exact stage at `/Volumes/DATA/Agent00X-local-evidence/exp788-stage.sqlite3`
+using no-overwrite stage copy. Stage and local mock receipt are bound to
+`sha256:e66f65b6be74cc70dc6aa3a8cec658bc65c30051bddd9adb3d74536d4c347f51`;
+the copied DB SHA-256 is
+`991d4ffa21145432ba7f926c390c7d9f8d262b2604e31c70623d01424a66e46d`, with
+artifact digest
+`sha256:004b9583e19c1eb08506e792c97701803853f4a40a3b5672d36f75070452c8df`.
+The sanitized record retained archive provenance, snapshot/candidate/verified
+digests and verifier identity; no credential, provider call or external write
+occurred. Batch NR below records the follow-up through the existing request and
+synthetic signed-mock CLIs against this exact retained stage; real human approval
+and PR remain unproven.
+
+Batch NR / EXP-789 exercised the saved EXP-788 SQLite stage through both
+existing operator CLI entry points. The opt-in subprocess test first generated
+an unsigned request bound to the exact stage/artifact/verified-content digests,
+then signed it only with the deterministic test fixture key and supplied a
+short-lived authority enrollment signed by a key generated in process. The
+signed-mock CLI emitted a same-stage `mock_published` receipt. The exact stage
+database SHA-256 before and after remained
+`991d4ffa21145432ba7f926c390c7d9f8d262b2604e31c70623d01424a66e46d`.
+Focused: 1 test passed; standard offline suite: 1410 tests, 20 skipped;
+`git diff --check` clean. The harness is skipped by default and uses temporary
+test artifacts only. This is digest-bound CLI/mock evidence—not authenticated
+human identity, a production trust anchor, a separately trusted verifier or a
+real PR. No provider request/write, credentials, branch, push, deployment or
+commit occurred. R2/MVP remain OPEN.
+
+An offline EXP-791 preflight attempted to feed a typed codeload claim into the
+existing signed-verifier operator composition. It failed closed before Worker
+execution at `PinnedSnapshot.validate-fixed-pin`; inspection confirmed the
+operator CLI hardcodes REST intake and requires a raw commit object. Codeload
+uses archive/tree/content pins and has no raw commit object. No provider or
+network operation occurred. Batch NT updates the scope to add a dedicated
+Control Plane-selected archive-origin runtime path while preserving the REST
+path and both pin contracts. Until then, the saved codeload stage cannot reach
+the operator approval CLI with signed verifier evidence. R2/MVP remain OPEN.
+
+Batch NT / EXP-791 is implemented and accepted after local Control Plane review.
+The fixed operator card profile selects either REST or codeload (REST default),
+and the single-use permit is bound to that selection. Codeload intake validates
+the pinned archive claim without accepting a raw commit object; REST retains its
+verified raw-commit requirement. Observer evidence includes only the fixed
+`GitHubCodeloadArchive.GET.archive` label and bounded status, not archive bytes
+or URL. The offline synthetic composition reached approval-request generation
+and an enrolled signed-mock receipt with `identity_authenticated=false` and
+`external_write=false`. Focused suite: 147 tests, 10 skipped. Full offline
+suite: 1415 tests, 20 skipped. `git diff --check` passed. The archive reader,
+verifier signer and approver/authority material in this integration are
+synthetic; there was no actual archive GET, independent verifier host, live
+Worker/provider call, credential, human identity, external write, branch/PR,
+push, deployment or commit. This advances local trust plumbing only; R2/MVP
+remain OPEN.
+
+Batch NU / EXP-792 adds one subprocess composition test for the signed verifier
+HTTP service. The child generates its Ed25519 signing key in memory, binds an
+OS-assigned IPv4 loopback port and handles exactly one synthetic request; the
+parent verifies the returned signature against the exact fixture/profile/nonce.
+The test suite for this component passed 9 tests; the full offline suite passed
+1416 tests (20 skipped). This is process separation on the same host over local
+HTTP, with a synthetic verifier. Attestation and client still report
+`independent_host_trust_established=false`; no host-trust promotion, remote
+deployment, credential use, live Worker/provider request, or publication
+occurred. R2/MVP remain OPEN.
+
+Follow-up Batch NS / EXP-790 corrected an approval-boundary gap exposed by
+EXP-789: approval preparation had required signed verifier provenance for
+`github_rest_api_claim` but not `github_codeload_archive`. The check now applies
+to both remote origins. The retained EXP-788 codeload stage, which has no signed
+verifier evidence, exits the real approval-request CLI with code 2 and no stdout
+request; its SQLite bytes remain unchanged. The approval unit suite passed 11
+tests, the opt-in retained-stage gate passed 1 test, the full offline suite
+passed 1411 tests (20 skipped), and `git diff --check` passed. EXP-789 remains
+valid as CLI-plumbing evidence only and is explicitly not approval-eligibility
+evidence. No network/provider call or write, credential, approval signature,
+branch, PR, push, deployment or commit occurred. R2/MVP remain OPEN.

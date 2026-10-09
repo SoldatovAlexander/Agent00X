@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+from types import SimpleNamespace
 from uuid import uuid4
 
 from cryptography.hazmat.primitives import serialization
@@ -26,13 +27,25 @@ from .durable_stage import (
 )
 from .gateway import GatewayDecision, GatewayPath
 from .mock_github import MockGitHubEndpoint, MockPullRequest
+from .observer_runtime import (
+    ControlledPublicationJournalError,
+    ControlledPublicationOutcomeUnknownError,
+    JournaledProposalWorker,
+    WorkerJournalError,
+)
+from .observation_store import ObservationStoreError, SQLiteObservationStore
 from .operator_confirmation import (
     OperatorConfirmationRecord,
     OperatorConfirmationStoreError,
     SQLiteOperatorConfirmationStore,
 )
 from .publication import PublicationJournal
-from .publication_seed import PublicationIntent, PublicationSeed, derive_publication_intent
+from .publication_seed import (
+    PublicationIntent,
+    PublicationSeed,
+    derive_publication_intent,
+    verifier_trust_intent_binding,
+)
 from .stage_preview import StagePreviewError, render_stage_preview
 
 MOCK_POLICY_VERSION = "local-mock-stage-approval-v1"
@@ -52,6 +65,7 @@ def run_local_mock_publication(
     base_branch: str,
     *,
     now: datetime,
+    observer: JournaledProposalWorker | None = None,
 ) -> MockPullRequest:
     """Consume a typed digest once and run only the in-memory mock path.
 
@@ -61,6 +75,8 @@ def run_local_mock_publication(
     """
     if type(artifact) is not StagedArtifact:
         raise StageApprovalError("stage approval: artifact is invalid")
+    if observer is not None and type(observer) is not JournaledProposalWorker:
+        raise StageApprovalError("stage approval: observer is invalid")
     if (
         not isinstance(confirmed_staged_digest, str)
         or _DIGEST_PATTERN.fullmatch(confirmed_staged_digest) is None
@@ -85,7 +101,17 @@ def run_local_mock_publication(
         format=serialization.PublicFormat.Raw,
     )
     approval_id = "local-mock-approval-" + uuid4().hex
-    engine_intent = _engine_intent(intent, approval_id, expires_at)
+    engine_intent = _engine_intent(
+        intent,
+        approval_id,
+        expires_at,
+        verifier_trust_intent_binding(
+            seed,
+            signed_evidence_available=(
+                type(payload.get("verifier_trust_evidence")) is dict
+            ),
+        ),
+    )
     approval = {
         "schema_version": 1,
         "process_id": intent.process_id,
@@ -158,23 +184,32 @@ def run_local_mock_publication(
         with tempfile.TemporaryDirectory(prefix="agent00x-local-mock-approval-") as temporary:
             journal_path = Path(temporary) / "publication.sqlite3"
             with PublicationJournal(journal_path) as journal:
-                receipt = run_controlled_local_publication(
-                    seed,
-                    intent,
-                    approval,
-                    policy,
-                    engine_intent,
-                    load_stage,
-                    "decision-" + uuid4().hex,
-                    MockOnlyGateway(),
-                    gateway_envelope(),
-                    broker,
-                    grant,
-                    journal,
-                    endpoint,
-                    actuator_id=MOCK_ACTUATOR_ID,
-                    now=now,
-                )
+                def controlled_call() -> MockPullRequest:
+                    return run_controlled_local_publication(
+                        seed,
+                        intent,
+                        approval,
+                        policy,
+                        engine_intent,
+                        load_stage,
+                        "decision-" + uuid4().hex,
+                        MockOnlyGateway(),
+                        gateway_envelope(),
+                        broker,
+                        grant,
+                        journal,
+                        endpoint,
+                        actuator_id=MOCK_ACTUATOR_ID,
+                        now=now,
+                        observer=observer,
+                    )
+
+                if observer is None:
+                    receipt = controlled_call()
+                else:
+                    receipt = observer.run_local_mock_publication(
+                        controlled_call, process_id=intent.process_id
+                    )
                 if (
                     receipt.staged_change_digest != artifact.staged_change_digest
                     or receipt.repository_id != seed.repository_id
@@ -182,7 +217,8 @@ def run_local_mock_publication(
                 ):
                     raise StageApprovalError("stage approval: mock receipt mismatch")
         return receipt
-    except StageApprovalError:
+    except (StageApprovalError, ControlledPublicationJournalError,
+            ControlledPublicationOutcomeUnknownError):
         raise
     except Exception:
         raise StageApprovalError("stage approval: local mock path failed") from None
@@ -203,12 +239,38 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="separate SQLite database for local typed-digest confirmation evidence",
     )
+    parser.add_argument(
+        "--observer-db",
+        help="optional absolute SQLite database for partial local observer evidence",
+    )
+    parser.add_argument(
+        "--observer-run-id",
+        help="resume this exact existing observer run from --observer-db",
+    )
     args = parser.parse_args(argv)
+    observer_store = None
+    observer = None
+    observer_locator = None
     try:
+        if args.observer_run_id is not None and args.observer_db is None:
+            raise StageApprovalError(
+                "stage approval: observer run requires observer database"
+            )
         if _paths_alias(args.database, args.confirmation_db):
             raise StageApprovalError(
                 "stage approval: confirmation database must be separate"
             )
+        if args.observer_db is not None and (
+            not Path(args.observer_db).is_absolute()
+            or _paths_alias(args.database, args.observer_db)
+            or _paths_alias(args.confirmation_db, args.observer_db)
+        ):
+            raise StageApprovalError("stage approval: observer database path is invalid")
+        if args.observer_run_id is not None and (
+            Path(args.observer_db).is_symlink()
+            or not Path(args.observer_db).is_file()
+        ):
+            raise StageApprovalError("stage approval: observer run database is unavailable")
         with SQLiteStagedArtifactStore(args.database, read_only=True) as store:
             artifact = store.load(args.staged_change_digest)
         artifact, _, _, intent = _validated_stage_intent(
@@ -252,13 +314,33 @@ def main(argv: list[str] | None = None) -> int:
                 raise OperatorConfirmationStoreError(
                     "operator confirmation: exact readback failed"
                 )
+        if args.observer_db is not None:
+            observer_store = SQLiteObservationStore(args.observer_db)
+            observer_worker = SimpleNamespace(propose=lambda _request: None)
+            if args.observer_run_id is None:
+                observer = JournaledProposalWorker(
+                    observer_worker,
+                    observer_store,
+                    process_id=intent.process_id,
+                    task_id="task-" + uuid4().hex,
+                )
+            else:
+                observer = JournaledProposalWorker.resume_existing(
+                    observer_worker,
+                    observer_store,
+                    process_id=intent.process_id,
+                    run_id=args.observer_run_id,
+                )
         receipt = run_local_mock_publication(
             artifact,
             confirmation,
             args.branch,
             args.base_branch,
             now=confirmed_at,
+            observer=observer,
         )
+        if observer is not None:
+            observer_locator = observer.observer_reference()
         with SQLiteOperatorConfirmationStore(args.confirmation_db) as confirmation_store:
             completed = confirmation_store.complete_mock(
                 confirmation_id, receipt.pull_request_id
@@ -275,14 +357,53 @@ def main(argv: list[str] | None = None) -> int:
     except (
         DurableStageStoreError,
         OperatorConfirmationStoreError,
+        ObservationStoreError,
         StageApprovalError,
         StagePreviewError,
+        ControlledPublicationJournalError,
+        WorkerJournalError,
     ) as exc:
-        print(str(exc), file=sys.stderr)
+        if args.observer_db is None:
+            print(str(exc), file=sys.stderr)
+        else:
+            if observer is not None:
+                try:
+                    observer_locator = observer.observer_reference()
+                except Exception:
+                    observer_locator = None
+            if isinstance(exc, ControlledPublicationOutcomeUnknownError):
+                error_code = "publication-outcome-unknown"
+            elif isinstance(exc, ControlledPublicationJournalError):
+                error_code = "observer-gate-failed"
+            elif isinstance(exc, ObservationStoreError):
+                error_code = "observer-store-failed"
+            elif isinstance(exc, WorkerJournalError):
+                error_code = "observer-run-rejected"
+            elif isinstance(exc, OperatorConfirmationStoreError):
+                error_code = "confirmation-store-failed"
+            elif isinstance(exc, DurableStageStoreError):
+                error_code = "stage-read-failed"
+            else:
+                error_code = "stage-approval-failed"
+            print(
+                json.dumps(
+                    {
+                        "schema": "local-mock-confirmation-result/v1",
+                        "status": "failed",
+                        "error_code": error_code,
+                        "observer": observer_locator,
+                    },
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
         return 2
-    print(
-        json.dumps(
-            {
+    finally:
+        if observer_store is not None:
+            observer_store.close()
+    output = {
                 "schema": "local-mock-confirmation-receipt/v1",
                 "staged_change_digest": receipt.staged_change_digest,
                 "repository_id": receipt.repository_id,
@@ -293,12 +414,10 @@ def main(argv: list[str] | None = None) -> int:
                 "confirmation_record_persisted": True,
                 "authenticated": False,
                 "external_write": False,
-            },
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-        )
-    )
+            }
+    if observer_locator is not None:
+        output["observer"] = observer_locator
+    print(json.dumps(output, ensure_ascii=False, allow_nan=False, sort_keys=True))
     return 0
 
 
@@ -336,7 +455,10 @@ def _validated_stage_intent(
 
 
 def _engine_intent(
-    intent: PublicationIntent, approval_id: str, expires_at: str
+    intent: PublicationIntent,
+    approval_id: str,
+    expires_at: str,
+    verifier_trust: dict[str, str | None],
 ) -> dict:
     return {
         "process_id": intent.process_id,
@@ -349,6 +471,7 @@ def _engine_intent(
         "branch_namespace": intent.branch.split("/", 1)[0],
         "idempotency_key": intent.idempotency_key,
         "staged_change_digest": intent.staged_change_digest,
+        "verifier_trust": verifier_trust,
     }
 
 

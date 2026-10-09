@@ -989,6 +989,68 @@ class SnapshotReaderCompositionTests(unittest.TestCase):
             self.assertIs(call["allow_redirects"], False)
             self.assertEqual(call["headers"], EXPECTED_HEADERS)
 
+    def test_contents_reader_binds_raw_commit_object_before_tree_reads(self):
+        import json
+
+        content = b"print('synthetic snapshot')\n"
+        files = [("src.py", content, "100644")]
+        initial_routes = reader_fixture_routes(files, commit_oid="0" * 40)
+        tree_url = next(
+            url for method, url in initial_routes
+            if method == "GET" and "/git/trees/" in url
+        )
+        tree_oid = json.loads(initial_routes[("GET", tree_url)][1])["sha"]
+        raw_commit = (
+            b"tree " + tree_oid.encode("ascii")
+            + b"\nauthor Fixture <fixture@example.invalid> 1 +0000"
+            + b"\ncommitter Fixture <fixture@example.invalid> 1 +0000"
+            + b"\n\nsynthetic commit\n"
+        )
+        commit_oid = hashlib.sha1(
+            b"commit " + str(len(raw_commit)).encode("ascii") + b"\0" + raw_commit
+        ).hexdigest()
+        transport = FakeTransport(
+            reader_fixture_routes(files, commit_oid=commit_oid, tree_oid=tree_oid)
+        )
+        request = GitHubSnapshotRequest(
+            owner=VALID_OWNER,
+            repository=VALID_REPOSITORY,
+            commit_oid=commit_oid,
+        )
+        source_calls = []
+
+        snapshot = read_github_snapshot_contents(
+            request,
+            transport,
+            commit_object_source=lambda claim: source_calls.append(claim) or raw_commit,
+        )
+
+        self.assertEqual(len(source_calls), 1)
+        self.assertEqual(snapshot.verified_commit_object.commit_oid, commit_oid)
+        self.assertEqual(snapshot.verified_commit_object.tree_oid, tree_oid)
+        self.assertEqual(len(transport.calls), 3)
+        self.assertNotIn("synthetic commit", repr(snapshot))
+
+    def test_invalid_raw_commit_object_stops_before_tree_and_blob_reads(self):
+        content = b"print('synthetic snapshot')\n"
+        transport = FakeTransport(reader_fixture_routes([("src.py", content, "100644")]))
+        request = GitHubSnapshotRequest(
+            owner=VALID_OWNER,
+            repository=VALID_REPOSITORY,
+            commit_oid=READER_COMMIT_OID,
+        )
+
+        with self.assertRaisesRegex(
+            GitHubSnapshotError, "^github snapshot: commit object is invalid$"
+        ):
+            read_github_snapshot_contents(
+                request,
+                transport,
+                commit_object_source=lambda _claim: b"invalid commit bytes",
+            )
+
+        self.assertEqual(len(transport.calls), 1)
+
     def test_selected_paths_only_request_matching_blobs_and_remain_partial(self):
         secret_canary = b"SYNTHETIC-ENV-CANARY"
         files = [

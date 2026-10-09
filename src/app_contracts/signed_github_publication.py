@@ -16,6 +16,10 @@ import sys
 from typing import Any, Callable, Mapping
 
 from .authority import DeterministicPolicy
+from .authority_key_set import (
+    AuthorityKeySetError,
+    load_control_plane_authority_key_set,
+)
 from .controlled_publication import run_controlled_local_publication
 from .digests import sha256_bytes, sha256_digest
 from .durable_stage import StagedArtifact
@@ -60,6 +64,7 @@ def _load_approval(
     trust_profile_path: str | Path,
     *,
     now: datetime,
+    trusted_verifier_authority_keys: object | None = None,
 ) -> VerifiedSignedApproval:
     try:
         verified = load_verified_signed_approval(
@@ -68,6 +73,7 @@ def _load_approval(
             request_path,
             signed_approval_path,
             trust_profile_path,
+            trusted_verifier_authority_keys=trusted_verifier_authority_keys,
             now=now,
         )
     except SignedApprovalError:
@@ -151,6 +157,7 @@ def publish_signed_stage_github(
     *,
     now: datetime | None = None,
     environ: Mapping[str, str] | None = None,
+    trusted_verifier_authority_keys: object | None = None,
 ) -> dict[str, Any]:
     """Publish one exact signed stage after a fresh digest-bound terminal phrase.
 
@@ -176,6 +183,7 @@ def publish_signed_stage_github(
         signed_approval_path,
         trust_profile_path,
         now=moment,
+        trusted_verifier_authority_keys=trusted_verifier_authority_keys,
     )
     seed, intent, staged_change, verified_files = _validated_inputs(
         verified, staged_change_digest
@@ -318,6 +326,7 @@ def _load_preview(
     trust_profile_path: str | Path,
     *,
     now: datetime,
+    trusted_verifier_authority_keys: object | None = None,
 ) -> tuple[VerifiedSignedApproval, str]:
     verified = _load_approval(
         database_path,
@@ -326,6 +335,7 @@ def _load_preview(
         signed_approval_path,
         trust_profile_path,
         now=now,
+        trusted_verifier_authority_keys=trusted_verifier_authority_keys,
     )
     _validated_inputs(verified, staged_change_digest)
     return verified, render_stage_preview(verified.artifact)
@@ -354,9 +364,38 @@ def main(
     parser.add_argument("signed_approval")
     parser.add_argument("trust_profile")
     parser.add_argument("journal", help="new absolute persistent SQLite publication journal")
+    parser.add_argument(
+        "--verifier-authority-key-set",
+        help="caller-pinned public verifier authority key set JSON",
+    )
+    parser.add_argument(
+        "--verifier-authority-key-set-digest",
+        help="out-of-band pinned sha256 digest for the verifier authority key set",
+    )
     args = parser.parse_args(argv)
     moment = datetime.now(timezone.utc) if now is None else now
     try:
+        key_set_inputs = (
+            args.verifier_authority_key_set,
+            args.verifier_authority_key_set_digest,
+        )
+        if any(value is None for value in key_set_inputs) and not all(
+            value is None for value in key_set_inputs
+        ):
+            raise SignedGitHubPublicationError(
+                "signed GitHub publication: verifier authority key set unavailable"
+            )
+        verifier_authority_keys = trusted_verifier_authority_keys
+        if args.verifier_authority_key_set is not None:
+            loaded_keys, _key_set_digest = load_control_plane_authority_key_set(
+                args.verifier_authority_key_set,
+                expected_digest=args.verifier_authority_key_set_digest,
+            )
+            if verifier_authority_keys is not None:
+                raise SignedGitHubPublicationError(
+                    "signed GitHub publication: verifier authority key source is ambiguous"
+                )
+            verifier_authority_keys = loaded_keys
         verified, preview = _load_preview(
             args.database,
             args.staged_change_digest,
@@ -364,6 +403,7 @@ def main(
             args.signed_approval,
             args.trust_profile,
             now=moment,
+            trusted_verifier_authority_keys=verifier_authority_keys,
         )
         request_intent = verified.request["intent"]
         output.write(
@@ -399,8 +439,9 @@ def main(
             confirmation,
             now=moment,
             environ=environ,
+            trusted_verifier_authority_keys=verifier_authority_keys,
         )
-    except (SignedGitHubPublicationError, KeyboardInterrupt, EOFError):
+    except (SignedGitHubPublicationError, AuthorityKeySetError, KeyboardInterrupt, EOFError):
         errors.write(
             "signed GitHub publication: cancelled or safely refused\n"
         )

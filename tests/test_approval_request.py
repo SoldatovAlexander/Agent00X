@@ -22,6 +22,7 @@ from app_contracts.approval_request import (
     build_approval_request,
     main,
     repository_target_binding_from_metadata,
+    _requires_verified_verifier_provenance,
 )
 from app_contracts.approval_signature import APPROVAL_SIGNED_FIELDS, approval_signature_payload
 from app_contracts.authority import DeterministicPolicy, PolicyConfig
@@ -40,7 +41,11 @@ from app_contracts.publication_seed import (
 from app_contracts.validator import ContractValidationError
 from app_contracts.repository_binding import RepositoryTargetBinding
 from app_contracts import worker_cli
-from test_durable_stage import get_verified_artifact
+from test_durable_stage import (
+    as_unverified_local_approval_fixture,
+    add_synthetic_verifier_trust_digests,
+    get_verified_artifact,
+)
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -56,7 +61,9 @@ METADATA = {
 class ApprovalRequestTests(unittest.TestCase):
     def setUp(self):
         request, prepared, result, _ = get_verified_artifact()
-        self.artifact = build_staged_artifact(request, prepared, result)
+        self.artifact = as_unverified_local_approval_fixture(
+            build_staged_artifact(request, prepared, result)
+        )
         self.binding = RepositoryTargetBinding(
             "FixtureOwner/stage-fixture",
             "github-installation/456/repository/1001",
@@ -73,6 +80,12 @@ class ApprovalRequestTests(unittest.TestCase):
             policy_version="production-policy-v1",
             now=NOW,
         )
+
+    def test_all_remote_snapshot_origins_require_verified_verifier_provenance(self):
+        self.assertTrue(_requires_verified_verifier_provenance("github_rest_api_claim"))
+        self.assertTrue(_requires_verified_verifier_provenance("github_codeload_archive"))
+        self.assertFalse(_requires_verified_verifier_provenance("local_git_commit"))
+        self.assertFalse(_requires_verified_verifier_provenance("unverified_local_test"))
 
     def test_request_is_unsigned_reviewable_deterministic_and_digest_bound(self):
         first = self.build()
@@ -108,7 +121,38 @@ class ApprovalRequestTests(unittest.TestCase):
             sha256_digest(first["intent"]),
         )
         self.assertEqual(first["review"]["change"]["patch"], self.artifact.payload_copy()["patch"])
+        self.assertEqual(first["intent"]["verifier_trust"]["status"], "not_recorded")
+        self.assertEqual(
+            first["review"]["verifier_trust"]["status"], "not_recorded"
+        )
         self.assertNotIn("credential", json.dumps(first).lower())
+
+    def test_trust_digests_are_visible_and_inside_signed_intent_digest(self):
+        artifact = add_synthetic_verifier_trust_digests(self.artifact)
+        request = build_approval_request(
+            artifact,
+            self.binding,
+            branch="agent/process-durable-stage-001",
+            base_branch="master",
+            approval_id="approval-stage-review-001",
+            approver_id="user-alice",
+            policy_version="production-policy-v1",
+            now=NOW,
+        )
+        trust = request["intent"]["verifier_trust"]
+        self.assertEqual(trust["status"], "recorded_digest_only_not_revalidated")
+        self.assertEqual(request["review"]["verifier_trust"], trust)
+        self.assertEqual(request["review"]["requested_action"]["verifier_trust"], trust)
+        self.assertEqual(
+            request["unsigned_approval"]["approved_intent_digest"],
+            sha256_digest(request["intent"]),
+        )
+        changed = dict(request["intent"])
+        changed["verifier_trust"] = dict(trust, host_trust_decision_digest="sha256:" + "e" * 64)
+        self.assertNotEqual(
+            request["unsigned_approval"]["approved_intent_digest"],
+            sha256_digest(changed),
+        )
 
     def test_mutating_signed_fields_or_source_intent_changes_signing_payload(self):
         original = self.build()
@@ -248,16 +292,9 @@ class ApprovalRequestTests(unittest.TestCase):
             stdout, stderr = io.StringIO(), io.StringIO()
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 code = main(args, environ=METADATA, now=NOW)
-            self.assertEqual(code, 0, stderr.getvalue())
-            approval_request = json.loads(stdout.getvalue())
-            self.assertEqual(stderr.getvalue(), "")
-            self.assertEqual(approval_request["status"], "unsigned")
-            self.assertEqual(approval_request["approval"], "not_created")
-            self.assertIs(approval_request["provider_write"], False)
-            self.assertEqual(
-                approval_request["stage"]["staged_change_digest"],
-                evidence["staged_change_digest"],
-            )
+            self.assertEqual(code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("verifier provenance trust is unavailable", stderr.getvalue())
             self.assertEqual(database.read_bytes(), original_bytes)
 
             failed_args = list(args)

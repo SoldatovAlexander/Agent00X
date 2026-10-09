@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -44,6 +45,7 @@ from app_contracts.github_snapshot import (
 from app_contracts.pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
 from app_contracts.remote_snapshot_workspace import materialize_github_snapshot
 from app_contracts.sandbox import LocalProcessSandboxBackend
+from app_contracts.verifier_attestation import MAX_ATTESTATION_BYTES
 
 
 def make_snapshot() -> GitHubSnapshotContents:
@@ -156,6 +158,41 @@ def get_verified_artifact(
         return request, captured["prepared"], result, getattr(sandbox_backend, "closed", None)
 
 
+def add_synthetic_verifier_trust_digests(artifact: StagedArtifact) -> StagedArtifact:
+    """Rebind a fixture stage to digest-only trust metadata for review tests."""
+    payload = artifact.payload_copy()
+    payload["seed"].update(
+        {
+            "verifier_attestation_digest": "sha256:" + "a" * 64,
+            "verifier_attestation_key_id": "synthetic-verifier-key",
+            "verifier_attestation_profile_digest": "sha256:" + "b" * 64,
+            "verifier_trust_enrollment_digest": "sha256:" + "c" * 64,
+            "verifier_host_trust_decision_digest": "sha256:" + "d" * 64,
+        }
+    )
+    raw = canonical_json(payload)
+    return StagedArtifact(
+        staged_change_digest=artifact.staged_change_digest,
+        verified_contents_digest=artifact.verified_contents_digest,
+        artifact_digest=sha256_bytes(raw),
+        canonical_payload=raw.decode("utf-8"),
+    )
+
+
+def as_unverified_local_approval_fixture(artifact: StagedArtifact) -> StagedArtifact:
+    """Keep approval-unit fixtures explicitly outside remote-trust claims."""
+    payload = artifact.payload_copy()
+    payload["seed"]["snapshot_origin"] = "unverified_local_test"
+    payload["seed"]["snapshot_claim_digest"] = None
+    raw = canonical_json(payload)
+    return StagedArtifact(
+        staged_change_digest=artifact.staged_change_digest,
+        verified_contents_digest=artifact.verified_contents_digest,
+        artifact_digest=sha256_bytes(raw),
+        canonical_payload=raw.decode("utf-8"),
+    )
+
+
 class DurableStageTests(unittest.TestCase):
     def test_builds_canonical_bounded_artifact_from_verified_full_remote_run(self):
         request, prepared, result, _ = get_verified_artifact()
@@ -175,6 +212,37 @@ class DurableStageTests(unittest.TestCase):
         self.assertEqual(artifact.canonical_payload.encode("utf-8"), canonical_json(payload))
         self.assertNotIn("clean synthetic stage", repr(artifact))
         self.assertNotIn("clean synthetic stage", str(DurableStageError("safe failure")))
+
+    def test_persisted_verifier_evidence_rejects_duplicate_and_oversized_records(self):
+        request, prepared, result, _ = get_verified_artifact()
+        artifact = add_synthetic_verifier_trust_digests(
+            build_staged_artifact(request, prepared, result)
+        )
+        duplicate_record = base64.b64encode(
+            b'{"key_id":"first","key_id":"second"}'
+        ).decode("ascii")
+        oversized_record = "A" * (((MAX_ATTESTATION_BYTES + 2) // 3) * 4 + 1)
+        for encoded in (duplicate_record, oversized_record, "%%%not-base64%%%"):
+            with self.subTest(encoded_length=len(encoded)):
+                payload = artifact.payload_copy()
+                payload["verifier_trust_evidence"] = {
+                    "schema": "persisted-verifier-trust-evidence/v1",
+                    "request_digest": "sha256:" + "1" * 64,
+                    "signed_response_base64": encoded,
+                    "trust_enrollment_base64": None,
+                    "host_trust_decision_base64": None,
+                }
+                raw = canonical_json(payload)
+                with self.assertRaisesRegex(
+                    DurableStageError,
+                    "^durable stage: verifier evidence is invalid$",
+                ):
+                    StagedArtifact(
+                        staged_change_digest=artifact.staged_change_digest,
+                        verified_contents_digest=artifact.verified_contents_digest,
+                        artifact_digest=sha256_bytes(raw),
+                        canonical_payload=raw.decode("utf-8"),
+                    )
 
     def test_rejects_unverified_or_mismatched_execution(self):
         request, prepared, result, _ = get_verified_artifact()

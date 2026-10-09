@@ -6,6 +6,7 @@ database, network, credential, approval, or publication operations.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict, dataclass
 import difflib
 import hashlib
@@ -26,6 +27,15 @@ from .executor import (
     ExecutionStatus,
 )
 from .publication_seed import PublicationSeed, build_publication_seed
+from .verifier_attestation import MAX_ATTESTATION_BYTES
+from .verifier_process import (
+    MAX_VERIFIER_REQUEST_BYTES,
+    parse_verifier_request,
+    serialize_verifier_request,
+    verifier_snapshot_tree_digest,
+)
+from .verifier_host_trust_decision import MAX_DECISION_BYTES
+from .verifier_trust_enrollment import MAX_ENROLLMENT_BYTES
 from .pinned_snapshot import MAX_SNAPSHOT_FILE_BYTES
 from .repository_process import PreparedChange
 from .secret_scan import CredentialLeakDetected, assert_no_credential_pattern_content
@@ -180,6 +190,9 @@ def build_staged_artifact(
                 for path, content in prepared.verified_contents
             ],
         }
+        verifier_evidence = _build_verifier_trust_evidence(result, seed, request)
+        if verifier_evidence is not None:
+            payload["verifier_trust_evidence"] = verifier_evidence
         canonical = canonical_json(payload)
         if len(canonical) > MAX_STAGED_ARTIFACT_BYTES:
             raise DurableStageError("durable stage: artifact exceeds size limit")
@@ -213,7 +226,7 @@ def _validate_canonical_artifact(artifact: StagedArtifact) -> None:
         payload = json.loads(artifact.canonical_payload)
         if type(payload) is not dict or canonical_json(payload) != raw:
             raise ValueError
-        if set(payload) != {
+        base_payload_fields = {
             "schema_version",
             "canonicalization",
             "seed",
@@ -225,6 +238,10 @@ def _validate_canonical_artifact(artifact: StagedArtifact) -> None:
             "verifier_result",
             "base_contents",
             "verified_contents",
+        }
+        if frozenset(payload) not in {
+            frozenset(base_payload_fields),
+            frozenset(base_payload_fields | {"verifier_trust_evidence"}),
         }:
             raise ValueError
         if (
@@ -294,6 +311,13 @@ def _validate_canonical_artifact(artifact: StagedArtifact) -> None:
             or verifier_result.get("evidence_origin") != "local_test"
         ):
             raise ValueError
+
+        _validate_verifier_trust_evidence(
+            payload.get("verifier_trust_evidence"),
+            seed,
+            verifier_result,
+            payload,
+        )
 
         base_records = payload["base_contents"]
         records = payload["verified_contents"]
@@ -388,6 +412,340 @@ def _validate_canonical_artifact(artifact: StagedArtifact) -> None:
         raise DurableStageError("durable stage: credential-shaped content detected") from None
     except Exception:
         raise DurableStageError("durable stage: artifact is invalid") from None
+
+
+def _build_verifier_trust_evidence(
+    result: ExecutionResult, seed: PublicationSeed, request: ExecutionRequest
+) -> dict[str, object] | None:
+    response = result.verifier_attestation_bytes
+    enrollment = result.verifier_trust_enrollment_bytes
+    decision = result.verifier_host_trust_decision_bytes
+    request_digest = result.verifier_request_digest
+    verifier_request = result.verifier_request_bytes
+    if all(value is None for value in (response, enrollment, decision, request_digest)):
+        if any((
+            seed.verifier_attestation_digest,
+            seed.verifier_trust_enrollment_digest,
+            seed.verifier_host_trust_decision_digest,
+        )):
+            raise DurableStageError("durable stage: verifier evidence is unavailable")
+        return None
+    if (
+        type(response) is not bytes
+        or len(response) > MAX_ATTESTATION_BYTES
+        or type(request_digest) is not str
+        or _DIGEST_PATTERN.fullmatch(request_digest) is None
+        or (enrollment is not None and type(enrollment) is not bytes)
+        or (decision is not None and type(decision) is not bytes)
+        or (verifier_request is not None and type(verifier_request) is not bytes)
+    ):
+        raise DurableStageError("durable stage: verifier evidence is invalid")
+    if (
+        (enrollment is None) != (seed.verifier_trust_enrollment_digest is None)
+        or (decision is None) != (seed.verifier_host_trust_decision_digest is None)
+        or (decision is not None and enrollment is None)
+    ):
+        raise DurableStageError("durable stage: verifier evidence is incomplete")
+    try:
+        envelope = _parse_canonical_public_record(response, MAX_ATTESTATION_BYTES)
+        if (
+            sha256_bytes(response) != seed.verifier_attestation_digest
+            or envelope.get("key_id") != seed.verifier_attestation_key_id
+            or envelope.get("verifier_profile_digest")
+            != seed.verifier_attestation_profile_digest
+            or envelope.get("request_digest") != request_digest
+        ):
+            raise ValueError
+        if enrollment is not None:
+            enrollment_record = _parse_canonical_public_record(
+                enrollment, MAX_ENROLLMENT_BYTES
+            )
+            if (
+                sha256_bytes(enrollment) != seed.verifier_trust_enrollment_digest
+                or enrollment_record.get("verifier_key_id")
+                != seed.verifier_attestation_key_id
+                or enrollment_record.get("verifier_profile_digest")
+                != seed.verifier_attestation_profile_digest
+            ):
+                raise ValueError
+        if decision is not None:
+            decision_record = _parse_canonical_public_record(
+                decision, MAX_DECISION_BYTES
+            )
+            if (
+                sha256_bytes(decision) != seed.verifier_host_trust_decision_digest
+                or decision_record.get("enrollment_digest")
+                != seed.verifier_trust_enrollment_digest
+                or any(
+                    decision_record.get(field) != enrollment_record.get(field)
+                    for field in (
+                        "endpoint_url", "verifier_id", "verifier_profile_digest",
+                        "verifier_key_id", "worker_host_id", "verifier_host_id",
+                        "host_separation_evidence_digest",
+                    )
+                )
+            ):
+                raise ValueError
+        evidence = {
+            "schema": (
+                "persisted-verifier-trust-evidence/v2"
+                if verifier_request is not None else "persisted-verifier-trust-evidence/v1"
+            ),
+            "request_digest": request_digest,
+            "signed_response_base64": base64.b64encode(response).decode("ascii"),
+            "trust_enrollment_base64": (
+                base64.b64encode(enrollment).decode("ascii")
+                if enrollment is not None else None
+            ),
+            "host_trust_decision_base64": (
+                base64.b64encode(decision).decode("ascii")
+                if decision is not None else None
+            ),
+        }
+        if verifier_request is not None:
+            if (
+                len(verifier_request) > MAX_VERIFIER_REQUEST_BYTES
+                or sha256_bytes(verifier_request) != request_digest
+            ):
+                raise ValueError
+            evidence["verifier_request_base64"] = base64.b64encode(
+                verifier_request
+            ).decode("ascii")
+            evidence["request_context"] = {
+                "test_command": list(request.test_command),
+                "test_timeout_seconds": request.test_timeout_seconds,
+            }
+        return evidence
+    except DurableStageError:
+        raise
+    except Exception:
+        raise DurableStageError("durable stage: verifier evidence is invalid") from None
+
+
+def _validate_verifier_trust_evidence(
+    evidence: object,
+    seed: PublicationSeed,
+    verifier_result: object,
+    payload: dict[str, object],
+) -> None:
+    # Absence is valid for legacy stages. It is not evidence that the verifier
+    # signature or its authority provenance can be revalidated after reopen.
+    if evidence is None:
+        return
+    if (
+        type(evidence) is not dict
+        or set(evidence) not in ({
+            "schema", "request_digest", "signed_response_base64",
+            "trust_enrollment_base64", "host_trust_decision_base64",
+        }, {
+            "schema", "request_digest", "signed_response_base64",
+            "trust_enrollment_base64", "host_trust_decision_base64",
+            "verifier_request_base64", "request_context",
+        })
+        or evidence.get("schema") not in {
+            "persisted-verifier-trust-evidence/v1",
+            "persisted-verifier-trust-evidence/v2",
+        }
+        or type(evidence.get("request_digest")) is not str
+        or _DIGEST_PATTERN.fullmatch(evidence["request_digest"]) is None
+        or type(evidence.get("signed_response_base64")) is not str
+    ):
+        raise DurableStageError("durable stage: verifier evidence is invalid")
+    try:
+        response = _decode_evidence_bytes(
+            evidence["signed_response_base64"], MAX_ATTESTATION_BYTES
+        )
+        envelope = _parse_canonical_public_record(response, MAX_ATTESTATION_BYTES)
+        if (
+            sha256_bytes(response) != seed.verifier_attestation_digest
+            or envelope.get("request_digest") != evidence["request_digest"]
+            or envelope.get("key_id") != seed.verifier_attestation_key_id
+            or envelope.get("verifier_profile_digest")
+            != seed.verifier_attestation_profile_digest
+            or type(envelope.get("response")) is not dict
+            or envelope["response"].get("verifier_result") != verifier_result
+        ):
+            raise ValueError
+        has_request = "verifier_request_base64" in evidence
+        if has_request != (
+            evidence.get("schema") == "persisted-verifier-trust-evidence/v2"
+        ):
+            raise ValueError
+        if has_request:
+            request_bytes = _decode_evidence_bytes(
+                evidence["verifier_request_base64"], MAX_VERIFIER_REQUEST_BYTES
+            )
+            request = parse_verifier_request(request_bytes)
+            if serialize_verifier_request(request) != request_bytes:
+                raise ValueError
+            validate_verifier_request_binding(
+                request,
+                evidence.get("request_context"),
+                seed,
+                payload,
+                evidence["request_digest"],
+            )
+        enrollment_b64 = evidence["trust_enrollment_base64"]
+        decision_b64 = evidence["host_trust_decision_base64"]
+        if (enrollment_b64 is None) != (
+            seed.verifier_trust_enrollment_digest is None
+        ) or (decision_b64 is None) != (
+            seed.verifier_host_trust_decision_digest is None
+        ) or (decision_b64 is not None and enrollment_b64 is None):
+            raise ValueError
+        enrollment_record = None
+        if enrollment_b64 is not None:
+            if type(enrollment_b64) is not str:
+                raise ValueError
+            enrollment = _decode_evidence_bytes(enrollment_b64, MAX_ENROLLMENT_BYTES)
+            enrollment_record = _parse_canonical_public_record(
+                enrollment, MAX_ENROLLMENT_BYTES
+            )
+            if (
+                sha256_bytes(enrollment) != seed.verifier_trust_enrollment_digest
+                or enrollment_record.get("verifier_key_id")
+                != seed.verifier_attestation_key_id
+                or enrollment_record.get("verifier_profile_digest")
+                != seed.verifier_attestation_profile_digest
+            ):
+                raise ValueError
+        if decision_b64 is not None:
+            if type(decision_b64) is not str or enrollment_record is None:
+                raise ValueError
+            decision = _decode_evidence_bytes(decision_b64, MAX_DECISION_BYTES)
+            decision_record = _parse_canonical_public_record(
+                decision, MAX_DECISION_BYTES
+            )
+            if (
+                sha256_bytes(decision) != seed.verifier_host_trust_decision_digest
+                or decision_record.get("enrollment_digest")
+                != seed.verifier_trust_enrollment_digest
+                or any(
+                    decision_record.get(field) != enrollment_record.get(field)
+                    for field in (
+                        "endpoint_url", "verifier_id", "verifier_profile_digest",
+                        "verifier_key_id", "worker_host_id", "verifier_host_id",
+                        "host_separation_evidence_digest",
+                    )
+                )
+            ):
+                raise ValueError
+    except DurableStageError:
+        raise
+    except Exception:
+        raise DurableStageError("durable stage: verifier evidence is invalid") from None
+
+
+def validate_verifier_request_binding(
+    request: object,
+    request_context: object,
+    seed: PublicationSeed,
+    payload: dict[str, object],
+    request_digest: str,
+) -> None:
+    try:
+        verifier_input = request.verifier_input
+        staged = payload["staged_change"]
+        evidence_bundle = payload["evidence_bundle"]
+        verification_report = payload["verification_report"]
+        verifier_result = payload["verifier_result"]
+        expected_contents = tuple(
+            (item["path"], item["content"])
+            for item in payload["verified_contents"]
+        )
+        if (
+            type(request_context) is not dict
+            or set(request_context) != {"test_command", "test_timeout_seconds"}
+            or request_context["test_command"] != list(verifier_input.test_command)
+            or request_context["test_timeout_seconds"]
+            != verifier_input.test_timeout_seconds
+            or verifier_input.process_id != seed.process_id
+            or verifier_input.repository_id != seed.repository_id
+            or verifier_input.base_commit != seed.base_commit
+            or verifier_input.snapshot_tree_digest != seed.snapshot_tree_digest
+            or verifier_input.snapshot_claim_digest != seed.snapshot_claim_digest
+            or verifier_input.declared_change_paths
+            != tuple(payload["declared_change_paths"])
+            or verifier_input.verified_contents != expected_contents
+            or verifier_input.patch_digest != staged["patch_digest"]
+            or verifier_input.evidence_digest != staged["evidence_digest"]
+            or verifier_input.verification_digest != staged["verification_digest"]
+            or verifier_input.verified_contents_digest
+            != seed.verified_contents_digest
+            or verifier_input.replay_result_digest != seed.replay_result_digest
+            or verifier_input.evidence_origin != "local_test"
+            or request_digest != sha256_bytes(serialize_verifier_request(request))
+            or verifier_input.patch_digest != sha256_bytes(payload["patch"].encode("utf-8"))
+            or verifier_input.evidence_digest != sha256_digest(evidence_bundle)
+            or verifier_input.verification_digest != sha256_digest(verification_report)
+            or verifier_input.verified_contents_digest
+            != sha256_digest(tuple((entry["path"], entry["content"]) for entry in payload["verified_contents"]))
+            or verifier_result.get("process_id") != verifier_input.process_id
+            or verifier_result.get("base_commit") != verifier_input.base_commit
+            or verifier_result.get("snapshot_tree_digest")
+            != verifier_input.snapshot_tree_digest
+            or verifier_result.get("replay_result_digest")
+            != verifier_input.replay_result_digest
+            or verifier_result.get("patch_digest") != verifier_input.patch_digest
+            or verifier_result.get("evidence_digest") != verifier_input.evidence_digest
+            or verifier_result.get("verification_digest")
+            != verifier_input.verification_digest
+            or verifier_result.get("verified_contents_digest")
+            != verifier_input.verified_contents_digest
+        ):
+            raise ValueError
+        if verifier_input.snapshot_tree_digest is None:
+            if verifier_input.snapshot_files:
+                raise ValueError
+        elif verifier_snapshot_tree_digest(
+            verifier_input.snapshot_files
+        ) != verifier_input.snapshot_tree_digest:
+            raise ValueError
+        assert_no_credential_pattern_content(
+            tuple(
+                (path, content)
+                for path, _mode, content in verifier_input.snapshot_files
+            )
+        )
+    except Exception:
+        raise DurableStageError("durable stage: verifier evidence is invalid") from None
+
+
+def _decode_evidence_bytes(value: str, limit: int) -> bytes:
+    try:
+        if type(value) is not str or len(value) > ((limit + 2) // 3) * 4:
+            raise ValueError
+        raw = base64.b64decode(value, validate=True)
+        if not raw or len(raw) > limit:
+            raise ValueError
+        return raw
+    except Exception:
+        raise DurableStageError("durable stage: verifier evidence is invalid") from None
+
+
+def _parse_canonical_public_record(raw: bytes, limit: int) -> dict:
+    try:
+        if type(raw) is not bytes or not raw or len(raw) > limit:
+            raise ValueError
+        record = json.loads(
+            raw.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+        if type(record) is not dict or canonical_json(record) != raw:
+            raise ValueError
+        return record
+    except Exception:
+        raise DurableStageError("durable stage: verifier evidence is invalid") from None
+
+
+def _reject_duplicate_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError
+        result[key] = value
+    return result
 
 
 def _safe_relative_path(value: str) -> str:

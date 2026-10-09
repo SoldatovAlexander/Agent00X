@@ -23,7 +23,7 @@ from app_contracts.signed_github_publication import (
     SignedGitHubPublicationError,
     publish_signed_stage_github,
 )
-from test_durable_stage import get_verified_artifact
+from test_durable_stage import as_unverified_local_approval_fixture, get_verified_artifact
 import app_contracts.signed_github_publication as publisher
 import app_contracts.github_app as github_app
 
@@ -48,7 +48,9 @@ class FakeMinter:
 class SignedGitHubPublicationTests(unittest.TestCase):
     def setUp(self):
         request, prepared, result, _ = get_verified_artifact()
-        artifact = build_staged_artifact(request, prepared, result)
+        artifact = as_unverified_local_approval_fixture(
+            build_staged_artifact(request, prepared, result)
+        )
         self.temporary = tempfile.TemporaryDirectory(prefix="signed-github-publication-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)

@@ -1,8 +1,8 @@
 """Lease-owned local materialization for bounded GitHub snapshot claims.
 
-Materialization does not authenticate the GitHub REST claim or attest the
-source repository. The temporary tree exists only to hand those exact bytes to
-the local executor.
+Materialization does not authenticate a GitHub claim or attest the source
+repository. The temporary tree exists only to hand those exact bytes to the
+local executor.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _OWNER_TOKEN = object()
 
 
 class MaterializedGitHubSnapshot:
-    """Explicit lease for one read-only tree materialized from a REST claim."""
+    """Explicit lease for one read-only materialized remote snapshot."""
 
     def __init__(
         self,
@@ -77,7 +77,7 @@ class MaterializedGitHubSnapshot:
 
     def __repr__(self) -> str:
         return (
-            "MaterializedGitHubSnapshot(evidence_origin='github_rest_api_claim', "
+            f"MaterializedGitHubSnapshot(evidence_origin='{self._snapshot.claim.evidence_origin}', "
             f"closed={self._closed})"
         )
 
@@ -166,7 +166,11 @@ def _copy_and_validate_snapshot(snapshot: GitHubSnapshotContents) -> GitHubSnaps
         )
         if len(files) != len(snapshot.files):
             raise ValueError()
-        return GitHubSnapshotContents(claim=claim, files=files)
+        return GitHubSnapshotContents(
+            claim=claim,
+            files=files,
+            verified_commit_object=snapshot.verified_commit_object,
+        )
     except Exception:
         raise RemoteSnapshotWorkspaceError(
             "remote snapshot workspace: input is invalid"

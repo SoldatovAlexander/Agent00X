@@ -749,6 +749,8 @@ class RepositoryProcessTests(unittest.TestCase):
             "malformed-no-write",
             "overflow-status",
             "overflow-no-write",
+            "sqlite-range-status",
+            "sqlite-range-no-write",
             "valid-status",
             "valid-body",
             "valid-row",

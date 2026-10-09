@@ -16,6 +16,16 @@ from .approval_request import (
     ApprovalRequestError,
     build_approval_request,
 )
+from .authority_key_set import (
+    AuthorityKeySetError,
+    load_control_plane_authority_key_set,
+)
+from .approver_trust_enrollment import (
+    MAX_ENROLLMENT_BYTES as MAX_APPROVER_ENROLLMENT_BYTES,
+    ApproverTrustEnrollmentError,
+    VerifiedApproverTrustEnrollment,
+    verify_approver_trust_enrollment,
+)
 from .authority import DeterministicPolicy, PolicyConfig
 from .digests import sha256_digest
 from .durable_stage import (
@@ -45,8 +55,9 @@ class SignedApprovalError(ValueError):
 class VerifiedSignedApproval:
     """One parsed and stage-bound approval plus its deterministic policy result.
 
-    The trust profile is still operator-supplied and unauthenticated. This
-    internal value grants no provider capability and performs no effects.
+    The legacy trust profile may be operator-supplied and unauthenticated. An
+    optional authority-signed approver enrollment binds its digest, but still
+    does not authenticate the human. This value grants no provider capability.
     """
 
     result: dict[str, Any]
@@ -55,6 +66,7 @@ class VerifiedSignedApproval:
     approval: dict[str, Any]
     binding: RepositoryTargetBinding
     policy_config: PolicyConfig
+    approver_enrollment: VerifiedApproverTrustEnrollment | None = None
 
 
 def verify_signed_approval(
@@ -64,6 +76,9 @@ def verify_signed_approval(
     signed_approval_path: str | Path,
     trust_profile_path: str | Path,
     *,
+    approver_enrollment_path: str | Path | None = None,
+    trusted_authority_keys: object | None = None,
+    trusted_verifier_authority_keys: object | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Verify a signed EXP-552 request through policy without downstream effects."""
@@ -73,6 +88,9 @@ def verify_signed_approval(
         request_path,
         signed_approval_path,
         trust_profile_path,
+        approver_enrollment_path=approver_enrollment_path,
+        trusted_authority_keys=trusted_authority_keys,
+        trusted_verifier_authority_keys=trusted_verifier_authority_keys,
         now=now,
     ).result
 
@@ -84,6 +102,9 @@ def load_verified_signed_approval(
     signed_approval_path: str | Path,
     trust_profile_path: str | Path,
     *,
+    approver_enrollment_path: str | Path | None = None,
+    trusted_authority_keys: object | None = None,
+    trusted_verifier_authority_keys: object | None = None,
     now: datetime | None = None,
 ) -> VerifiedSignedApproval:
     """Load one exact verified signature result for a local Control Plane use.
@@ -95,6 +116,8 @@ def load_verified_signed_approval(
     moment = _validate_clock(datetime.now(timezone.utc) if now is None else now)
     request = _read_json(request_path, MAX_SIGNED_APPROVAL_INPUT_BYTES)
     signed_envelope = _read_json(signed_approval_path, MAX_SIGNED_APPROVAL_INPUT_BYTES)
+    if (approver_enrollment_path is None) != (trusted_authority_keys is None):
+        raise SignedApprovalError("signed approval: enrollment trust is unavailable")
     profile = _read_json(trust_profile_path, MAX_TRUST_PROFILE_BYTES)
     binding, policy_config, profile_digest = _parse_trust_profile(profile)
     if (
@@ -108,9 +131,42 @@ def load_verified_signed_approval(
             artifact = store.load(staged_change_digest)
         if type(artifact) is not StagedArtifact:
             raise SignedApprovalError("signed approval: stage is invalid")
-        expected_request = _rebuild_request(artifact, binding, request)
+        expected_request = _rebuild_request(
+            artifact,
+            binding,
+            request,
+            trusted_verifier_authority_keys=trusted_verifier_authority_keys,
+        )
         if _canonical_json(request) != _canonical_json(expected_request):
             raise SignedApprovalError("signed approval: request does not match stage")
+        enrollment = None
+        if approver_enrollment_path is not None:
+            try:
+                enrollment = verify_approver_trust_enrollment(
+                    _read_bytes(
+                        approver_enrollment_path, MAX_APPROVER_ENROLLMENT_BYTES
+                    ),
+                    trusted_authority_keys=trusted_authority_keys,
+                    expected_approver_id=(
+                        expected_request["unsigned_approval"]["approver_id"]
+                    ),
+                    expected_trust_profile_digest=profile_digest,
+                    expected_provider_repository_id=binding.provider_repository_id,
+                    now=moment,
+                )
+                if (
+                    enrollment.approver_id
+                    not in policy_config.allowed_approver_ids
+                    or policy_config.trusted_approver_public_keys.get(
+                        enrollment.approver_id
+                    )
+                    != enrollment.approver_public_key
+                ):
+                    raise ValueError
+            except Exception:
+                raise SignedApprovalError(
+                    "signed approval: enrollment verification failed"
+                ) from None
         approval = _parse_signed_envelope(signed_envelope, expected_request)
         intent = expected_request["intent"]
         payload = artifact.payload_copy()
@@ -141,10 +197,28 @@ def load_verified_signed_approval(
             "intent_digest": sha256_digest(intent),
             "policy_version": policy_config.version,
             "trust_profile_digest": profile_digest,
-            "trust_profile_origin": "operator_supplied_unverified",
+            "trust_profile_origin": (
+                "authority_enrolled_approver_key"
+                if enrollment is not None
+                else "operator_supplied_unverified"
+            ),
             "identity_authenticated": False,
             "provider_write": False,
+            "verifier_trust": intent.get("verifier_trust"),
         }
+        if enrollment is not None:
+            result["approver_enrollment"] = {
+                "enrollment_id": enrollment.enrollment_id,
+                "enrollment_digest": enrollment.enrollment_digest,
+                "authority_key_id": enrollment.authority_key_id,
+                "authority_key_digest": "sha256:"
+                + hashlib.sha256(
+                    trusted_authority_keys[enrollment.authority_key_id]
+                ).hexdigest(),
+                "approver_id": enrollment.approver_id,
+                "authority_signature_valid": True,
+                "human_identity_authenticated": False,
+            }
         return VerifiedSignedApproval(
             result=result,
             artifact=artifact,
@@ -152,10 +226,11 @@ def load_verified_signed_approval(
             approval=approval,
             binding=binding,
             policy_config=policy_config,
+            approver_enrollment=enrollment,
         )
     except SignedApprovalError:
         raise
-    except (ApprovalRequestError, DurableStageStoreError):
+    except (ApprovalRequestError, ApproverTrustEnrollmentError, DurableStageStoreError):
         raise SignedApprovalError("signed approval: input verification failed") from None
     except Exception:
         raise SignedApprovalError("signed approval: input verification failed") from None
@@ -165,6 +240,8 @@ def _rebuild_request(
     artifact: StagedArtifact,
     binding: RepositoryTargetBinding,
     request: object,
+    *,
+    trusted_verifier_authority_keys: object | None = None,
 ) -> dict:
     if (
         type(request) is not dict
@@ -211,6 +288,7 @@ def _rebuild_request(
             approver_id=unsigned["approver_id"],
             policy_version=unsigned["policy_version"],
             now=approved_at,
+            trusted_verifier_authority_keys=trusted_verifier_authority_keys,
         )
     except Exception:
         raise SignedApprovalError("signed approval: request is invalid") from None
@@ -321,6 +399,21 @@ def _read_json(path: str | Path, limit: int) -> object:
         raise SignedApprovalError("signed approval: input JSON is invalid") from None
 
 
+def _read_bytes(path: str | Path, limit: int) -> bytes:
+    file_path = _existing_file(path, "signed approval: input file is unavailable")
+    try:
+        if file_path.stat().st_size > limit:
+            raise SignedApprovalError("signed approval: input exceeds limit")
+        raw = file_path.read_bytes()
+        if len(raw) > limit:
+            raise SignedApprovalError("signed approval: input exceeds limit")
+        return raw
+    except SignedApprovalError:
+        raise
+    except Exception:
+        raise SignedApprovalError("signed approval: input file is unavailable") from None
+
+
 def _existing_file(path: str | Path, error: str) -> Path:
     try:
         candidate = Path(path)
@@ -355,7 +448,13 @@ def _canonical_json(value: object) -> bytes:
         raise SignedApprovalError("signed approval: input JSON is invalid") from None
 
 
-def main(argv: list[str] | None = None, *, now: datetime | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    now: datetime | None = None,
+    trusted_authority_keys: object | None = None,
+    trusted_verifier_authority_keys: object | None = None,
+) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -366,17 +465,54 @@ def main(argv: list[str] | None = None, *, now: datetime | None = None) -> int:
     parser.add_argument("request", help="EXP-552 approval-request/v1 JSON")
     parser.add_argument("signed_approval", help="signed-approval/v1 JSON")
     parser.add_argument("trust_profile", help="operator-supplied public-key/policy JSON")
+    parser.add_argument(
+        "--approver-enrollment",
+        help="optional authority-signed approver-key enrollment JSON",
+    )
+    parser.add_argument(
+        "--verifier-authority-key-set",
+        help="caller-pinned public verifier authority key set JSON",
+    )
+    parser.add_argument(
+        "--verifier-authority-key-set-digest",
+        help="out-of-band pinned sha256 digest for the verifier authority key set",
+    )
     args = parser.parse_args(argv)
     try:
+        verifier_key_set_inputs = (
+            args.verifier_authority_key_set,
+            args.verifier_authority_key_set_digest,
+        )
+        if any(value is None for value in verifier_key_set_inputs) and not all(
+            value is None for value in verifier_key_set_inputs
+        ):
+            raise SignedApprovalError(
+                "signed approval: verifier authority key set is unavailable"
+            )
+        if args.verifier_authority_key_set is not None:
+            loaded_verifier_keys, _verifier_key_set_digest = (
+                load_control_plane_authority_key_set(
+                    args.verifier_authority_key_set,
+                    expected_digest=args.verifier_authority_key_set_digest,
+                )
+            )
+            if trusted_verifier_authority_keys is not None:
+                raise SignedApprovalError(
+                    "signed approval: verifier authority key source is ambiguous"
+                )
+            trusted_verifier_authority_keys = loaded_verifier_keys
         result = verify_signed_approval(
             args.database,
             args.staged_change_digest,
             args.request,
             args.signed_approval,
             args.trust_profile,
+            approver_enrollment_path=args.approver_enrollment,
+            trusted_authority_keys=trusted_authority_keys,
+            trusted_verifier_authority_keys=trusted_verifier_authority_keys,
             now=now,
         )
-    except SignedApprovalError as exc:
+    except (SignedApprovalError, AuthorityKeySetError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")))

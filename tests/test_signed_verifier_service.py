@@ -27,6 +27,10 @@ from app_contracts.signed_verifier_service import (
     create_brainbooster_verifier_runner,
     run_signed_verifier_request,
 )
+from app_contracts.signer_key_source import (
+    Ed25519SeedCredentialSource,
+    SignerKeySourceError,
+)
 from app_contracts.brainbooster_target_profile import (
     PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
 )
@@ -108,7 +112,111 @@ class SpyVerifier:
         )
 
 
+class SyntheticCredentialSource:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __call__(self) -> str:
+        self.calls += 1
+        return self.value
+
+
 class SignedVerifierServiceTests(unittest.TestCase):
+    def test_seed_source_is_resolved_once_only_after_valid_verifier_result(self):
+        fixed_profile = profile()
+        prepared = prepared_input()
+        request_bytes = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(prepared)
+        )
+        seed = bytes(range(32)).hex()
+        source = SyntheticCredentialSource(seed)
+        signer = Ed25519SeedCredentialSource(source)
+        self.assertNotIn(seed, repr(signer))
+
+        issued_at = datetime.now(timezone.utc)
+        envelope_bytes = run_signed_verifier_request(
+            request_bytes,
+            invocation_nonce=NONCE,
+            profile=fixed_profile,
+            verifier=SpyVerifier(),
+            signing_key=signer,
+            issued_at=issued_at,
+        )
+        signing_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed))
+        public_key = signing_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        attestation = verify_signed_verifier_response(
+            envelope_bytes,
+            prepared,
+            expected_invocation_nonce=NONCE,
+            expected_verifier_profile_digest=fixed_profile.profile_digest,
+            trusted_public_keys={KEY_ID: public_key},
+            now=issued_at,
+        )
+
+        self.assertEqual(source.calls, 1)
+        self.assertTrue(attestation.signature_valid)
+
+    def test_seed_source_is_not_called_for_rejected_request_or_verifier_identity(self):
+        source = SyntheticCredentialSource(bytes(range(32)).hex())
+        signer = Ed25519SeedCredentialSource(source)
+        prepared = replace(prepared_input(), repository_id="other/repository")
+        request_bytes = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(prepared)
+        )
+        with self.assertRaises(SignedVerifierServiceError):
+            run_signed_verifier_request(
+                request_bytes,
+                invocation_nonce=NONCE,
+                profile=profile(),
+                verifier=SpyVerifier(),
+                signing_key=signer,
+                issued_at=datetime.now(timezone.utc),
+            )
+        self.assertEqual(source.calls, 0)
+
+        prepared = prepared_input()
+        request_bytes = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(prepared)
+        )
+        with self.assertRaises(SignedVerifierServiceError):
+            run_signed_verifier_request(
+                request_bytes,
+                invocation_nonce=NONCE,
+                profile=profile(),
+                verifier=SpyVerifier(verifier_id="untrusted-runtime"),
+                signing_key=signer,
+                issued_at=datetime.now(timezone.utc),
+            )
+        self.assertEqual(source.calls, 0)
+
+    def test_seed_source_malformed_value_is_sanitized_and_not_cached(self):
+        secret_like_value = "not-a-valid-seed-" + "x" * 64
+        source = SyntheticCredentialSource(secret_like_value)
+        signer = Ed25519SeedCredentialSource(source)
+        prepared = prepared_input()
+        request_bytes = serialize_verifier_request(
+            VerifierProcessRequest.from_verifier_input(prepared)
+        )
+        with self.assertRaises(SignedVerifierServiceError) as raised:
+            run_signed_verifier_request(
+                request_bytes,
+                invocation_nonce=NONCE,
+                profile=profile(),
+                verifier=SpyVerifier(),
+                signing_key=signer,
+                issued_at=datetime.now(timezone.utc),
+            )
+        self.assertNotIn(secret_like_value, str(raised.exception))
+        self.assertEqual(source.calls, 1)
+        self.assertNotIn(secret_like_value, repr(signer))
+
+    def test_seed_source_requires_credential_protocol_implementation(self):
+        with self.assertRaises(SignerKeySourceError):
+            Ed25519SeedCredentialSource(object())
+
     def test_brainbooster_runner_factory_uses_only_pinned_configuration(self):
         with patch("app_contracts.verifier_container.subprocess.Popen") as popen:
             runner = create_brainbooster_verifier_runner("/usr/bin/docker")

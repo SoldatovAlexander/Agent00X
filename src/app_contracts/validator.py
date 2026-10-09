@@ -21,6 +21,7 @@ _SUPPORTED_TYPES = {"object", "array", "string", "integer", "boolean"}
 _SUPPORTED = _ANNOTATIONS | {
     "type", "additionalProperties", "required", "properties", "const", "enum",
     "pattern", "format", "minLength", "maxLength", "minimum", "minItems", "items",
+    "minProperties", "maxProperties", "propertyNames",
 }
 
 
@@ -50,10 +51,20 @@ def validate_schema(schema: Any, path: str = "$") -> None:
             raise RuntimeError(f"invalid schema declaration at {path}: properties must map names to schemas")
         for name, subschema in properties.items():
             validate_schema(subschema, f"{path}.{name}")
-    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+    if "additionalProperties" in schema and not isinstance(
+        schema["additionalProperties"], (bool, dict)
+    ):
         raise RuntimeError(
-            f"invalid schema declaration at {path}: additionalProperties must be a boolean"
+            f"invalid schema declaration at {path}: additionalProperties must be a boolean or schema"
         )
+    if isinstance(schema.get("additionalProperties"), dict):
+        validate_schema(schema["additionalProperties"], f"{path}.<additionalProperties>")
+    if "propertyNames" in schema:
+        if not isinstance(schema["propertyNames"], dict):
+            raise RuntimeError(
+                f"invalid schema declaration at {path}: propertyNames must be a schema"
+            )
+        validate_schema(schema["propertyNames"], f"{path}.<propertyNames>")
     if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
         raise RuntimeError(
             f"invalid schema declaration at {path}: enum must be a non-empty list"
@@ -64,13 +75,30 @@ def validate_schema(schema: Any, path: str = "$") -> None:
         raise RuntimeError(
             f"invalid schema declaration at {path}: unsupported type {schema['type']!r}"
         )
-    for keyword in ("minimum", "minLength", "maxLength", "minItems"):
+    for keyword in (
+        "minimum", "minLength", "maxLength", "minItems",
+        "minProperties", "maxProperties",
+    ):
         if keyword in schema:
             bound = schema[keyword]
             if isinstance(bound, bool) or not isinstance(bound, (int, float)):
                 raise RuntimeError(
                     f"invalid schema declaration at {path}: {keyword} must be a number"
                 )
+            if keyword in {"minProperties", "maxProperties"} and (
+                type(bound) is not int or bound < 0
+            ):
+                raise RuntimeError(
+                    f"invalid schema declaration at {path}: {keyword} must be a non-negative integer"
+                )
+    if (
+        "minProperties" in schema
+        and "maxProperties" in schema
+        and schema["minProperties"] > schema["maxProperties"]
+    ):
+        raise RuntimeError(
+            f"invalid schema declaration at {path}: property bounds are inconsistent"
+        )
     if "items" in schema:
         validate_schema(schema["items"], f"{path}[]")
 
@@ -112,6 +140,14 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
     if isinstance(instance, dict):
         if any(not isinstance(name, str) for name in instance):
             raise ContractValidationError(f"{path}: object keys must be strings")
+        if len(instance) < schema.get("minProperties", 0):
+            raise ContractValidationError(f"{path}: too few properties")
+        if "maxProperties" in schema and len(instance) > schema["maxProperties"]:
+            raise ContractValidationError(f"{path}: too many properties")
+        property_names = schema.get("propertyNames")
+        if property_names is not None:
+            for name in instance:
+                _validate(name, property_names, f"{path}.<propertyName>")
         required = schema.get("required", [])
         missing = [name for name in required if name not in instance]
         if missing:
@@ -121,9 +157,12 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
             extra = set(instance) - set(properties)
             if extra:
                 raise ContractValidationError(f"{path}: unknown fields {sorted(extra)}")
+        additional_schema = schema.get("additionalProperties")
         for name, value in instance.items():
             if name in properties:
                 _validate(value, properties[name], f"{path}.{name}")
+            elif isinstance(additional_schema, dict):
+                _validate(value, additional_schema, f"{path}.<additionalProperty>")
 
     if isinstance(instance, list):
         if len(instance) < schema.get("minItems", 0):

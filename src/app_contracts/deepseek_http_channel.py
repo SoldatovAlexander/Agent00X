@@ -8,6 +8,7 @@ boundary, not a security boundary against hostile Python code.
 from __future__ import annotations
 
 import http.client
+import ipaddress
 import json
 import math
 import socket
@@ -20,23 +21,205 @@ import certifi
 
 from .credential_source import CredentialSource
 from .deepseek_worker import (
-    MODEL_NAME,
-    REASONING_EFFORT,
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionsModelResult,
+)
+from .worker_model_protocol import (
+    MAX_REQUEST_BYTES as _MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES as _MAX_RESPONSE_BYTES,
+    MAX_TIMEOUT_SECONDS as _MAX_TIMEOUT_SECONDS,
+    ModelRequestProtocolError,
+    encode_chat_completions_request,
 )
 
 
 _API_HOST = "api.deepseek.com"
 _API_PATH = "/chat/completions"
-_MAX_TIMEOUT_SECONDS = 30.0
-_MAX_REQUEST_BYTES = 128_000
-_MAX_RESPONSE_BYTES = 65_536
+_MAX_DNS_ADDRESSES = 32
+_DNS_RESOLVER_SLOT = threading.BoundedSemaphore(1)
+_CREDENTIAL_SOURCE_SLOT = threading.BoundedSemaphore(1)
 
 
 class DeepSeekHTTPChannelError(ValueError):
     """A bounded DeepSeek HTTPS request could not be completed safely."""
+
+
+def _resolve_addresses(
+    deadline: float, expired: threading.Event
+) -> tuple[tuple[int, int, int, tuple[object, ...]], ...]:
+    """Resolve the fixed API host with one bounded, abandonable wait slot.
+
+    A system resolver call cannot be interrupted portably. If it outlives the
+    request deadline its single daemon thread may finish later, but the caller
+    never uses late results. The process-wide slot prevents repeated channel
+    instances from accumulating an unbounded set of stuck resolver threads.
+    """
+
+    if not _DNS_RESOLVER_SLOT.acquire(blocking=False):
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request timed out"
+        )
+    completed = threading.Event()
+    resolved: list[object] = []
+    failures: list[BaseException] = []
+
+    def resolve() -> None:
+        try:
+            resolved.append(
+                socket.getaddrinfo(
+                    _API_HOST, 443, type=socket.SOCK_STREAM
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            completed.set()
+            _DNS_RESOLVER_SLOT.release()
+
+    resolver = threading.Thread(
+        target=resolve, name="agent00x-deepseek-dns", daemon=True
+    )
+    try:
+        resolver.start()
+    except Exception:
+        _DNS_RESOLVER_SLOT.release()
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request failed"
+        ) from None
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not completed.wait(remaining):
+        expired.set()
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request timed out"
+        )
+    _check_deadline(deadline, expired)
+    if failures or len(resolved) != 1 or type(resolved[0]) is not list:
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request failed"
+        )
+
+    addresses: list[tuple[int, int, int, tuple[object, ...]]] = []
+    for item in resolved[0]:
+        try:
+            family, socktype, protocol, _canonical_name, sockaddr = item
+            if (
+                family not in {socket.AF_INET, socket.AF_INET6}
+                or socktype != socket.SOCK_STREAM
+                or type(sockaddr) is not tuple
+                or not sockaddr
+                or type(sockaddr[0]) is not str
+            ):
+                continue
+            ipaddress.ip_address(sockaddr[0])
+            address = (family, socktype, protocol, sockaddr)
+            if address not in addresses:
+                addresses.append(address)
+            if len(addresses) > _MAX_DNS_ADDRESSES:
+                raise ValueError
+        except Exception:
+            raise DeepSeekHTTPChannelError(
+                "deepseek channel: provider request failed"
+            ) from None
+    if not addresses:
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request failed"
+        )
+    return tuple(addresses)
+
+
+def _connect_resolved_addresses(
+    addresses: tuple[tuple[int, int, int, tuple[object, ...]], ...],
+    *,
+    timeout: float,
+    source_address: tuple[str, int] | None,
+    deadline: float,
+    expired: threading.Event,
+) -> socket.socket:
+    """Connect only to numeric resolver results under the shared deadline."""
+
+    last_error: OSError | None = None
+    for family, socktype, protocol, sockaddr in addresses:
+        _check_deadline(deadline, expired)
+        remaining = min(timeout, deadline - time.monotonic())
+        if remaining <= 0:
+            _check_deadline(deadline, expired)
+        connection_socket = socket.socket(family, socktype, protocol)
+        try:
+            connection_socket.settimeout(remaining)
+            if source_address is not None:
+                connection_socket.bind(source_address)
+            connection_socket.connect(sockaddr)
+            _check_deadline(deadline, expired)
+            return connection_socket
+        except DeepSeekHTTPChannelError:
+            connection_socket.close()
+            raise
+        except OSError as exc:
+            last_error = exc
+            connection_socket.close()
+    if last_error is not None:
+        raise last_error
+    raise OSError("connection failed")
+
+
+def _resolve_credential(
+    credential_source: CredentialSource,
+    deadline: float,
+    expired: threading.Event,
+) -> object:
+    """Bound the caller's wait for a synchronous credential-source callback.
+
+    Python cannot cancel an arbitrary callback safely. A single process-wide
+    daemon slot bounds abandoned calls; a callback that finishes late has its
+    result discarded and cannot be used to initiate HTTP.
+    """
+
+    if not _CREDENTIAL_SOURCE_SLOT.acquire(blocking=False):
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request timed out"
+        )
+    completed = threading.Event()
+    failed = threading.Event()
+    result: list[object] = []
+
+    def resolve() -> None:
+        try:
+            value = credential_source()
+        except BaseException:
+            failed.set()
+        else:
+            if not expired.is_set() and time.monotonic() < deadline:
+                result.append(value)
+            del value
+        finally:
+            completed.set()
+            _CREDENTIAL_SOURCE_SLOT.release()
+
+    callback = threading.Thread(
+        target=resolve, name="agent00x-credential-source", daemon=True
+    )
+    try:
+        callback.start()
+    except Exception:
+        _CREDENTIAL_SOURCE_SLOT.release()
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: credential provider failed"
+        ) from None
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or not completed.wait(remaining):
+        expired.set()
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: provider request timed out"
+        )
+    _check_deadline(deadline, expired)
+    if failed.is_set() or len(result) != 1:
+        raise DeepSeekHTTPChannelError(
+            "deepseek channel: credential provider failed"
+        )
+    return result[0]
 
 
 class DeepSeekHTTPChannel:
@@ -76,16 +259,9 @@ class DeepSeekHTTPChannel:
             self._attempt_started = True
         deadline_expired = threading.Event()
         deadline = time.monotonic() + timeout
-        try:
-            api_key = self._api_key_provider()
-        except Exception:
-            if time.monotonic() >= deadline:
-                raise DeepSeekHTTPChannelError(
-                    "deepseek channel: provider request timed out"
-                ) from None
-            raise DeepSeekHTTPChannelError(
-                "deepseek channel: credential provider failed"
-            ) from None
+        api_key = _resolve_credential(
+            self._api_key_provider, deadline, deadline_expired
+        )
         _check_deadline(deadline, deadline_expired)
         if type(api_key) is not str or not api_key or api_key.strip() != api_key:
             raise DeepSeekHTTPChannelError(
@@ -97,7 +273,27 @@ class DeepSeekHTTPChannel:
         try:
             context = _create_verified_ssl_context()
             factory = self._connection_factory or http.client.HTTPSConnection
+            resolved_addresses = None
+            if self._connection_factory is None:
+                resolved_addresses = _resolve_addresses(deadline, deadline_expired)
+                _check_deadline(deadline, deadline_expired)
             connection = factory(_API_HOST, timeout=timeout, context=context)
+            if resolved_addresses is not None:
+
+                def connect_to_resolved(
+                    _address: tuple[str, int],
+                    connect_timeout: float,
+                    source_address: tuple[str, int] | None = None,
+                ) -> socket.socket:
+                    return _connect_resolved_addresses(
+                        resolved_addresses,
+                        timeout=connect_timeout,
+                        source_address=source_address,
+                        deadline=deadline,
+                        expired=deadline_expired,
+                    )
+
+                connection._create_connection = connect_to_resolved
             _check_deadline(deadline, deadline_expired)
 
             def abort_connection() -> None:
@@ -202,49 +398,14 @@ def _validate_timeout(value: object) -> float:
 
 
 def _encode_request(payload: object) -> bytes:
-    if type(payload) is not dict:
-        raise DeepSeekHTTPChannelError("deepseek channel: request is invalid")
     try:
-        if (
-            set(payload)
-            != {
-                "model",
-                "reasoning_effort",
-                "max_tokens",
-                "stream",
-                "response_format",
-                "messages",
-            }
-            or payload.get("model") != MODEL_NAME
-            or payload.get("reasoning_effort") != REASONING_EFFORT
-            or payload.get("stream") is not False
-            or type(payload.get("max_tokens")) is not int
-            or not 0 < payload["max_tokens"] <= 4096
-            or payload.get("response_format") != {"type": "json_object"}
-            or type(payload.get("messages")) is not list
-            or len(payload["messages"]) != 2
-            or any(
-                type(message) is not dict
-                or set(message) != {"role", "content"}
-                or type(message.get("role")) is not str
-                or type(message.get("content")) is not str
-                for message in payload["messages"]
-            )
-            or payload["messages"][0]["role"] != "system"
-            or payload["messages"][1]["role"] != "user"
-        ):
-            raise ValueError()
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    except Exception:
+        return encode_chat_completions_request(payload)
+    except ModelRequestProtocolError as exc:
+        if exc.reason == "too_large":
+            raise DeepSeekHTTPChannelError(
+                "deepseek channel: request exceeds limit"
+            ) from None
         raise DeepSeekHTTPChannelError("deepseek channel: request is invalid") from None
-    if len(encoded) > _MAX_REQUEST_BYTES:
-        raise DeepSeekHTTPChannelError("deepseek channel: request exceeds limit")
-    return encoded
 
 
 def _create_verified_ssl_context() -> ssl.SSLContext:

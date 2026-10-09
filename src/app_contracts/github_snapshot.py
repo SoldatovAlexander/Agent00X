@@ -45,6 +45,9 @@ _OID_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 _BLOB_MODES = frozenset({"100644", "100755"})
+_REMOTE_SNAPSHOT_EVIDENCE_ORIGINS = frozenset(
+    {"github_rest_api_claim", "github_codeload_archive"}
+)
 _TREE_MODE = "040000"
 _BLOB_ENCODING = "base64"
 _MAX_BLOB_WIRE_BYTES = MAX_SNAPSHOT_FILE_BYTES * 2
@@ -333,7 +336,7 @@ def _verify_git_tree_entries(root_oid: str, entries: tuple[GitHubTreeEntry, ...]
 
 @dataclass(frozen=True)
 class GitHubBlobClaim:
-    """Immutable API claim binding one blob OID to its verified bytes.
+    """Immutable remote-source claim binding one blob OID to verified bytes.
 
     Raw bytes never appear in the record representation; only the digest
     does. The ``size`` always equals the content length.
@@ -345,7 +348,9 @@ class GitHubBlobClaim:
     size: int
     content: bytes = field(repr=False)
     content_digest: str = field(repr=False)
-    evidence_origin: Literal["github_rest_api_claim"] = "github_rest_api_claim"
+    evidence_origin: Literal[
+        "github_rest_api_claim", "github_codeload_archive"
+    ] = "github_rest_api_claim"
 
     def __post_init__(self) -> None:
         if not _is_safe_tree_path(self.path):
@@ -371,7 +376,7 @@ class GitHubBlobClaim:
         ).hexdigest()
         if self.sha != expected_git_oid:
             raise GitHubSnapshotError("github snapshot: blob OID mismatch")
-        if self.evidence_origin != "github_rest_api_claim":
+        if self.evidence_origin not in _REMOTE_SNAPSHOT_EVIDENCE_ORIGINS:
             raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
 
 
@@ -537,7 +542,9 @@ class GitHubSnapshotClaim:
     tree_oid: str
     content_digest: str
     selected_paths: tuple[str, ...] | None = None
-    evidence_origin: Literal["github_rest_api_claim"] = "github_rest_api_claim"
+    evidence_origin: Literal[
+        "github_rest_api_claim", "github_codeload_archive"
+    ] = "github_rest_api_claim"
 
     def __post_init__(self) -> None:
         _validate_owner(self.owner)
@@ -549,7 +556,7 @@ class GitHubSnapshotClaim:
         ) is None:
             raise GitHubSnapshotError("github snapshot: content digest is invalid")
         _validate_selected_paths(self.selected_paths, allow_none=True)
-        if self.evidence_origin != "github_rest_api_claim":
+        if self.evidence_origin not in _REMOTE_SNAPSHOT_EVIDENCE_ORIGINS:
             raise GitHubSnapshotError("github snapshot: evidence origin is invalid")
 
     @property
@@ -559,22 +566,31 @@ class GitHubSnapshotClaim:
 
 @dataclass(frozen=True)
 class GitHubSnapshotContents:
-    """Bounded remote bytes paired with the API claim that supplied them.
+    """Bounded remote bytes paired with the claim that supplied them.
 
     Bytes are available to an explicit caller but are hidden from repr. The
-    record remains an API claim and does not establish author or server trust.
+    record preserves source type and does not establish author or server trust.
     """
 
     claim: GitHubSnapshotClaim
     files: tuple[GitHubBlobClaim, ...] = field(repr=False)
+    verified_commit_object: GitCommitObject | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if type(self.claim) is not GitHubSnapshotClaim:
             raise GitHubSnapshotError("github snapshot: content claim is invalid")
+        if self.verified_commit_object is not None and (
+            type(self.verified_commit_object) is not GitCommitObject
+            or self.verified_commit_object.commit_oid != self.claim.commit_oid
+            or self.verified_commit_object.tree_oid != self.claim.tree_oid
+        ):
+            raise GitHubSnapshotError("github snapshot: commit object is invalid")
         if type(self.files) is not tuple or any(
             type(blob) is not GitHubBlobClaim for blob in self.files
         ):
             raise GitHubSnapshotError("github snapshot: content files are invalid")
+        if any(blob.evidence_origin != self.claim.evidence_origin for blob in self.files):
+            raise GitHubSnapshotError("github snapshot: evidence origin mismatch")
         if len(self.files) > MAX_SNAPSHOT_FILES:
             raise GitHubSnapshotError("github snapshot: content limits exceeded")
         paths = tuple(blob.path for blob in self.files)
@@ -653,7 +669,10 @@ def read_github_snapshot_metadata(
 
 
 def read_github_snapshot_contents(
-    request: GitHubSnapshotRequest, transport: object
+    request: GitHubSnapshotRequest,
+    transport: object,
+    *,
+    commit_object_source: object | None = None,
 ) -> GitHubSnapshotContents:
     """Read one exact snapshot through an injected bounded GET transport.
 
@@ -686,6 +705,19 @@ def read_github_snapshot_contents(
         _MAX_COMMIT_RESPONSE_BYTES,
     )
     commit_claim = parse_github_commit(request, commit_payload)
+    verified_commit_object = None
+    if commit_object_source is not None:
+        if not callable(commit_object_source):
+            raise GitHubSnapshotError("github snapshot: commit object source is invalid")
+        try:
+            raw_commit_object = commit_object_source(commit_claim)
+            verified_commit_object = parse_git_commit_object(
+                commit_claim, raw_commit_object
+            )
+        except Exception:
+            raise GitHubSnapshotError(
+                "github snapshot: commit object is invalid"
+            ) from None
     tree_payload = _get_json(
         transport,
         f"/repos/{request.owner}/{request.repository}/git/trees/{commit_claim.tree_oid}?recursive=1",
@@ -748,7 +780,11 @@ def read_github_snapshot_contents(
         )
         for path, mode, content in sorted(bound_files, key=lambda item: item[0])
     )
-    return GitHubSnapshotContents(claim=claim, files=files)
+    return GitHubSnapshotContents(
+        claim=claim,
+        files=files,
+        verified_commit_object=verified_commit_object,
+    )
 
 
 def _snapshot_content_digest(files: list[tuple[str, str, bytes]]) -> str:

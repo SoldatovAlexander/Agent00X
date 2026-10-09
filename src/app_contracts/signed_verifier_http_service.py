@@ -1,0 +1,358 @@
+"""Fixed one-shot HTTP adapter for the signed verifier service.
+
+This service binds only to loopback. A separately governed reverse proxy must
+provide TLS termination and caller access control before any remote use. The
+HTTP adapter itself does not authenticate callers or establish independent
+host trust.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import math
+import re
+import threading
+from typing import Callable
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from .signed_verifier_protocol import (
+    MAX_SIGNED_VERIFIER_INVOCATION_BYTES,
+    parse_signed_verifier_invocation,
+)
+from .signed_verifier_service import (
+    SignedVerifierServiceError,
+    VerifierProfile,
+    VerifierRunner,
+    handle_signed_verifier_invocation,
+)
+from .signer_key_source import Ed25519SeedCredentialSource
+from .verifier_attestation import MAX_ATTESTATION_BYTES
+
+
+_PATH = "/v1/verify"
+_MEDIA_TYPE = "application/json"
+_USER_AGENT = "Agent00X-SignedVerifier/1"
+_MAX_HEADER_COUNT = 32
+_MAX_HEADER_BYTES = 8_192
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}\Z")
+_CONTENT_LENGTH = re.compile(r"(?:0|[1-9][0-9]{0,8})\Z")
+_REJECTED_BODY = b'{"error":"request_rejected"}'
+_UNAVAILABLE_BODY = b'{"error":"verifier_unavailable"}'
+
+
+@dataclass(frozen=True)
+class SignedVerifierHTTPResponse:
+    """Bounded sanitized response emitted by the one-shot HTTP adapter."""
+
+    status: int
+    body: bytes
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.status) is not int
+            or not 100 <= self.status <= 599
+            or type(self.body) is not bytes
+            or not self.body
+            or len(self.body) > MAX_ATTESTATION_BYTES
+        ):
+            raise SignedVerifierServiceError(
+                "signed verifier HTTP service: response rejected"
+            )
+
+    @property
+    def headers(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("Content-Type", _MEDIA_TYPE),
+            ("Content-Length", str(len(self.body))),
+            ("Cache-Control", "no-store"),
+            ("Connection", "close"),
+        )
+
+
+class SignedVerifierHTTPService:
+    """Accept one exact bounded invocation and delegate to the fixed service."""
+
+    def __init__(
+        self,
+        profile: object,
+        verifier: object,
+        signing_key: object,
+        *,
+        invocation_handler: Callable[..., bytes] | None = None,
+        now_factory: Callable[[], datetime] | None = None,
+    ) -> None:
+        if (
+            type(profile) is not VerifierProfile
+            or not callable(getattr(verifier, "verify", None))
+            or not (
+                isinstance(signing_key, Ed25519PrivateKey)
+                or type(signing_key) is Ed25519SeedCredentialSource
+            )
+            or (invocation_handler is not None and not callable(invocation_handler))
+            or (now_factory is not None and not callable(now_factory))
+        ):
+            raise SignedVerifierServiceError(
+                "signed verifier HTTP service: configuration rejected"
+            )
+        self._profile = profile
+        self._verifier = verifier
+        self._signing_key = signing_key
+        self._invocation_handler = (
+            handle_signed_verifier_invocation
+            if invocation_handler is None
+            else invocation_handler
+        )
+        self._now_factory = (
+            (lambda: datetime.now(timezone.utc))
+            if now_factory is None
+            else now_factory
+        )
+        self._attempt_lock = threading.Lock()
+        self._attempt_started = False
+
+    @staticmethod
+    def preflight(
+        method: object, path: object, headers: object
+    ) -> SignedVerifierHTTPResponse | None:
+        """Validate request metadata before a server reads its bounded body."""
+
+        if type(method) is not str or method != "POST":
+            return _response(405)
+        if type(path) is not str or path != _PATH:
+            return _response(404)
+        normalized = _normalize_headers(headers)
+        if isinstance(normalized, SignedVerifierHTTPResponse):
+            return normalized
+        if (
+            "transfer-encoding" in normalized
+            or "content-encoding" in normalized
+            or "authorization" in normalized
+            or "cookie" in normalized
+        ):
+            return _response(400)
+        if normalized.get("content-type") != _MEDIA_TYPE or normalized.get(
+            "accept"
+        ) != _MEDIA_TYPE:
+            return _response(415)
+        if normalized.get("accept-encoding") not in {None, "identity"}:
+            return _response(400)
+        if "host" not in normalized or not normalized["host"]:
+            return _response(400)
+        if normalized.get("user-agent") != _USER_AGENT:
+            return _response(400)
+        raw_length = normalized.get("content-length")
+        if raw_length is None:
+            return _response(411)
+        if _CONTENT_LENGTH.fullmatch(raw_length) is None:
+            return _response(400)
+        length = int(raw_length)
+        if length == 0:
+            return _response(400)
+        if length > MAX_SIGNED_VERIFIER_INVOCATION_BYTES:
+            return _response(413)
+        return None
+
+    @staticmethod
+    def _content_length(headers: object) -> int:
+        normalized = _normalize_headers(headers)
+        if isinstance(normalized, SignedVerifierHTTPResponse):
+            raise SignedVerifierServiceError(
+                "signed verifier HTTP service: request rejected"
+            )
+        return int(normalized["content-length"])
+
+    def handle_request(
+        self, method: object, path: object, headers: object, body: object
+    ) -> SignedVerifierHTTPResponse:
+        """Process at most one request; never expose verifier exceptions."""
+
+        with self._attempt_lock:
+            if self._attempt_started:
+                return _response(429)
+            self._attempt_started = True
+
+        preflight = self.preflight(method, path, headers)
+        if preflight is not None:
+            return preflight
+        try:
+            expected_length = self._content_length(headers)
+            if (
+                type(body) is not bytes
+                or len(body) != expected_length
+                or len(body) > MAX_SIGNED_VERIFIER_INVOCATION_BYTES
+            ):
+                return _response(400)
+            try:
+                invocation = parse_signed_verifier_invocation(body)
+                if (
+                    invocation.verifier_profile_digest
+                    != self._profile.profile_digest
+                ):
+                    return _response(400)
+            except Exception:
+                return _response(400)
+            response_body = self._invocation_handler(
+                body,
+                profile=self._profile,
+                verifier=self._verifier,
+                signing_key=self._signing_key,
+                issued_at=self._now_factory(),
+            )
+            if (
+                type(response_body) is not bytes
+                or not response_body
+                or len(response_body) > MAX_ATTESTATION_BYTES
+            ):
+                return _response(500)
+            return SignedVerifierHTTPResponse(200, response_body)
+        except Exception:
+            return _response(500, _UNAVAILABLE_BODY)
+
+
+def _normalize_headers(
+    headers: object,
+) -> dict[str, str] | SignedVerifierHTTPResponse:
+    if type(headers) not in {tuple, list} or len(headers) > _MAX_HEADER_COUNT:
+        return _response(400)
+    normalized: dict[str, str] = {}
+    byte_count = 0
+    allowed = {
+        "host",
+        "accept",
+        "accept-encoding",
+        "content-length",
+        "content-type",
+        "user-agent",
+        "connection",
+    }
+    try:
+        for item in headers:
+            if (
+                type(item) is not tuple
+                or len(item) != 2
+                or type(item[0]) is not str
+                or type(item[1]) is not str
+            ):
+                raise ValueError
+            name, value = item
+            if (
+                _HEADER_NAME.fullmatch(name) is None
+                or not value
+                or value != value.strip()
+                or any(ord(char) < 32 and char != "\t" for char in value)
+            ):
+                raise ValueError
+            lowered_name = name.lower()
+            if lowered_name not in allowed or lowered_name in normalized:
+                raise ValueError
+            byte_count += len(name.encode("ascii")) + len(value.encode("utf-8"))
+            if byte_count > _MAX_HEADER_BYTES:
+                raise ValueError
+            normalized[lowered_name] = value
+    except Exception:
+        return _response(400)
+    return normalized
+
+
+def _response(
+    status: int, body: bytes = _REJECTED_BODY
+) -> SignedVerifierHTTPResponse:
+    return SignedVerifierHTTPResponse(status, body)
+
+
+def create_loopback_http_server(
+    service: SignedVerifierHTTPService,
+    port: int,
+    *,
+    request_timeout_seconds: float = 30.0,
+) -> HTTPServer:
+    """Bind a single-request HTTP server only to IPv4 loopback."""
+
+    try:
+        timeout_valid = (
+            type(request_timeout_seconds) in {int, float}
+            and math.isfinite(float(request_timeout_seconds))
+            and 0 < float(request_timeout_seconds) <= 30.0
+        )
+    except (OverflowError, TypeError, ValueError):
+        timeout_valid = False
+    if (
+        type(service) is not SignedVerifierHTTPService
+        or type(port) is not int
+        or not 0 <= port <= 65_535
+        or not timeout_valid
+    ):
+        raise SignedVerifierServiceError(
+            "signed verifier HTTP service: server configuration rejected"
+        )
+
+    class Server(HTTPServer):
+        allow_reuse_address = False
+
+        def get_request(self):
+            connection, address = super().get_request()
+            connection.settimeout(float(request_timeout_seconds))
+            return connection, address
+
+        def handle_error(self, _request, _client_address):
+            return
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        server_version = "Agent00X"
+        sys_version = ""
+
+        def _dispatch(self):
+            raw_headers = tuple(self.headers.raw_items())
+            metadata_response = service.preflight(
+                self.command, self.path, raw_headers
+            )
+            if metadata_response is None:
+                try:
+                    content_length = service._content_length(raw_headers)
+                    body = self.rfile.read(content_length)
+                except Exception:
+                    body = None
+            else:
+                body = b""
+            response = service.handle_request(
+                self.command, self.path, raw_headers, body
+            )
+            self.server.last_response_status = response.status
+            self.send_response(response.status)
+            for name, value in response.headers:
+                self.send_header(name, value)
+            self.end_headers()
+            if self.command != "HEAD":
+                try:
+                    self.wfile.write(response.body)
+                except Exception:
+                    pass
+            self.close_connection = True
+
+        do_POST = _dispatch
+        do_GET = _dispatch
+        do_HEAD = _dispatch
+        do_PUT = _dispatch
+        do_PATCH = _dispatch
+        do_DELETE = _dispatch
+        do_OPTIONS = _dispatch
+
+        def send_error(self, _code, message=None, explain=None):
+            self._dispatch()
+
+        def log_message(self, _format, *args):
+            return
+
+    try:
+        server = Server(("127.0.0.1", port), Handler)
+        server.timeout = float(request_timeout_seconds)
+        server.last_response_status = None
+        return server
+    except Exception:
+        raise SignedVerifierServiceError(
+            "signed verifier HTTP service: server unavailable"
+        ) from None

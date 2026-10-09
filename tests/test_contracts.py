@@ -380,6 +380,46 @@ class SchemaStructureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "invalid schema declaration.*additionalProperties"):
             validate({"field": "value", "evil": "payload"}, schema)
 
+    def test_dynamic_object_property_bounds_names_and_values_are_enforced(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "keys": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "maxProperties": 2,
+                    "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z]+$",
+                    },
+                    "additionalProperties": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{2}$",
+                    },
+                }
+            },
+        }
+        validate({"keys": {"authority": "af"}}, schema)
+        for value in (
+            {"keys": {}},
+            {"keys": {"one": "aa", "two": "bb", "three": "cc"}},
+            {"keys": {"not-valid": "aa"}},
+            {"keys": {"authority": "not-hex"}},
+        ):
+            with self.subTest(value=value), self.assertRaises(ContractValidationError):
+                validate(value, schema)
+
+    def test_malformed_dynamic_object_schema_is_rejected(self):
+        for schema in (
+            {"type": "object", "minProperties": True},
+            {"type": "object", "maxProperties": -1},
+            {"type": "object", "minProperties": 3, "maxProperties": 2},
+            {"type": "object", "propertyNames": "string"},
+            {"type": "object", "additionalProperties": "schema"},
+        ):
+            with self.subTest(schema=schema), self.assertRaises(RuntimeError):
+                validate_schema(schema)
+
     def test_all_project_schema_files_are_structurally_valid(self):
         for schema_file in sorted((ROOT / "schemas").glob("*.schema.json")):
             with self.subTest(schema=schema_file.name):

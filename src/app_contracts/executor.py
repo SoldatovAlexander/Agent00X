@@ -6,7 +6,7 @@ or publication capability. Validation and orchestration are added separately.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 import posixpath
@@ -15,6 +15,22 @@ import stat
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from .repository_process import prepare_change
+from .observer_runtime import (
+    JournaledVerifier,
+    JournaledProposalWorker,
+    SandboxCallFailedError,
+    SandboxJournalError,
+    SandboxOutcomeUnknownError,
+    StageCallFailedError,
+    StageJournalError,
+    StageOutcomeUnknownError,
+    VerifierCallFailedError,
+    VerifierJournalError,
+    VerifierOutcomeUnknownError,
+    WorkerJournalError,
+    WorkerOutcomeUnknownError,
+    WorkerProposalFailedError,
+)
 from .sandbox import LocalProcessSandboxBackend
 from .digests import sha256_bytes, sha256_digest
 from .pinned_snapshot import (
@@ -96,7 +112,8 @@ class ExecutionResult:
     staged_change_digest: str | None = None
     snapshot_tree_digest: str | None = None
     snapshot_origin: Literal[
-        "local_git_commit", "github_rest_api_claim", "unverified_local_test"
+        "local_git_commit", "github_rest_api_claim", "github_codeload_archive",
+        "unverified_local_test"
     ] = "unverified_local_test"
     verifier_result: VerifierResult | None = None
     failure_code: str | None = None
@@ -111,8 +128,16 @@ class ExecutionResult:
     verifier_attestation_digest: str | None = None
     verifier_attestation_key_id: str | None = None
     verifier_attestation_profile_digest: str | None = None
+    verifier_trust_enrollment_digest: str | None = None
+    verifier_host_trust_decision_digest: str | None = None
+    verifier_host_trust_decision: object | None = None
     verifier_signature_valid: bool | None = None
     verifier_independent_host_trust_established: bool | None = None
+    verifier_request_digest: str | None = None
+    verifier_attestation_bytes: bytes | None = field(default=None, repr=False, compare=False)
+    verifier_trust_enrollment_bytes: bytes | None = field(default=None, repr=False, compare=False)
+    verifier_host_trust_decision_bytes: bytes | None = field(default=None, repr=False, compare=False)
+    verifier_request_bytes: bytes | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -126,7 +151,8 @@ class WorkerInput:
     declared_change_paths: tuple[str, ...]
     snapshot_tree_digest: str | None = None
     snapshot_origin: Literal[
-        "local_git_commit", "github_rest_api_claim", "unverified_local_test"
+        "local_git_commit", "github_rest_api_claim", "github_codeload_archive",
+        "unverified_local_test"
     ] = "unverified_local_test"
     task_instruction: str | None = None
     context_files: tuple[tuple[str, str], ...] = ()
@@ -134,7 +160,10 @@ class WorkerInput:
 
     def __post_init__(self) -> None:
         _validate_worker_input(self.task_instruction, self.context_files, self.declared_change_paths)
-        if self.snapshot_origin == "github_rest_api_claim":
+        if self.snapshot_origin in {
+            "github_rest_api_claim",
+            "github_codeload_archive",
+        }:
             if not _is_safe_digest(self.snapshot_claim_digest):
                 raise ExecutionError("execution request: worker input is invalid")
         elif self.snapshot_claim_digest is not None:
@@ -263,6 +292,7 @@ def run_local_execution(
     require_pinned_snapshot: bool = False,
     stage_sink: object | None = None,
     require_durable_stage: bool = False,
+    observation_store: object | None = None,
 ) -> ExecutionResult:
     """Run one injected proposal through local sandbox preparation only.
 
@@ -297,12 +327,103 @@ def run_local_execution(
         raise ExecutionError("execution verifier: collaborator is invalid")
     if verifier is worker or _same_callable(verify, propose):
         raise ExecutionError("execution verifier: collaborator is aliased")
+    active_worker = worker
+    active_verifier = verifier
+    if type(worker) is JournaledProposalWorker:
+        if (
+            observation_store is None
+            or not worker.matches(
+                observation_store,
+                process_id=request.process_id,
+                task_id=request.task_id,
+            )
+        ):
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="observation-gate-failed",
+            )
+        try:
+            active_verifier = JournaledVerifier(verifier, worker)
+        except VerifierJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="verifier-observation-gate-failed",
+            )
+    elif observation_store is not None:
+        try:
+            active_worker = JournaledProposalWorker(
+                worker,
+                observation_store,
+                process_id=request.process_id,
+                task_id=request.task_id,
+            )
+            active_verifier = JournaledVerifier(verifier, active_worker)
+        except WorkerJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="observation-gate-failed",
+            )
+        except VerifierJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="verifier-observation-gate-failed",
+            )
     backend = sandbox_backend or LocalProcessSandboxBackend()
     if not callable(getattr(backend, "create", None)):
         raise ExecutionError("execution sandbox: backend is invalid")
+    if type(active_worker) is JournaledProposalWorker:
+        try:
+            backend = active_worker.sandbox_backend(backend)
+        except SandboxJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-observation-gate-failed",
+            )
     sandbox = None
     try:
-        sandbox = backend.create(request.snapshot_path, set(request.allowed_commands))
+        try:
+            sandbox = backend.create(
+                request.snapshot_path, set(request.allowed_commands)
+            )
+        except SandboxOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-outcome-unknown",
+            )
+        except SandboxJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-observation-gate-failed",
+            )
+        except SandboxCallFailedError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-create-failed",
+            )
         if (
             not isinstance(getattr(sandbox, "snapshot", None), Path)
             or not isinstance(getattr(sandbox, "workspace", None), Path)
@@ -355,7 +476,31 @@ def run_local_execution(
             snapshot_claim_digest=_request_snapshot_claim_digest(request),
         )
         try:
-            raw_proposal = worker.propose(worker_input)
+            raw_proposal = active_worker.propose(worker_input)
+        except WorkerOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="worker-outcome-unknown",
+            )
+        except WorkerJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="observation-gate-failed",
+            )
+        except WorkerProposalFailedError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="worker-failed",
+            )
         except Exception:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -365,15 +510,54 @@ def run_local_execution(
                 failure_code="worker-failed",
             )
         proposal = validate_worker_proposal(raw_proposal, request)
-        prepared = prepare_change(
-            sandbox,
-            process_id=request.process_id,
-            task_id=request.task_id,
-            repository_id=request.repository_id,
-            base_commit=request.base_commit,
-            changes=dict(proposal.changes),
-            test_command=request.test_command,
-        )
+        preparation_sandbox = sandbox
+        if type(active_worker) is JournaledProposalWorker:
+            try:
+                preparation_sandbox = active_worker.sandbox_session(
+                    sandbox, purpose="target-tests"
+                )
+            except SandboxJournalError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="sandbox-observation-gate-failed",
+                )
+        try:
+            prepared = prepare_change(
+                preparation_sandbox,
+                process_id=request.process_id,
+                task_id=request.task_id,
+                repository_id=request.repository_id,
+                base_commit=request.base_commit,
+                changes=dict(proposal.changes),
+                test_command=request.test_command,
+            )
+        except SandboxOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-outcome-unknown",
+            )
+        except SandboxJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-observation-gate-failed",
+            )
+        except SandboxCallFailedError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="sandbox-command-failed",
+            )
         staged = getattr(prepared, "staged_change", None)
         if (
             not isinstance(staged, dict)
@@ -403,6 +587,50 @@ def run_local_execution(
                     source_sandbox=sandbox,
                     verified_contents=verified_contents,
                     verified_contents_digest=verified_contents_digest,
+                    observation_run=(
+                        active_worker
+                        if type(active_worker) is JournaledProposalWorker
+                        else None
+                    ),
+                )
+            except SandboxOutcomeUnknownError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    patch_digest=staged["patch_digest"],
+                    evidence_digest=staged["evidence_digest"],
+                    verification_digest=staged["verification_digest"],
+                    verified_contents_digest=verified_contents_digest,
+                    staged_change_digest=_staged_change_digest(staged),
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="sandbox-outcome-unknown",
+                )
+            except SandboxJournalError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    patch_digest=staged["patch_digest"],
+                    evidence_digest=staged["evidence_digest"],
+                    verification_digest=staged["verification_digest"],
+                    verified_contents_digest=verified_contents_digest,
+                    staged_change_digest=_staged_change_digest(staged),
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="sandbox-observation-gate-failed",
+                )
+            except SandboxCallFailedError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    patch_digest=staged["patch_digest"],
+                    evidence_digest=staged["evidence_digest"],
+                    verification_digest=staged["verification_digest"],
+                    verified_contents_digest=verified_contents_digest,
+                    staged_change_digest=_staged_change_digest(staged),
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="sandbox-command-failed",
                 )
             except Exception:
                 return ExecutionResult(
@@ -426,7 +654,46 @@ def run_local_execution(
             replay_result_digest=replay_result_digest,
         )
         try:
-            raw_verifier_result = verify(verifier_input)
+            raw_verifier_result = active_verifier.verify(verifier_input)
+        except VerifierOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="verifier-outcome-unknown",
+            )
+        except VerifierJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="verifier-observation-gate-failed",
+            )
+        except VerifierCallFailedError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="verifier-failed",
+            )
         except Exception:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -442,13 +709,18 @@ def run_local_execution(
             )
         # A signed receipt authenticates bytes, but the verifier host is not
         # independently trusted yet. Preserve only bounded receipt metadata and
-        # stop before any durable staging operation.
+        # Stop before durable staging unless a separately verified host decision
+        # accompanies the signed verifier response.
         from .verifier_attestation import VerifiedVerifierAttestation
 
+        attested_result = None
         if type(raw_verifier_result) is VerifiedVerifierAttestation:
             try:
                 from .digests import sha256_bytes
                 from .verifier_process import VerifierProcessRequest, serialize_verifier_request
+                from .verifier_host_trust_decision import (
+                    is_verified_verifier_host_trust_decision,
+                )
 
                 attested_result = validate_verifier_result(
                     raw_verifier_result.verifier_result, verifier_input
@@ -460,10 +732,46 @@ def run_local_execution(
                 )
                 if (
                     raw_verifier_result.signature_valid is not True
-                    or raw_verifier_result.independent_host_trust_established is not False
+                    or type(raw_verifier_result.independent_host_trust_established)
+                    is not bool
                     or not _is_sha256_digest(raw_verifier_result.attestation_digest)
                     or raw_verifier_result.request_digest != exact_request_digest
                     or not _is_sha256_digest(raw_verifier_result.verifier_profile_digest)
+                    or (
+                        raw_verifier_result.trust_enrollment_digest is not None
+                        and not _is_sha256_digest(
+                            raw_verifier_result.trust_enrollment_digest
+                        )
+                    )
+                    or (
+                        raw_verifier_result.independent_host_trust_established
+                        and (
+                            not is_verified_verifier_host_trust_decision(
+                                raw_verifier_result.host_trust_decision
+                            )
+                            or raw_verifier_result.host_trust_decision.decision_digest
+                            != raw_verifier_result.host_trust_decision_digest
+                            or raw_verifier_result.host_trust_decision.enrollment_digest
+                            != raw_verifier_result.trust_enrollment_digest
+                            or raw_verifier_result.host_trust_decision.verifier_key_id
+                            != raw_verifier_result.key_id
+                            or raw_verifier_result.host_trust_decision.verifier_profile_digest
+                            != raw_verifier_result.verifier_profile_digest
+                            or not _is_sha256_digest(
+                                raw_verifier_result.trust_enrollment_digest
+                            )
+                            or not _is_sha256_digest(
+                                raw_verifier_result.host_trust_decision_digest
+                            )
+                        )
+                    )
+                    or (
+                        not raw_verifier_result.independent_host_trust_established
+                        and (
+                            raw_verifier_result.host_trust_decision is not None
+                            or raw_verifier_result.host_trust_decision_digest is not None
+                        )
+                    )
                     or not _is_safe_verifier_key_id(raw_verifier_result.key_id)
                 ):
                     raise ValueError
@@ -480,25 +788,31 @@ def run_local_execution(
                     snapshot_claim_digest=_request_snapshot_claim_digest(request),
                     failure_code="verifier-attestation-invalid",
                 )
-            return ExecutionResult(
-                status=ExecutionStatus.FAILED,
-                patch_digest=staged["patch_digest"],
-                evidence_digest=staged["evidence_digest"],
-                verification_digest=staged["verification_digest"],
-                verified_contents_digest=verified_contents_digest,
-                staged_change_digest=_staged_change_digest(staged),
-                verifier_result=attested_result,
-                snapshot_tree_digest=_request_snapshot_tree_digest(request),
-                snapshot_origin=_request_snapshot_origin(request),
-                snapshot_claim_digest=_request_snapshot_claim_digest(request),
-                verifier_attestation_digest=raw_verifier_result.attestation_digest,
-                verifier_attestation_key_id=raw_verifier_result.key_id,
-                verifier_attestation_profile_digest=raw_verifier_result.verifier_profile_digest,
-                verifier_signature_valid=True,
-                verifier_independent_host_trust_established=False,
-                failure_code="verifier-trust-unestablished",
-            )
-        verifier_result = validate_verifier_result(raw_verifier_result, verifier_input)
+            if not raw_verifier_result.independent_host_trust_established:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    patch_digest=staged["patch_digest"],
+                    evidence_digest=staged["evidence_digest"],
+                    verification_digest=staged["verification_digest"],
+                    verified_contents_digest=verified_contents_digest,
+                    staged_change_digest=_staged_change_digest(staged),
+                    verifier_result=attested_result,
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    verifier_attestation_digest=raw_verifier_result.attestation_digest,
+                    verifier_attestation_key_id=raw_verifier_result.key_id,
+                    verifier_attestation_profile_digest=raw_verifier_result.verifier_profile_digest,
+                    verifier_trust_enrollment_digest=(
+                        raw_verifier_result.trust_enrollment_digest
+                    ),
+                    verifier_signature_valid=True,
+                    verifier_independent_host_trust_established=False,
+                    failure_code="verifier-trust-unestablished",
+                )
+            verifier_result = attested_result
+        else:
+            verifier_result = validate_verifier_result(raw_verifier_result, verifier_input)
         if verifier_result.verdict != VerifierVerdict.PASS:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -525,16 +839,99 @@ def run_local_execution(
             snapshot_origin=_request_snapshot_origin(request),
             verifier_result=verifier_result,
             snapshot_claim_digest=_request_snapshot_claim_digest(request),
+            verifier_attestation_digest=(
+                raw_verifier_result.attestation_digest
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_attestation_key_id=(
+                raw_verifier_result.key_id
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_attestation_profile_digest=(
+                raw_verifier_result.verifier_profile_digest
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_trust_enrollment_digest=(
+                raw_verifier_result.trust_enrollment_digest
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_host_trust_decision_digest=(
+                raw_verifier_result.host_trust_decision_digest
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_host_trust_decision=(
+                raw_verifier_result.host_trust_decision
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_signature_valid=(
+                True
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_independent_host_trust_established=(
+                True
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_attestation_bytes=(
+                raw_verifier_result.signed_response_bytes
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_trust_enrollment_bytes=(
+                raw_verifier_result.trust_enrollment_bytes
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_host_trust_decision_bytes=(
+                raw_verifier_result.host_trust_decision_bytes
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_request_bytes=(
+                raw_verifier_result.signed_request_bytes
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
+            verifier_request_digest=(
+                raw_verifier_result.request_digest
+                if type(raw_verifier_result) is VerifiedVerifierAttestation
+                else None
+            ),
         )
         if stage_sink is None:
             return verified_result
+        active_stage_sink = stage_sink
+        if type(active_worker) is JournaledProposalWorker:
+            try:
+                active_stage_sink = active_worker.stage_sink(stage_sink)
+            except StageJournalError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    patch_digest=staged["patch_digest"],
+                    evidence_digest=staged["evidence_digest"],
+                    verification_digest=staged["verification_digest"],
+                    verified_contents_digest=verified_contents_digest,
+                    staged_change_digest=_staged_change_digest(staged),
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    verifier_result=verifier_result,
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="stage-observation-gate-failed",
+                )
         try:
             # Local import avoids coupling the executor contracts to SQLite.
             from .durable_stage import StagedArtifact, build_staged_artifact
 
             artifact = build_staged_artifact(request, prepared, verified_result)
-            saved = stage_sink.save(artifact)
-            loaded = stage_sink.load(verified_result.staged_change_digest)
+            saved = active_stage_sink.save(artifact)
+            loaded = active_stage_sink.load(verified_result.staged_change_digest)
             if (
                 type(saved) is not StagedArtifact
                 or type(loaded) is not StagedArtifact
@@ -548,6 +945,48 @@ def run_local_execution(
                 or loaded.canonical_payload != artifact.canonical_payload
             ):
                 raise ValueError("stage readback mismatch")
+        except StageOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                verifier_result=verifier_result,
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="stage-outcome-unknown",
+            )
+        except StageJournalError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                verifier_result=verifier_result,
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="stage-observation-gate-failed",
+            )
+        except StageCallFailedError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                patch_digest=staged["patch_digest"],
+                evidence_digest=staged["evidence_digest"],
+                verification_digest=staged["verification_digest"],
+                verified_contents_digest=verified_contents_digest,
+                staged_change_digest=_staged_change_digest(staged),
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                verifier_result=verifier_result,
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="stage-operation-failed",
+            )
         except Exception:
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -602,9 +1041,14 @@ def _request_snapshot_claim_digest(request: ExecutionRequest) -> str | None:
     if request.remote_snapshot is None:
         return None
     claim = request.remote_snapshot.claim
+    canonicalization = (
+        "github-codeload-snapshot-claim/v1"
+        if claim.evidence_origin == "github_codeload_archive"
+        else "github-rest-snapshot-claim/v1"
+    )
     return sha256_digest(
         {
-            "canonicalization": "github-rest-snapshot-claim/v1",
+            "canonicalization": canonicalization,
             "owner": claim.owner,
             "repository": claim.repository,
             "commit_oid": claim.commit_oid,
@@ -825,6 +1269,7 @@ def _run_snapshot_verifier_replay(
     source_sandbox: object,
     verified_contents: tuple[tuple[str, str], ...],
     verified_contents_digest: str,
+    observation_run: JournaledProposalWorker | None = None,
 ) -> str:
     """Replay once in a fresh copy of the exact local or remote snapshot."""
 
@@ -880,7 +1325,14 @@ def _run_snapshot_verifier_replay(
             if target.is_symlink() or (target.exists() and not target.is_file()):
                 raise ExecutionError("execution verifier replay: prepared path is invalid")
             target.write_text(content, encoding="utf-8")
-        replay = session.run(request.test_command, timeout_seconds=request.test_timeout_seconds)
+        command_session = session
+        if observation_run is not None:
+            command_session = observation_run.sandbox_session(
+                session, purpose="verifier-replay"
+            )
+        replay = command_session.run(
+            request.test_command, timeout_seconds=request.test_timeout_seconds
+        )
         if (
             getattr(replay, "argv", None) != request.test_command
             or isinstance(getattr(replay, "returncode", None), bool)
@@ -1216,6 +1668,7 @@ def _revalidate_remote_snapshot(request: ExecutionRequest) -> None:
                 for blob in snapshot.files
                 if type(blob) is GitHubBlobClaim
             ),
+            verified_commit_object=snapshot.verified_commit_object,
         )
         if len(detached.files) != len(snapshot.files):
             raise ValueError()

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/approver-trust-enrollment.schema.json",
+  "title": "Out-of-band approval signer key enrollment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "enrollment_id",
+    "authority_key_id",
+    "approver_id",
+    "approver_public_key",
+    "trust_profile_digest",
+    "provider_repository_id",
+    "operation",
+    "issued_at",
+    "expires_at",
+    "signature"
+  ],
+  "properties": {
+    "schema": {"const": "approver-trust-enrollment/v1"},
+    "enrollment_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "authority_key_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "approver_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$"},
+    "approver_public_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "trust_profile_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "provider_repository_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"},
+    "operation": {"const": "publish_pull_request"},
+    "issued_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "expires_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{128}$"}
+  }
+}

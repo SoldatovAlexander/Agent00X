@@ -29,11 +29,13 @@ _VERDICTS = ("pass", "fail", "blocked")
 _SNAPSHOT_ORIGINS = (
     "local_git_commit",
     "github_rest_api_claim",
+    "github_codeload_archive",
     "unverified_local_test",
 )
 _BRANCH_NAMESPACE = "agent/"
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _VERIFIER_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_VERIFIER_KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _DOCKER_VERIFIER_ID_PATTERN = re.compile(
     r"docker-image:sha256:[0-9a-f]{64}/code:sha256:[0-9a-f]{64}\Z"
 )
@@ -58,10 +60,16 @@ class PublicationSeed:
     replay_result_digest: str | None = None
     snapshot_tree_digest: str | None = None
     snapshot_origin: Literal[
-        "local_git_commit", "github_rest_api_claim", "unverified_local_test"
+        "local_git_commit", "github_rest_api_claim", "github_codeload_archive",
+        "unverified_local_test"
     ] = "unverified_local_test"
     snapshot_claim_digest: str | None = None
     source_repository_id: str | None = None
+    verifier_attestation_digest: str | None = None
+    verifier_attestation_key_id: str | None = None
+    verifier_attestation_profile_digest: str | None = None
+    verifier_trust_enrollment_digest: str | None = None
+    verifier_host_trust_decision_digest: str | None = None
 
     def __post_init__(self) -> None:
         for value in (self.process_id, self.repository_id, self.base_commit):
@@ -77,13 +85,18 @@ class PublicationSeed:
         if self.snapshot_origin not in _SNAPSHOT_ORIGINS:
             raise PublicationSeedError("publication seed: snapshot origin is invalid")
         if (
-            self.snapshot_origin in {"local_git_commit", "github_rest_api_claim"}
+            self.snapshot_origin
+            in {
+                "local_git_commit",
+                "github_rest_api_claim",
+                "github_codeload_archive",
+            }
             and self.snapshot_tree_digest is None
         ):
             raise PublicationSeedError("publication seed: snapshot tree binding is invalid")
         if self.snapshot_claim_digest is not None:
             _validate_digest(self.snapshot_claim_digest)
-        if (self.snapshot_origin == "github_rest_api_claim") != (
+        if (self.snapshot_origin in {"github_rest_api_claim", "github_codeload_archive"}) != (
             self.snapshot_claim_digest is not None
         ):
             raise PublicationSeedError("publication seed: snapshot claim binding is invalid")
@@ -97,6 +110,129 @@ class PublicationSeed:
                 raise PublicationSeedError(
                     "publication seed: repository target binding is invalid"
                 ) from None
+        attestation_fields = (
+            self.verifier_attestation_digest,
+            self.verifier_attestation_key_id,
+            self.verifier_attestation_profile_digest,
+            self.verifier_trust_enrollment_digest,
+            self.verifier_host_trust_decision_digest,
+        )
+        if all(value is None for value in attestation_fields):
+            return
+        if any(value is None for value in attestation_fields):
+            raise PublicationSeedError(
+                "publication seed: signed verifier trust is not established"
+            )
+        for value in (
+            self.verifier_attestation_digest,
+            self.verifier_attestation_profile_digest,
+            self.verifier_trust_enrollment_digest,
+            self.verifier_host_trust_decision_digest,
+        ):
+            _validate_digest(value)
+        if (
+            not isinstance(self.verifier_attestation_key_id, str)
+            or _VERIFIER_KEY_ID_PATTERN.fullmatch(
+                self.verifier_attestation_key_id
+            )
+            is None
+        ):
+            raise PublicationSeedError(
+                "publication seed: verifier attestation key ID is invalid"
+            )
+
+
+def verifier_trust_intent_binding(
+    seed: PublicationSeed,
+    *,
+    signed_evidence_available: bool = False,
+    verified_provenance: object | None = None,
+) -> dict[str, str | None | bool]:
+    """Return bounded provenance metadata suitable for review and intent binding.
+
+    A reopened stage preserves only these digests and identifiers; it does not
+    revalidate the signed enrollment, host-trust decision, or OOB evidence.
+    The status wording intentionally avoids implying that it does.
+    """
+    if (
+        type(seed) is not PublicationSeed
+        or type(signed_evidence_available) is not bool
+    ):
+        raise PublicationSeedError("publication seed: verifier trust binding is invalid")
+    values = (
+        seed.verifier_attestation_digest,
+        seed.verifier_attestation_key_id,
+        seed.verifier_attestation_profile_digest,
+        seed.verifier_trust_enrollment_digest,
+        seed.verifier_host_trust_decision_digest,
+    )
+    binding: dict[str, str | None | bool] = {
+        "status": (
+            "recorded_digest_only_not_revalidated"
+            if any(value is not None for value in values)
+            else "not_recorded"
+        ),
+        "attestation_digest": seed.verifier_attestation_digest,
+        "attestation_key_id": seed.verifier_attestation_key_id,
+        "profile_digest": seed.verifier_attestation_profile_digest,
+        "enrollment_digest": seed.verifier_trust_enrollment_digest,
+        "host_trust_decision_digest": seed.verifier_host_trust_decision_digest,
+        "signed_evidence_available": signed_evidence_available,
+        "signed_evidence_status": (
+            "not_applicable"
+            if seed.verifier_attestation_digest is None
+            else (
+                "stored_not_revalidated"
+                if signed_evidence_available
+                else "not_available"
+            )
+        ),
+    }
+    if verified_provenance is not None:
+        try:
+            from .verifier_provenance import (
+                is_verified_stage_verifier_provenance,
+            )
+
+            if (
+                not is_verified_stage_verifier_provenance(verified_provenance)
+                or verified_provenance.verifier_attestation_digest
+                != seed.verifier_attestation_digest
+                or verified_provenance.verifier_key_id
+                != seed.verifier_attestation_key_id
+                or verified_provenance.verifier_profile_digest
+                != seed.verifier_attestation_profile_digest
+                or verified_provenance.verifier_trust_enrollment_digest
+                != seed.verifier_trust_enrollment_digest
+                or verified_provenance.verifier_host_trust_decision_digest
+                != seed.verifier_host_trust_decision_digest
+                or verified_provenance.request_input_reconstructed is not True
+                or signed_evidence_available is not True
+            ):
+                raise ValueError
+            binding.update(
+                {
+                    "status": "cryptographically_revalidated_request_reconstructed",
+                    "signed_evidence_status": "revalidated",
+                    "request_input_reconstructed": True,
+                    "authority_signatures_valid": True,
+                    "verifier_signature_valid": True,
+                    "identity_authenticated": False,
+                    "provider_write": False,
+                    "request_digest": verified_provenance.verifier_request_digest,
+                    "enrollment_authority_key_id": (
+                        verified_provenance.enrollment_authority_key_id
+                    ),
+                    "decision_authority_key_id": (
+                        verified_provenance.decision_authority_key_id
+                    ),
+                }
+            )
+        except Exception:
+            raise PublicationSeedError(
+                "publication seed: verifier provenance is unavailable"
+            ) from None
+    return binding
 
 
 def bind_publication_seed_to_target(
@@ -124,6 +260,11 @@ def bind_publication_seed_to_target(
         snapshot_tree_digest=seed.snapshot_tree_digest,
         snapshot_origin=seed.snapshot_origin,
         snapshot_claim_digest=seed.snapshot_claim_digest,
+        verifier_attestation_digest=seed.verifier_attestation_digest,
+        verifier_attestation_key_id=seed.verifier_attestation_key_id,
+        verifier_attestation_profile_digest=seed.verifier_attestation_profile_digest,
+        verifier_trust_enrollment_digest=seed.verifier_trust_enrollment_digest,
+        verifier_host_trust_decision_digest=seed.verifier_host_trust_decision_digest,
     )
 
 
@@ -144,19 +285,30 @@ def build_publication_seed(
         raise PublicationSeedError("publication seed: execution request is invalid")
     if not isinstance(result, ExecutionResult):
         raise PublicationSeedError("publication seed: execution result is invalid")
-    if any(
-        value is not None
-        for value in (
-            result.verifier_attestation_digest,
-            result.verifier_attestation_key_id,
-            result.verifier_attestation_profile_digest,
-            result.verifier_signature_valid,
-            result.verifier_independent_host_trust_established,
-        )
-    ):
-        raise PublicationSeedError(
-            "publication seed: signed verifier trust is not established"
-        )
+    if result.verifier_independent_host_trust_established is not None:
+        try:
+            from .verifier_host_trust_decision import (
+                is_verified_verifier_host_trust_decision,
+            )
+
+            decision = result.verifier_host_trust_decision
+            if (
+                result.verifier_signature_valid is not True
+                or result.verifier_independent_host_trust_established is not True
+                or not is_verified_verifier_host_trust_decision(decision)
+                or decision.decision_digest
+                != result.verifier_host_trust_decision_digest
+                or decision.enrollment_digest
+                != result.verifier_trust_enrollment_digest
+                or decision.verifier_key_id != result.verifier_attestation_key_id
+                or decision.verifier_profile_digest
+                != result.verifier_attestation_profile_digest
+            ):
+                raise ValueError
+        except Exception:
+            raise PublicationSeedError(
+                "publication seed: signed verifier trust is not established"
+            ) from None
     pin = request.pinned_snapshot
     remote_snapshot = request.remote_snapshot
     if pin is None and remote_snapshot is None:
@@ -171,7 +323,12 @@ def build_publication_seed(
     if result.staged_change_digest is None or result.verified_contents_digest is None:
         raise PublicationSeedError("publication seed: staged digest is missing")
     if (
-        result.snapshot_origin not in {"local_git_commit", "github_rest_api_claim"}
+        result.snapshot_origin
+        not in {
+            "local_git_commit",
+            "github_rest_api_claim",
+            "github_codeload_archive",
+        }
         or result.snapshot_tree_digest is None
     ):
         raise PublicationSeedError("publication seed: snapshot origin is unverified")
@@ -237,13 +394,27 @@ def build_publication_seed(
         snapshot_tree_digest=result.snapshot_tree_digest,
         snapshot_origin=result.snapshot_origin,
         snapshot_claim_digest=expected_claim_digest,
+        verifier_attestation_digest=result.verifier_attestation_digest,
+        verifier_attestation_key_id=result.verifier_attestation_key_id,
+        verifier_attestation_profile_digest=(
+            result.verifier_attestation_profile_digest
+        ),
+        verifier_trust_enrollment_digest=result.verifier_trust_enrollment_digest,
+        verifier_host_trust_decision_digest=(
+            result.verifier_host_trust_decision_digest
+        ),
     )
 
 
 def _github_claim_digest(claim: GitHubSnapshotClaim) -> str:
+    canonicalization = (
+        "github-codeload-snapshot-claim/v1"
+        if claim.evidence_origin == "github_codeload_archive"
+        else "github-rest-snapshot-claim/v1"
+    )
     return sha256_digest(
         {
-            "canonicalization": "github-rest-snapshot-claim/v1",
+            "canonicalization": canonicalization,
             "owner": claim.owner,
             "repository": claim.repository,
             "commit_oid": claim.commit_oid,

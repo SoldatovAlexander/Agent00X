@@ -7,7 +7,7 @@ independent; key provisioning and the verifier runtime remain separate gates.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -64,7 +64,7 @@ class VerifierAttestationError(ValueError):
 
 @dataclass(frozen=True)
 class VerifiedVerifierAttestation:
-    """A cryptographically verified response without an independent-host claim."""
+    """A signed response plus optional Control Plane trust provenance."""
 
     verifier_result: VerifierResult
     key_id: str
@@ -75,6 +75,13 @@ class VerifiedVerifierAttestation:
     attestation_digest: str
     signature_valid: bool = True
     independent_host_trust_established: bool = False
+    trust_enrollment_digest: str | None = None
+    host_trust_decision_digest: str | None = None
+    host_trust_decision: object | None = None
+    signed_response_bytes: bytes | None = field(default=None, repr=False, compare=False)
+    trust_enrollment_bytes: bytes | None = field(default=None, repr=False, compare=False)
+    host_trust_decision_bytes: bytes | None = field(default=None, repr=False, compare=False)
+    signed_request_bytes: bytes | None = field(default=None, repr=False, compare=False)
 
 
 def build_signed_verifier_response(
@@ -275,6 +282,8 @@ def verify_signed_verifier_response(
             verifier_profile_digest=envelope["verifier_profile_digest"],
             issued_at=envelope["issued_at"],
             attestation_digest=f"sha256:{hashlib.sha256(full_bytes).hexdigest()}",
+            signed_response_bytes=full_bytes,
+            signed_request_bytes=serialize_verifier_request(request),
         )
     except VerifierAttestationError:
         raise
@@ -285,6 +294,101 @@ def verify_signed_verifier_response(
     except Exception:
         raise VerifierAttestationError(
             "verifier attestation: response verification failed"
+        ) from None
+
+
+def verify_persisted_signed_verifier_response(
+    envelope_bytes: object,
+    *,
+    trusted_public_keys: object,
+    expected_key_id: object,
+    expected_request_digest: object,
+    expected_verifier_profile_digest: object,
+    expected_verifier_result: object,
+    now: datetime,
+    max_age_seconds: int = MAX_ATTESTATION_AGE_SECONDS,
+    max_future_skew_seconds: int = MAX_ATTESTATION_FUTURE_SKEW_SECONDS,
+) -> dict[str, str | bool]:
+    """Revalidate a persisted signed result without claiming its request bytes.
+
+    The signed request digest is checked against the stage's retained digest,
+    and the signed verifier result is checked against the exact persisted
+    result. The original ``VerifierInput`` is not reconstructed here.
+    """
+    try:
+        envelope = _parse_canonical_envelope(envelope_bytes)
+        if (
+            type(expected_key_id) is not str
+            or type(expected_request_digest) is not str
+            or _DIGEST_RE.fullmatch(expected_request_digest) is None
+            or type(expected_verifier_profile_digest) is not str
+            or _DIGEST_RE.fullmatch(expected_verifier_profile_digest) is None
+            or type(expected_verifier_result) is not dict
+            or type(max_age_seconds) is not int
+            or not 1 <= max_age_seconds <= MAX_ATTESTATION_AGE_SECONDS
+            or type(max_future_skew_seconds) is not int
+            or not 0 <= max_future_skew_seconds <= MAX_ATTESTATION_FUTURE_SKEW_SECONDS
+        ):
+            raise ValueError
+        if (
+            envelope.get("key_id") != expected_key_id
+            or envelope.get("request_digest") != expected_request_digest
+            or envelope.get("verifier_profile_digest")
+            != expected_verifier_profile_digest
+        ):
+            raise ValueError
+        if (
+            type(trusted_public_keys) is not dict
+            or expected_key_id not in trusted_public_keys
+            or len(trusted_public_keys) > MAX_TRUSTED_VERIFIER_KEYS
+            or any(
+                type(key_id) is not str
+                or type(public_key) is not bytes
+                or len(public_key) != 32
+                for key_id, public_key in trusted_public_keys.items()
+            )
+        ):
+            raise ValueError
+        response_bytes = _canonical_json(envelope["response"])
+        if len(response_bytes) > MAX_VERIFIER_RESPONSE_BYTES:
+            raise ValueError
+        response = parse_verifier_response(response_bytes)
+        if (
+            type(response) is not VerifierProcessResponse
+            or response.request_digest != expected_request_digest
+        ):
+            raise ValueError
+        actual_result = asdict(response.verifier_result)
+        actual_result["verdict"] = response.verifier_result.verdict.value
+        actual_result["blocker_codes"] = list(
+            response.verifier_result.blocker_codes
+        )
+        if actual_result != expected_verifier_result:
+            raise ValueError
+
+        issued_at = _parse_utc(envelope["issued_at"])
+        moment = _validate_now(now)
+        if (
+            issued_at > moment + timedelta(seconds=max_future_skew_seconds)
+            or issued_at < moment - timedelta(seconds=max_age_seconds)
+        ):
+            raise ValueError
+        unsigned = {key: value for key, value in envelope.items() if key != "signature"}
+        signature = bytes.fromhex(envelope["signature"])
+        Ed25519PublicKey.from_public_bytes(
+            trusted_public_keys[expected_key_id]
+        ).verify(signature, verifier_attestation_signing_bytes(unsigned))
+        return {
+            "attestation_digest": "sha256:" + hashlib.sha256(envelope_bytes).hexdigest(),
+            "request_digest": expected_request_digest,
+            "key_id": expected_key_id,
+            "verifier_profile_digest": expected_verifier_profile_digest,
+            "issued_at": envelope["issued_at"],
+            "signature_valid": True,
+        }
+    except Exception:
+        raise VerifierAttestationError(
+            "verifier attestation: persisted evidence verification failed"
         ) from None
 
 

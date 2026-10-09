@@ -19,6 +19,12 @@ class CredentialLeakDetected(RuntimeError):
     pass
 
 
+MAX_CANARY_SURFACES = 64
+MAX_CANARY_SURFACE_BYTES = 1_000_000
+MAX_CANARY_SURFACE_NODES = 100_000
+MAX_CANARY_NESTING_DEPTH = 64
+
+
 @dataclass(frozen=True, slots=True)
 class CredentialPatternFinding:
     """Redacted heuristic finding; never stores or exposes the matched bytes."""
@@ -107,27 +113,35 @@ def assert_no_credential_pattern_content(files: object) -> None:
 def find_canary_surfaces(canary: str, surfaces: Mapping[str, Any]) -> list[str]:
     """Return the names of surfaces containing an exact canary value.
 
-    A surface that cannot be serialized (cyclic, unbounded, or otherwise
-    unsupported) is reported as a finding: absence can never be proven
-    there, so fail-closed suspicion replaces silent traversal or a raw
-    exception. Only surface names are reported, never scanned values.
+    A surface that cannot be fully inspected within the fixed byte/node/depth
+    limits (cyclic or unsupported data included) is reported as a finding:
+    absence can never be proven there. Only surface names are returned, never
+    scanned values.
     """
 
-    if not isinstance(canary, str) or not canary:
+    if type(canary) is not str or not canary:
         raise ValueError("canary must not be empty")
-    if not isinstance(surfaces, dict):
+    try:
+        canary_bytes = canary.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        raise ValueError("canary must not be empty") from None
+    if len(canary_bytes) > MAX_CANARY_SURFACE_BYTES:
+        raise ValueError("canary must not be empty")
+    if type(surfaces) is not dict:
         raise ValueError("surfaces must be a mapping")
+    if len(surfaces) > MAX_CANARY_SURFACES:
+        raise ValueError("surface count exceeds limit")
     for name in surfaces:
-        if not isinstance(name, str) or not name:
+        if type(name) is not str or not name:
             raise ValueError("surface name must be a non-empty string")
     found: list[str] = []
     for name, value in surfaces.items():
         try:
-            serialized = _serialize(value)
+            contains_canary = _contains_canary_bounded(value, canary, canary_bytes)
         except Exception:
             found.append(name)
             continue
-        if canary in serialized:
+        if contains_canary:
             found.append(name)
     return found
 
@@ -138,7 +152,73 @@ def assert_canary_absent(canary: str, surfaces: Mapping[str, Any]) -> None:
         raise CredentialLeakDetected("credential canary found")
 
 
-def _serialize(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+def _contains_canary_bounded(value: Any, canary: str, canary_bytes: bytes) -> bool:
+    """Search JSON-like data without constructing an unbounded serialized copy."""
+    stack: list[tuple[Any, int, bool]] = [(value, 0, False)]
+    active_containers: set[int] = set()
+    visited_nodes = 0
+    scanned_bytes = 0
+
+    while stack:
+        current, depth, exiting = stack.pop()
+        if exiting:
+            active_containers.remove(id(current))
+            continue
+        visited_nodes += 1
+        if visited_nodes > MAX_CANARY_SURFACE_NODES or depth > MAX_CANARY_NESTING_DEPTH:
+            raise ValueError("surface cannot be scanned within bounds")
+
+        if type(current) is str:
+            if len(current) > MAX_CANARY_SURFACE_BYTES - scanned_bytes:
+                raise ValueError("surface cannot be scanned within bounds")
+            encoded = current.encode("utf-8", errors="strict")
+            scanned_bytes += len(encoded)
+            if scanned_bytes > MAX_CANARY_SURFACE_BYTES:
+                raise ValueError("surface cannot be scanned within bounds")
+            if canary in current:
+                return True
+            continue
+
+        if type(current) is bytes:
+            if len(current) > MAX_CANARY_SURFACE_BYTES - scanned_bytes:
+                raise ValueError("surface cannot be scanned within bounds")
+            scanned_bytes += len(current)
+            if canary_bytes in current:
+                return True
+            continue
+
+        if current is None or type(current) in (bool, int, float):
+            encoded = json.dumps(current, allow_nan=False, separators=(",", ":"))
+            encoded_size = len(encoded.encode("ascii"))
+            if encoded_size > MAX_CANARY_SURFACE_BYTES - scanned_bytes:
+                raise ValueError("surface cannot be scanned within bounds")
+            scanned_bytes += encoded_size
+            if canary in encoded:
+                return True
+            continue
+
+        if type(current) in (dict, list, tuple):
+            child_count = len(current) * (2 if type(current) is dict else 1)
+            if child_count > MAX_CANARY_SURFACE_NODES - visited_nodes:
+                raise ValueError("surface cannot be scanned within bounds")
+            identity = id(current)
+            if identity in active_containers:
+                raise ValueError("surface cannot be scanned within bounds")
+            active_containers.add(identity)
+            stack.append((current, depth, True))
+            if type(current) is dict:
+                children: list[Any] = []
+                for key, item in current.items():
+                    if type(key) is not str:
+                        raise ValueError("surface cannot be scanned within bounds")
+                    children.extend((key, item))
+                stack.extend((child, depth + 1, False) for child in reversed(children))
+            else:
+                stack.extend(
+                    (child, depth + 1, False) for child in reversed(current)
+                )
+            continue
+
+        raise ValueError("surface cannot be scanned within bounds")
+
+    return False

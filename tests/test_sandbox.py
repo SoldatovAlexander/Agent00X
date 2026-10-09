@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.executor import verifier_snapshot_tree_digest
+from app_contracts.brainbooster_target_profile import TARGET_RUNTIME_IMAGE_ID
 from app_contracts.sandbox import (
+    DockerSandbox,
     DockerSandboxBackend,
     LocalProcessSandboxBackend,
     SandboxError,
@@ -116,6 +118,57 @@ class SandboxTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertNotIn("HOME=", result.stdout)
             self.assertNotIn("TOKEN=", result.stdout.upper())
+
+    def test_named_api_credential_is_not_inherited_by_sandbox_child(self):
+        synthetic_canary = "SYNTHETIC-API-CREDENTIAL-CANARY-SANDBOX"
+        script = (
+            "from pathlib import Path; import sys; "
+            "from app_contracts.sandbox import LocalProcessSandboxBackend; "
+            "backend = LocalProcessSandboxBackend(); "
+            "sandbox = backend.create(Path(sys.argv[1]), {Path(sys.executable).name}); "
+            "result = sandbox.run((sys.executable, '-c', "
+            "'import os; print(\"AI_PROCESS_API\" in os.environ)')); "
+            "print(result.stdout, end=''); sandbox.close()"
+        )
+        child_environment = {
+            "PATH": os.defpath,
+            "PYTHONPATH": str(ROOT / "src"),
+            "AI_PROCESS_API": synthetic_canary,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(self.fixture)],
+            env=child_environment,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "False")
+        self.assertNotIn(synthetic_canary, completed.stdout + completed.stderr)
+
+    def test_docker_exec_passes_only_fixed_container_environment(self):
+        with tempfile.TemporaryDirectory(prefix="docker-sandbox-env-allowlist-") as temporary:
+            root = Path(temporary)
+            sandbox = DockerSandbox(root, root, root, "synthetic-container", {"python"})
+            with patch(
+                "app_contracts.sandbox.subprocess.run",
+                return_value=subprocess.CompletedProcess(["docker"], 0, "ok\n", ""),
+            ) as run:
+                result = sandbox.run(("python", "-c", "pass"))
+            self.assertEqual(result.returncode, 0)
+            argv = run.call_args.args[0]
+            env_values = [argv[index + 1] for index, part in enumerate(argv[:-1]) if part == "--env"]
+            self.assertEqual(
+                env_values,
+                [
+                    "PATH=/usr/local/bin:/usr/bin:/bin",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    "LANG=C.UTF-8",
+                ],
+            )
+            self.assertNotIn("AI_PROCESS_API", "\x00".join(argv))
 
     def test_snapshot_and_workspace_are_separate(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
@@ -242,8 +295,11 @@ class SandboxTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1", "Docker integration test is opt-in")
     def test_docker_backend_enforces_network_mount_and_workspace_profile(self):
-        backend = DockerSandboxBackend("python:3.12-alpine")
+        backend = DockerSandboxBackend(TARGET_RUNTIME_IMAGE_ID)
         snapshot = ROOT / "fixtures" / "repository" / "project"
+        # The exact task command supplies only a synthetic value. Check the
+        # variable name, never read or print its value.
+        self.assertIn("AI_PROCESS_API", os.environ)
         original_canary = os.environ.get("AGENT_PROCESS_HOST_CANARY")
         os.environ["AGENT_PROCESS_HOST_CANARY"] = "host-only-value"
         try:
@@ -262,12 +318,19 @@ class SandboxTests(unittest.TestCase):
                 self.assertNotEqual(rootfs_write.returncode, 0)
                 environment = sandbox.run(("env",))
                 self.assertNotIn("AGENT_PROCESS_HOST_CANARY=host-only-value", environment.stdout)
+                self.assertNotIn("AI_PROCESS_API=", environment.stdout)
                 inspection = subprocess.run(
                     ["docker", "inspect", sandbox._container_id],
                     capture_output=True, text=True, check=True,
                 )
                 configuration = json.loads(inspection.stdout)[0]
                 host_config = configuration["HostConfig"]
+                self.assertFalse(
+                    any(
+                        item.startswith("AI_PROCESS_API=")
+                        for item in configuration["Config"].get("Env", [])
+                    )
+                )
                 self.assertEqual(host_config["NetworkMode"], "none")
                 self.assertTrue(host_config["ReadonlyRootfs"])
                 self.assertEqual(host_config["PidsLimit"], 64)

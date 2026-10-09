@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import closing
 import sys
 import sqlite3
 import tempfile
@@ -49,6 +50,18 @@ class PublicationRecoveryTests(unittest.TestCase):
             repository_id=self.request["repository_id"],
         )
 
+    def test_new_journal_uses_wal_and_full_synchronous_mode(self):
+        with PublicationJournal(self.database) as journal:
+            journal_mode = journal._connection.execute(
+                "PRAGMA journal_mode"
+            ).fetchone()[0]
+            synchronous = journal._connection.execute(
+                "PRAGMA synchronous"
+            ).fetchone()[0]
+
+        self.assertEqual(journal_mode.lower(), "wal")
+        self.assertEqual(synchronous, 2)
+
     def test_existing_journal_mode_never_creates_or_initializes_database(self):
         missing = self.database
         with self.assertRaisesRegex(ValueError, "^publication journal is unavailable$"):
@@ -70,6 +83,30 @@ class PublicationRecoveryTests(unittest.TestCase):
         before = self.database.read_bytes()
         with PublicationJournal(self.database, create_if_missing=False) as journal:
             self.assertEqual(journal.get(self.request["process_id"]).status, "prepared")
+            self.assertEqual(
+                journal._connection.execute("PRAGMA journal_mode").fetchone()[0].lower(),
+                "wal",
+            )
+            self.assertEqual(
+                journal._connection.execute("PRAGMA synchronous").fetchone()[0], 2
+            )
+        self.assertEqual(self.database.read_bytes(), before)
+
+    def test_existing_non_wal_journal_fails_closed_without_modifying_database(self):
+        with PublicationJournal(self.database) as journal:
+            self._prepare(journal)
+        with closing(sqlite3.connect(self.database)) as connection, connection:
+            self.assertEqual(
+                connection.execute("PRAGMA journal_mode=DELETE").fetchone()[0].lower(),
+                "delete",
+            )
+        before = self.database.read_bytes()
+
+        with self.assertRaisesRegex(
+            ValueError, "^publication journal durability is unavailable$"
+        ):
+            PublicationJournal(self.database, create_if_missing=False)
+
         self.assertEqual(self.database.read_bytes(), before)
 
     def test_conflict_errors_carry_no_injected_values(self):

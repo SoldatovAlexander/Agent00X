@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/control-plane-authority-key-set.schema.json",
+  "title": "Control Plane authority public-key set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "keys"],
+  "properties": {
+    "schema": {
+      "const": "control-plane-authority-key-set/v1"
+    },
+    "keys": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  }
+}

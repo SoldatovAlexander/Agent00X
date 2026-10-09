@@ -79,7 +79,9 @@ class PublicationJournal:
             except Exception:
                 self._connection.close()
                 raise ValueError("publication journal schema is unavailable") from None
+            self._configure_durability(create_if_missing=False)
             return
+        self._configure_durability(create_if_missing=True)
         with self._connection:
             self._connection.execute(
                 """CREATE TABLE IF NOT EXISTS publication_attempts (
@@ -120,6 +122,32 @@ class PublicationJournal:
                     self._connection.execute(
                         f"ALTER TABLE publication_attempts ADD COLUMN {name} {declaration}"
                     )
+
+    def _configure_durability(self, *, create_if_missing: bool) -> None:
+        try:
+            if create_if_missing:
+                journal_mode = self._connection.execute(
+                    "PRAGMA journal_mode=WAL"
+                ).fetchone()
+            else:
+                journal_mode = self._connection.execute(
+                    "PRAGMA journal_mode"
+                ).fetchone()
+            self._connection.execute("PRAGMA synchronous=FULL")
+            synchronous = self._connection.execute(
+                "PRAGMA synchronous"
+            ).fetchone()
+            if (
+                not journal_mode
+                or type(journal_mode[0]) is not str
+                or journal_mode[0].lower() != "wal"
+                or not synchronous
+                or synchronous[0] != 2
+            ):
+                raise sqlite3.DatabaseError("required journal durability unavailable")
+        except Exception:
+            self._connection.close()
+            raise ValueError("publication journal durability is unavailable") from None
 
     def prepare(
         self,

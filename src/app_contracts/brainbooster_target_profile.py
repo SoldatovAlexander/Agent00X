@@ -19,7 +19,7 @@ VERIFIER_RUNTIME_IMAGE_ID = (
 VERIFIER_RUNTIME_CODE_DIGEST = (
     "sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5"
 )
-EXPECTED_CANDIDATE_DIGEST = "sha256:68c85e7fe084a754da791c74a169a5c6346527f6becb20fbb9fb8f56dcce34d8"
+EXPECTED_CANDIDATE_DIGEST = "sha256:6166fc4c2a73db910a064de140e71f7bfcbebe3b99846651a3c69770cce39a18"
 VERIFIER_CONTEXT_MODULES = (
     "__init__.py",
     "digests.py",
@@ -113,6 +113,19 @@ try:
     if row_count() != 0:
         fail("overflow-no-write")
 
+    # SQLite INTEGER bindings are signed 64-bit. Python can parse larger JSON
+    # integer literals, so exercise both out-of-range boundaries for every
+    # numeric field before any approval can be considered.
+    for field in ("level", "correct", "wrong", "total", "time_ms"):
+        for value in (9223372036854775808, -9223372036854775809):
+            payload = {"telegram_id": "synthetic-probe", "level": 2, "correct": 1, "wrong": 0, "total": 1, "time_ms": 250}
+            payload[field] = value
+            status, _body = post(json.dumps(payload, separators=(",", ":")).encode())
+            if status != 422:
+                fail("sqlite-range-status")
+            if row_count() != 0:
+                fail("sqlite-range-no-write")
+
     valid = {"telegram_id": "synthetic-probe", "level": 2, "correct": 1, "wrong": 0, "total": 1, "time_ms": 250}
     status, body = post(json.dumps(valid, separators=(",", ":")).encode())
     if status != 200:
@@ -125,7 +138,7 @@ try:
         ).fetchall()
     if rows != [("synthetic-probe", 2, 1, 0, 1, 250)]:
         fail("valid-row")
-    print("http_db_probe=PASS malformed=5 overflow=1 valid=1")
+    print("http_db_probe=PASS malformed=5 overflow=1 sqlite_range=10 valid=1")
 finally:
     server.terminate()
     try:

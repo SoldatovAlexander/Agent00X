@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-process.local/schemas/verifier-trust-enrollment.schema.json",
+  "title": "Out-of-band verifier trust enrollment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "enrollment_id",
+    "authority_key_id",
+    "endpoint_url",
+    "verifier_id",
+    "verifier_profile_digest",
+    "verifier_key_id",
+    "verifier_public_key",
+    "worker_host_id",
+    "verifier_host_id",
+    "host_separation_evidence_digest",
+    "issued_at",
+    "expires_at",
+    "signature"
+  ],
+  "properties": {
+    "schema": {"const": "verifier-trust-enrollment/v1"},
+    "enrollment_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "authority_key_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "endpoint_url": {"type": "string", "pattern": "^https://(?!(?:[0-9]+\\.){3}[0-9]+(?::443)?/)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?::443)?/v1/verify(?![\\s\\S])"},
+    "verifier_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "verifier_profile_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "verifier_key_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "verifier_public_key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "worker_host_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "verifier_host_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "host_separation_evidence_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "issued_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "expires_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{128}$"}
+  }
+}

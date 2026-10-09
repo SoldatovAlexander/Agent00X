@@ -1,14 +1,17 @@
 # Карта комплекта и статусы
 
 Статус: актуальный индекс  
-Дата: 2026-09-07
+Дата: 2026-10-09
 
 Для первого знакомства и обсуждения с коллегами:
 [Агент 00Х простым языком](29-agent-explained.md).
 Последние дополнения концепции: [наблюдатель и обучение](28-observer-and-learning.md)
 и [модель памяти](30-memory-model.md).
-Актуальный порядок работ — R0—R5 в плане MVP версии 1.1. Новые форматы пока
-спроектированы на уровне документа, а не реализованы в коде.
+Актуальный порядок работ — R0—R5 в плане MVP версии 1.1. В репозитории есть
+24 JSON Schema, локальные валидаторы и частичные реализации runtime-контрактов.
+Это не означает, что соответствующие этапы или весь вертикальный срез завершены:
+единственный оперативный статус evidence и ограничений —
+[`27-implementation-status.md`](27-implementation-status.md).
 
 ## Концептуальное ядро
 
@@ -24,7 +27,7 @@
 
 | Документ | Назначение | Статус |
 |---|---|---|
-| `05-agents-models-and-skills.md` | Роли, routing и skills | Целевое направление; LLM Worker/Router не реализованы |
+| `05-agents-models-and-skills.md` | Роли, routing и skills | Есть bounded fixed-profile LLM Worker adapters/CLI; общий Router и платформа ролей не реализованы |
 | `17-agent-adaptation-and-patterns.md` | Полная сборка и Process Patterns | Концепция; не реализовано |
 | `18-recursive-agent-teams.md` | Agent Factory и рекурсивное делегирование | Концепция; отложено |
 | `16-dormant-specialists.md` | Сон, повторное использование и Function Packs | Концепция; отложено |
@@ -39,7 +42,7 @@
 | `19-local-agent-host.md` | Несколько агентов на одном компьютере | Целевая модель; Host не реализован |
 | `20-identity-and-authorization.md` | Identity, grants, trust и mandates | Направление принято |
 | `15-governance-and-trust.md` | Runtime verification и governance | Backlog принят |
-| `21-agent-lifecycle-and-learning.md` | Evals, shadow, drift и process mining | Направление принято; learning branch не реализован |
+| `21-agent-lifecycle-and-learning.md` | Evals, shadow, drift и process mining | Направление принято; реализованы metadata-only simulation branch и in-memory workspace validation, но не альтернативное исполнение или learning evaluation (см. документ 27) |
 
 ## Валидация
 
@@ -47,11 +50,11 @@
 |---|---|---|
 | `10-reference-process.md` | Эталонный сквозной процесс | Гипотеза |
 | `11-reference-process-controls.md` | Роли, правила и tools | Гипотеза |
-| `12-validation-plan-v1.md` | Эксперименты VP-01…VP-23 | Выполняется; VP-20…23 запланированы |
+| `12-validation-plan-v1.md` | Каталог проверок VP-01…VP-23 | VP-20/21 покрыты лишь частично локальными evidence; VP-22 имеет пререгистрированный дизайн без запусков/результатов; VP-23 имеет MemorySummary schema/validator, но не lifecycle/retention/evaluation evidence (фактический статус — документы 27 и 30) |
 | `13-traceability-matrix.md` | Связи ADR, правил и проверок | Рабочая версия |
 | `07-validation-backlog.md` | Гипотезы и открытые вопросы | Актуальный backlog |
 | `24-mvp-final-plan.md` | Исследовательский срез, R0—R5 и Definition of Done | План 1.1 |
-| `28-observer-and-learning.md` | Наблюдатель, checkpoint, ветвление и корректировка | Концепция принята, форматы спроектированы |
+| `28-observer-and-learning.md` | Наблюдатель, checkpoint, ветвление и корректировка | Форматы и схемы реализованы частично; локальный journal/report есть, collector неполон, replay и learning execution отсутствуют (см. документ 27) |
 | `29-agent-explained.md` | Назначение, цели и архитектура простым языком | Материал для коллег |
 | `30-memory-model.md` | Слои памяти, ретенция и суммаризация | Концепция принята, не реализовано |
 | `25-external-review-disposition.md` | Решения по замечаниям внешней оценки | Рассмотрено |
@@ -59,6 +62,7 @@
 | `27-implementation-status.md` | Реализация, тесты, ограничения и gates | Единственный оперативный статус 1.1 |
 | `31-proof-boundary-traceability.md` | Матрица «свойство → local evidence → непроверенная граница → следующий эксперимент» | Производна от документа 27; local evidence отделено от external proof |
 | `32-local-publication-chain-spec.md` | Contract-level сценарий local publication chain: positive/negative paths, stop conditions | Основа Batch AA; external publication не разрешает |
+| `33-r5-experimental-protocol.md` | Пререгистрация сравнения структуры контекста и переноса корректировки для repository-change | Дизайн зафиксирован; запуск и результаты отсутствуют |
 
 ## Управление решениями
 
@@ -70,7 +74,7 @@
 
 ## Созданные исполняемые артефакты
 
-- Draft 2020-12 schemas шестнадцати ключевых MVP-контрактов в `schemas/`;
+- 24 JSON Schema Draft 2020-12 для MVP, Observer и verifier/approver trust contracts в `schemas/`;
 - позитивная сквозная и негативные fixtures в `fixtures/`;
 - dependency-free schema-subset validator;
 - канонический SHA-256 digest и cross-contract chain validation;
@@ -90,15 +94,23 @@
 - Машиночитаемый threat corpus для Gateway и contract injection.
 - Подготовленный Docker sandbox profile без host fallback.
 
-## Следующие исполняемые артефакты
+## Основные незакрытые gates
 
-Очередность фиксирована планом R0—R5:
+Порядок R0—R5 остаётся зафиксирован в плане MVP; фактический статус ниже
+сверяется с документом 27:
 
-1. ObservationEvent, Checkpoint, LearningCorrection и MemorySummary schemas с
-   валидаторами и негативными тестами.
-2. Исправление привязки проверенного manifest и approval к публикации, плюс
-   checkpoint до действия.
-3. Затем — LLM Worker, исторический Observer, учебная ветка и эксперимент.
+1. Воспроизводимая граница live Worker без GitHub network path и credential
+   exposure; независимо доверенный verifier/host и governance authority keys.
+2. Аутентифицированное human approval и воспроизводимая controlled PR
+   publication/recovery для одобренного staged digest; реальные provider writes
+   требуют отдельной карточки и свежего подтверждения.
+3. Полнота Observer collector, provenance артефактов и изолированное выполнение
+   simulation branch без воспроизведения старых прав/effects.
+4. Запуск и оценка пререгистрированного R5 experiment, включая transfer и
+   regressions.
+
+Эти gates открыты; наличие CLI, схем, моков или локальных тестов не закрывает
+их само по себе.
 
 Capability Card, Transaction Mandate, protocol adapters, Router, Local Agent
 Host и Function Packs остаются последующими исследовательскими направлениями.

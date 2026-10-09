@@ -1,8 +1,9 @@
 """One-request fixed-profile verifier execution and signed receipt composition.
 
-This transport-neutral service core does not load signing keys or establish
-host trust. A remote launcher must provide an already-held signer and a
-verifier configured from the same immutable profile before it can be trusted.
+This transport-neutral service core does not establish host trust. A caller
+may provide an already-held signer or a narrow credential-source adapter that
+is resolved only at the final signing boundary. A remote launcher must provide
+a verifier configured from the same immutable profile before it can be trusted.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from .brainbooster_target_profile import (
 )
 from .verifier_container import DockerContainerVerifier, VerifierContainerConfig
 from .signed_verifier_protocol import parse_signed_verifier_invocation
+from .signer_key_source import Ed25519SeedCredentialSource, SignerKeySourceError
 from .verifier_process import (
     VerifierProcessRequest,
     VerifierProcessResponse,
@@ -212,7 +214,10 @@ def run_signed_verifier_request(
             or type(invocation_nonce) is not str
             or _NONCE_RE.fullmatch(invocation_nonce) is None
             or not callable(getattr(verifier, "verify", None))
-            or not isinstance(signing_key, Ed25519PrivateKey)
+            or not (
+                isinstance(signing_key, Ed25519PrivateKey)
+                or type(signing_key) is Ed25519SeedCredentialSource
+            )
             or not isinstance(issued_at, datetime)
             or issued_at.tzinfo is None
             or issued_at.utcoffset() != timedelta(0)
@@ -239,13 +244,20 @@ def run_signed_verifier_request(
             response_result, digest_verifier_request(request)
         )
         response_bytes = _canonical_response_bytes(response)
+        if type(signing_key) is Ed25519SeedCredentialSource:
+            try:
+                resolved_signing_key = signing_key()
+            except SignerKeySourceError:
+                raise ValueError from None
+        else:
+            resolved_signing_key = signing_key
         return build_signed_verifier_response(
             request_bytes,
             response_bytes,
             invocation_nonce=invocation_nonce,
             verifier_profile_digest=profile.profile_digest,
             key_id=profile.signer_key_id,
-            signing_key=signing_key,
+            signing_key=resolved_signing_key,
             issued_at=issued_at,
         )
     except SignedVerifierServiceError:

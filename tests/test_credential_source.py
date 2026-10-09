@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.credential_source import (
     CredentialSourceError,
+    NativeKeyringCredentialSource,
     ProcessEnvironmentCredentialSource,
     TerminalPromptCredentialSource,
 )
@@ -152,6 +153,118 @@ class TerminalPromptCredentialSourceTests(unittest.TestCase):
             ) as raised:
                 source()
         self.assertNotIn(SECRET, str(raised.exception))
+
+
+class NativeKeyringCredentialSourceTests(unittest.TestCase):
+    def _backend_module(self, backend):
+        return type("Module", (), {"Keyring": type("Backend", (), {
+            "priority": 1,
+            "get_password": lambda _self, service, account: backend(
+                service, account
+            ),
+        })})
+
+    def test_selects_only_platform_backend_and_looks_up_fixed_item_lazily(self):
+        lookups = []
+
+        def secret(service, account):
+            lookups.append((service, account))
+            return SECRET
+
+        source = NativeKeyringCredentialSource()
+        module = self._backend_module(secret)
+        with mock.patch("app_contracts.credential_source.sys.platform", "darwin"), mock.patch(
+            "app_contracts.credential_source.importlib.import_module",
+            return_value=module,
+        ) as importer:
+            self.assertTrue(source.manager_available())
+            self.assertEqual(lookups, [])
+            self.assertEqual(source(), SECRET)
+        self.assertEqual(
+            importer.call_args_list,
+            [mock.call("keyring.backends.macOS"), mock.call("keyring.backends.macOS")],
+        )
+        self.assertEqual(lookups, [("Agent00X", "AI_PROCESS_API")])
+
+    def test_non_native_backend_or_unknown_platform_fails_closed(self):
+        source = NativeKeyringCredentialSource()
+        wrong_backend = type("Backend", (), {"priority": 0})
+        module = type("Module", (), {"Keyring": wrong_backend})
+        with mock.patch("app_contracts.credential_source.sys.platform", "linux"), mock.patch(
+            "app_contracts.credential_source.importlib.import_module",
+            return_value=module,
+        ):
+            self.assertFalse(source.manager_available())
+            with self.assertRaisesRegex(
+                CredentialSourceError, "^credential source: secure manager unavailable$"
+            ):
+                source()
+        with mock.patch("app_contracts.credential_source.sys.platform", "freebsd"):
+            self.assertFalse(source.manager_available())
+
+    def test_windows_and_linux_use_only_their_explicit_backend_classes(self):
+        source = NativeKeyringCredentialSource()
+        for platform, module_name, class_name in (
+            ("win32", "keyring.backends.Windows", "WinVaultKeyring"),
+            ("linux", "keyring.backends.SecretService", "Keyring"),
+        ):
+            with self.subTest(platform=platform):
+                backend_type = type("Backend", (), {"priority": 1})
+                module = type("Module", (), {class_name: backend_type})
+                with mock.patch(
+                    "app_contracts.credential_source.sys.platform", platform
+                ), mock.patch(
+                    "app_contracts.credential_source.importlib.import_module",
+                    return_value=module,
+                ) as importer:
+                    self.assertTrue(source.manager_available())
+                importer.assert_called_once_with(module_name)
+
+    def test_manager_errors_and_invalid_values_are_redacted(self):
+        source = NativeKeyringCredentialSource()
+        for value in (None, "", " " + SECRET, SECRET + "\n", 42):
+            backend = type(
+                "Backend",
+                (),
+                {"priority": 1, "get_password": lambda _self, _s, _a: value},
+            )
+            module = type("Module", (), {"Keyring": backend})
+            with self.subTest(value=type(value).__name__), mock.patch(
+                "app_contracts.credential_source.sys.platform", "darwin"
+            ), mock.patch(
+                "app_contracts.credential_source.importlib.import_module",
+                return_value=module,
+            ):
+                with self.assertRaises(CredentialSourceError) as raised:
+                    source()
+                self.assertNotIn(SECRET, str(raised.exception))
+        diagnostic = repr(source) + str(source)
+        self.assertEqual(diagnostic, "NativeKeyringCredentialSource(value='opaque')" * 2)
+        self.assertNotIn(SECRET, diagnostic)
+
+    def test_native_backend_exception_is_sanitized(self):
+        source = NativeKeyringCredentialSource()
+        backend = type(
+            "Backend",
+            (),
+            {
+                "priority": 1,
+                "get_password": lambda _self, _service, _account: (_ for _ in ()).throw(
+                    RuntimeError(SECRET)
+                ),
+            },
+        )
+        with mock.patch(
+            "app_contracts.credential_source.sys.platform", "darwin"
+        ), mock.patch(
+            "app_contracts.credential_source.importlib.import_module",
+            return_value=type("Module", (), {"Keyring": backend}),
+        ):
+            with self.assertRaisesRegex(
+                CredentialSourceError, "^credential source: value is unavailable$"
+            ) as raised:
+                source()
+        self.assertNotIn(SECRET, str(raised.exception) + repr(raised.exception))
 
 
 if __name__ == "__main__":

@@ -850,6 +850,53 @@ class PreDispatchGateTests(unittest.TestCase):
         self.assertEqual(stored_checkpoints[0]["checkpoint_id"], checkpoint["checkpoint_id"])
         self.assertEqual(stored_checkpoints[0]["trigger_event_id"], "event-store-demo-001")
 
+    def test_gate_intent_callback_runs_after_atomic_record_and_before_dispatch(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        callback_cursors: list[int] = []
+        calls: list[str] = []
+
+        def on_intent_recorded(cursor: int) -> None:
+            callback_cursors.append(cursor)
+            self.assertEqual(len(store.events()), 2)
+            self.assertEqual(store.events()[-1]["event_id"], "event-store-demo-002")
+
+        def dispatch():
+            self.assertEqual(callback_cursors, [1])
+            calls.append("dispatched")
+            return "mock-receipt"
+
+        cursor, outcome = run_gated_dispatch(
+            store,
+            checkpoint=valid_checkpoint(),
+            intent_event=valid_event("event-store-demo-002", 1),
+            dispatch=dispatch,
+            once=True,
+            on_intent_recorded=on_intent_recorded,
+        )
+        self.assertEqual(cursor, 1)
+        self.assertEqual(outcome, "mock-receipt")
+        self.assertEqual(calls, ["dispatched"])
+
+    def test_invalid_gate_intent_callback_refuses_before_record_and_dispatch(self):
+        store = ObservationStore()
+        store.append(valid_event("event-store-demo-001", 0))
+        calls: list[str] = []
+        with self.assertRaisesRegex(
+            PreDispatchError,
+            "^pre-dispatch gate refused: intent callback is invalid$",
+        ):
+            run_gated_dispatch(
+                store,
+                checkpoint=valid_checkpoint(),
+                intent_event=valid_event("event-store-demo-002", 1),
+                dispatch=lambda: calls.append("dispatched"),
+                on_intent_recorded="not-callable",
+            )
+        self.assertEqual(len(store.events()), 1)
+        self.assertEqual(len(store.checkpoints()), 0)
+        self.assertEqual(calls, [])
+
     def test_non_callable_dispatch_writes_nothing(self):
         store = ObservationStore()
         store.append(valid_event("event-store-demo-001", 0))

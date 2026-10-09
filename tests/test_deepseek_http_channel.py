@@ -11,6 +11,7 @@ import threading
 import time
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from app_contracts.deepseek_http_channel import (
@@ -397,41 +398,100 @@ class DeepSeekHTTPChannelTests(unittest.TestCase):
 
     def test_provider_that_returns_after_deadline_stops_before_connection(self):
         provider_calls: list[None] = []
+        release_provider = threading.Event()
+        provider_finished = threading.Event()
 
         def slow_provider() -> str:
             provider_calls.append(None)
-            time.sleep(0.05)
+            release_provider.wait(1)
+            provider_finished.set()
             return SYNTHETIC_KEY
 
         channel, _, _, _, factory_calls = self.make_channel(provider=slow_provider)
-        with self.assertRaisesRegex(
-            DeepSeekHTTPChannelError,
-            "^deepseek channel: provider request timed out$",
-        ) as error:
-            channel.create_chat_completion(valid_payload(), timeout_seconds=0.01)
+        try:
+            with self.assertRaisesRegex(
+                DeepSeekHTTPChannelError,
+                "^deepseek channel: provider request timed out$",
+            ) as error:
+                channel.create_chat_completion(valid_payload(), timeout_seconds=0.01)
 
-        self.assertNotIn(SYNTHETIC_KEY, str(error.exception))
-        self.assertEqual(provider_calls, [None])
-        self.assertEqual(factory_calls, [])
+            self.assertNotIn(SYNTHETIC_KEY, str(error.exception))
+            self.assertEqual(provider_calls, [None])
+            self.assertEqual(factory_calls, [])
+        finally:
+            release_provider.set()
+            self.assertTrue(provider_finished.wait(1))
 
     def test_provider_exception_after_deadline_is_sanitized_as_timeout(self):
         provider_calls: list[None] = []
+        release_provider = threading.Event()
+        provider_finished = threading.Event()
 
         def slow_failing_provider() -> str:
             provider_calls.append(None)
-            time.sleep(0.05)
+            release_provider.wait(1)
+            provider_finished.set()
             raise RuntimeError(SYNTHETIC_KEY)
 
         channel, _, _, _, factory_calls = self.make_channel(provider=slow_failing_provider)
-        with self.assertRaisesRegex(
-            DeepSeekHTTPChannelError,
-            "^deepseek channel: provider request timed out$",
-        ) as error:
-            channel.create_chat_completion(valid_payload(), timeout_seconds=0.01)
+        try:
+            with self.assertRaisesRegex(
+                DeepSeekHTTPChannelError,
+                "^deepseek channel: provider request timed out$",
+            ) as error:
+                channel.create_chat_completion(valid_payload(), timeout_seconds=0.01)
 
-        self.assertNotIn(SYNTHETIC_KEY, str(error.exception))
-        self.assertEqual(provider_calls, [None])
-        self.assertEqual(factory_calls, [])
+            self.assertNotIn(SYNTHETIC_KEY, str(error.exception))
+            self.assertEqual(provider_calls, [None])
+            self.assertEqual(factory_calls, [])
+        finally:
+            release_provider.set()
+            self.assertTrue(provider_finished.wait(1))
+
+    def test_blocked_credential_callback_uses_one_process_wide_slot(self):
+        provider_started = threading.Event()
+        release_provider = threading.Event()
+        provider_finished = threading.Event()
+        provider_calls: list[None] = []
+
+        def blocked_provider() -> str:
+            provider_calls.append(None)
+            provider_started.set()
+            release_provider.wait(1)
+            provider_finished.set()
+            return SYNTHETIC_KEY
+
+        first, _, _, _, first_factory_calls = self.make_channel(
+            provider=blocked_provider
+        )
+        second_provider = KeyProvider()
+        second, _, _, _, second_factory_calls = self.make_channel(
+            provider=second_provider
+        )
+        try:
+            started = time.monotonic()
+            with self.assertRaisesRegex(
+                DeepSeekHTTPChannelError,
+                "^deepseek channel: provider request timed out$",
+            ):
+                first.create_chat_completion(valid_payload(), timeout_seconds=0.05)
+            self.assertTrue(provider_started.is_set())
+            self.assertLess(time.monotonic() - started, 0.5)
+
+            started = time.monotonic()
+            with self.assertRaisesRegex(
+                DeepSeekHTTPChannelError,
+                "^deepseek channel: provider request timed out$",
+            ):
+                second.create_chat_completion(valid_payload(), timeout_seconds=1)
+            self.assertLess(time.monotonic() - started, 0.25)
+            self.assertEqual(provider_calls, [None])
+            self.assertEqual(second_provider.calls, 0)
+            self.assertEqual(first_factory_calls, [])
+            self.assertEqual(second_factory_calls, [])
+        finally:
+            release_provider.set()
+            self.assertTrue(provider_finished.wait(1))
 
     def test_channel_instance_allows_only_one_provider_attempt(self):
         channel, provider, _, connection, factory_calls = self.make_channel()
@@ -800,18 +860,9 @@ class DeepSeekHTTPChannelTests(unittest.TestCase):
                 response_body=provider_response,
             )
             key_provider = KeyProvider()
-            connections: list[LoopbackHTTPSConnection] = []
-
-            def factory(host: str, *, timeout: float, context: ssl.SSLContext):
-                self.assertEqual(host, "api.deepseek.com")
-                context.load_verify_locations(cafile=certificate_path)
-                connection = LoopbackHTTPSConnection(server.port, timeout, context)
-                connections.append(connection)
-                return connection
-
-            worker = DeepSeekProposalWorker(
-                DeepSeekHTTPChannel(key_provider, connection_factory=factory)
-            )
+            client_context = ssl.create_default_context()
+            client_context.load_verify_locations(cafile=certificate_path)
+            worker = DeepSeekProposalWorker(DeepSeekHTTPChannel(key_provider))
             task = WorkerInput(
                 process_id="synthetic-process",
                 task_id="synthetic-task",
@@ -822,10 +873,28 @@ class DeepSeekHTTPChannelTests(unittest.TestCase):
                 context_files=(("calculator.py", "current synthetic code"),),
             )
             try:
-                proposal = worker.propose(task)
+                with patch(
+                    "app_contracts.deepseek_http_channel.socket.getaddrinfo",
+                    return_value=[
+                        (
+                            socket.AF_INET,
+                            socket.SOCK_STREAM,
+                            socket.IPPROTO_TCP,
+                            "",
+                            ("127.0.0.1", server.port),
+                        )
+                    ],
+                ) as resolver, patch(
+                    "app_contracts.deepseek_http_channel._create_verified_ssl_context",
+                    return_value=client_context,
+                ):
+                    proposal = worker.propose(task)
                 self.assertEqual(
                     proposal,
                     WorkerProposal((("calculator.py", "fixed locally"),)),
+                )
+                resolver.assert_called_once_with(
+                    "api.deepseek.com", 443, type=socket.SOCK_STREAM
                 )
                 self.assertTrue(server.request_received.is_set())
                 self.assertIsNotNone(server.request_header)
@@ -854,7 +923,6 @@ class DeepSeekHTTPChannelTests(unittest.TestCase):
                 )
                 self.assertNotIn(SYNTHETIC_KEY.encode(), server.request_body)
                 self.assertEqual(key_provider.calls, 1)
-                self.assertEqual(len(connections), 1)
                 self.assertNotIn(SYNTHETIC_KEY, repr(proposal))
                 self.assertNotIn("synthetic reasoning sentinel", repr(proposal))
             finally:
@@ -923,6 +991,115 @@ class DeepSeekHTTPChannelTests(unittest.TestCase):
             self.assertFalse(connections[0].request_completed.is_set())
         finally:
             server.close()
+
+    def test_dns_timeout_fails_before_connection_construction(self):
+        resolver_started = threading.Event()
+        release_resolver = threading.Event()
+        resolver_finished = threading.Event()
+
+        def blocked_resolver(*args: object, **kwargs: object):
+            resolver_started.set()
+            release_resolver.wait(2)
+            resolver_finished.set()
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    ("127.0.0.1", 443),
+                )
+            ]
+
+        channel = DeepSeekHTTPChannel(KeyProvider())
+        started = time.monotonic()
+        try:
+            with patch(
+                "app_contracts.deepseek_http_channel.socket.getaddrinfo",
+                side_effect=blocked_resolver,
+            ), patch(
+                "app_contracts.deepseek_http_channel.http.client.HTTPSConnection"
+            ) as connection_factory:
+                with self.assertRaisesRegex(
+                    DeepSeekHTTPChannelError,
+                    "^deepseek channel: provider request timed out$",
+                ):
+                    channel.create_chat_completion(
+                        valid_payload(), timeout_seconds=0.05
+                    )
+                self.assertTrue(resolver_started.is_set())
+                self.assertLess(time.monotonic() - started, 1.0)
+                connection_factory.assert_not_called()
+        finally:
+            release_resolver.set()
+            self.assertTrue(resolver_finished.wait(1))
+
+    def test_dns_failure_is_sanitized_before_connection_construction(self):
+        channel = DeepSeekHTTPChannel(KeyProvider())
+        with patch(
+            "app_contracts.deepseek_http_channel.socket.getaddrinfo",
+            side_effect=OSError("synthetic DNS detail sentinel"),
+        ), patch(
+            "app_contracts.deepseek_http_channel.http.client.HTTPSConnection"
+        ) as connection_factory:
+            with self.assertRaisesRegex(
+                DeepSeekHTTPChannelError,
+                "^deepseek channel: provider request failed$",
+            ) as error:
+                channel.create_chat_completion(valid_payload(), timeout_seconds=1)
+        self.assertNotIn("synthetic DNS detail sentinel", str(error.exception))
+        connection_factory.assert_not_called()
+
+    def test_unfinished_dns_resolver_occupies_only_one_process_slot(self):
+        resolver_started = threading.Event()
+        release_resolver = threading.Event()
+        resolver_finished = threading.Event()
+        calls = 0
+
+        def blocked_resolver(*args: object, **kwargs: object):
+            nonlocal calls
+            calls += 1
+            resolver_started.set()
+            release_resolver.wait(2)
+            resolver_finished.set()
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    ("127.0.0.1", 443),
+                )
+            ]
+
+        try:
+            with patch(
+                "app_contracts.deepseek_http_channel.socket.getaddrinfo",
+                side_effect=blocked_resolver,
+            ), patch(
+                "app_contracts.deepseek_http_channel.http.client.HTTPSConnection"
+            ) as connection_factory:
+                first = DeepSeekHTTPChannel(KeyProvider())
+                with self.assertRaisesRegex(
+                    DeepSeekHTTPChannelError,
+                    "^deepseek channel: provider request timed out$",
+                ):
+                    first.create_chat_completion(valid_payload(), timeout_seconds=0.05)
+                self.assertTrue(resolver_started.is_set())
+
+                second = DeepSeekHTTPChannel(KeyProvider())
+                started = time.monotonic()
+                with self.assertRaisesRegex(
+                    DeepSeekHTTPChannelError,
+                    "^deepseek channel: provider request timed out$",
+                ):
+                    second.create_chat_completion(valid_payload(), timeout_seconds=1)
+                self.assertLess(time.monotonic() - started, 0.25)
+                self.assertEqual(calls, 1)
+                connection_factory.assert_not_called()
+        finally:
+            release_resolver.set()
+            self.assertTrue(resolver_finished.wait(1))
 
     def test_invalid_configuration_is_rejected(self):
         for provider, factory in ((None, None), (lambda: "key", object())):

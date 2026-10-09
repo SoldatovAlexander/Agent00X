@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError, asdict, replace
 import ast
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -156,7 +156,12 @@ class AcceptingVerifier:
 
 class RemoteSnapshotExecutionTests(unittest.TestCase):
     @staticmethod
-    def make_snapshot(path: Path, content: bytes) -> GitHubSnapshotContents:
+    def make_snapshot(
+        path: Path,
+        content: bytes,
+        *,
+        evidence_origin: str = "github_rest_api_claim",
+    ) -> GitHubSnapshotContents:
         path.mkdir(parents=True, exist_ok=True)
         (path / "calculator.py").write_bytes(content)
         (path / "calculator.py").chmod(0o644)
@@ -171,6 +176,7 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
             size=len(content),
             content=content,
             content_digest=sha256_bytes(content),
+            evidence_origin=evidence_origin,
         )
         claim = GitHubSnapshotClaim(
             owner="fixture-owner",
@@ -178,6 +184,7 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
             commit_oid="a" * 40,
             tree_oid="b" * 40,
             content_digest=digest,
+            evidence_origin=evidence_origin,
         )
         return GitHubSnapshotContents(claim=claim, files=(blob,))
 
@@ -327,17 +334,85 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
             self.assertEqual(seed.snapshot_tree_digest, result.snapshot_tree_digest)
             self.assertEqual(seed.snapshot_claim_digest, result.snapshot_claim_digest)
 
+    def test_codeload_archive_origin_flows_through_worker_verifier_and_seed(self):
+        from app_contracts.publication_seed import build_publication_seed
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "archive-snapshot"
+            base = b"def add(left, right):\n    return left + right\n"
+            remote_snapshot = self.make_snapshot(
+                snapshot_path,
+                base,
+                evidence_origin="github_codeload_archive",
+            )
+            request = ExecutionRequest(
+                process_id="process-archive-001",
+                task_id="task-archive-001",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=remote_snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-m", "unittest"),
+                remote_snapshot=remote_snapshot,
+            )
+
+            class ArchiveWorker:
+                received = None
+
+                def propose(self, worker_input: WorkerInput) -> WorkerProposal:
+                    self.received = worker_input
+                    return WorkerProposal(
+                        (("calculator.py", base.decode() + "\n# archive proposal\n"),)
+                    )
+
+            worker = ArchiveWorker()
+            result = run_local_execution(
+                request,
+                worker,
+                verifier=AcceptingVerifier(),
+                sandbox_backend=self.FakeBackend(),
+            )
+            expected_claim_digest = sha256_digest(
+                {
+                    "canonicalization": "github-codeload-snapshot-claim/v1",
+                    "owner": remote_snapshot.claim.owner,
+                    "repository": remote_snapshot.claim.repository,
+                    "commit_oid": remote_snapshot.claim.commit_oid,
+                    "tree_oid": remote_snapshot.claim.tree_oid,
+                    "content_digest": remote_snapshot.claim.content_digest,
+                    "full_snapshot": True,
+                    "selected_paths": None,
+                    "evidence_origin": "github_codeload_archive",
+                }
+            )
+            self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+            self.assertEqual(result.snapshot_origin, "github_codeload_archive")
+            self.assertEqual(result.snapshot_claim_digest, expected_claim_digest)
+            self.assertEqual(worker.received.snapshot_origin, "github_codeload_archive")
+            self.assertEqual(worker.received.snapshot_claim_digest, expected_claim_digest)
+            seed = build_publication_seed(request, result)
+            self.assertEqual(seed.snapshot_origin, "github_codeload_archive")
+            self.assertEqual(seed.snapshot_claim_digest, expected_claim_digest)
+
     def test_signed_client_remains_audit_only_before_durable_stage(self):
+        from datetime import timedelta
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-        from app_contracts.signed_verifier_client import SignedVerifierClient
+        from app_contracts.signed_verifier_client import (
+            SignedVerifierClient,
+            SignedVerifierHTTPSTransport,
+        )
         from app_contracts.signed_verifier_service import (
             VerifierProfile,
             handle_signed_verifier_invocation,
         )
         from app_contracts.signed_verifier_protocol import (
             parse_signed_verifier_invocation,
+        )
+        from app_contracts.verifier_trust_enrollment import (
+            build_signed_verifier_trust_enrollment,
         )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -360,6 +435,29 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
             public_key = signing_key.public_key().public_bytes(
                 serialization.Encoding.Raw, serialization.PublicFormat.Raw
             )
+            authority_key = Ed25519PrivateKey.generate()
+            authority_public_key = authority_key.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )
+            verifier_endpoint = "https://verifier.example.com/v1/verify"
+            worker_host_id = "synthetic-worker-host-exp683"
+            verifier_host_id = "synthetic-verifier-host-exp683"
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            enrollment_bytes = build_signed_verifier_trust_enrollment(
+                enrollment_id="synthetic-enrollment-exp683",
+                authority_key_id="synthetic-authority-exp683",
+                endpoint_url=verifier_endpoint,
+                verifier_id=profile.expected_verifier_id,
+                verifier_profile_digest=profile.profile_digest,
+                verifier_key_id=profile.signer_key_id,
+                verifier_public_key=public_key,
+                worker_host_id=worker_host_id,
+                verifier_host_id=verifier_host_id,
+                host_separation_evidence_digest="sha256:" + "4" * 64,
+                signing_key=authority_key,
+                issued_at=now,
+                expires_at=now + timedelta(hours=1),
+            )
 
             class PassingRemoteVerifier:
                 def verify(self, prepared: VerifierInput) -> VerifierResult:
@@ -376,21 +474,52 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
                         verdict=VerifierVerdict.PASS,
                     )
 
-            class InProcessTransport:
-                calls = 0
+            class FakeHTTPSResponse:
+                status = 200
 
-                def request(self, invocation_bytes: bytes) -> bytes:
+                def __init__(self, body: bytes):
+                    self.body = body
+                    self.closed = False
+
+                def getheader(self, name):
+                    return "application/json" if name == "Content-Type" else None
+
+                def read(self, limit):
+                    return self.body[:limit]
+
+                def close(self):
+                    self.closed = True
+
+            class FakeHTTPSConnection:
+                def __init__(self):
+                    self.calls = 0
+                    self.closed = False
+
+                def configure(self, host, *, port, timeout, context):
+                    self.configuration = (host, port, timeout, context)
+                    return self
+
+                def request(self, method, path, *, body, headers):
                     self.calls += 1
+                    if (method, path) != ("POST", "/v1/verify"):
+                        raise AssertionError("unexpected verifier route")
+                    invocation_bytes = body
                     invocation = parse_signed_verifier_invocation(invocation_bytes)
                     if invocation.verifier_profile_digest != profile.profile_digest:
                         raise AssertionError("client sent an unexpected profile")
-                    return handle_signed_verifier_invocation(
+                    self.response = FakeHTTPSResponse(handle_signed_verifier_invocation(
                         invocation_bytes,
                         profile=profile,
                         verifier=PassingRemoteVerifier(),
                         signing_key=signing_key,
                         issued_at=datetime.now(timezone.utc),
-                    )
+                    ))
+
+                def getresponse(self):
+                    return self.response
+
+                def close(self):
+                    self.closed = True
 
             class NoTouchStage:
                 save_calls = 0
@@ -404,9 +533,24 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
                     self.load_calls += 1
                     raise AssertionError("untrusted verifier must not stage")
 
-            transport = InProcessTransport()
-            client = SignedVerifierClient(
-                profile, transport, {profile.signer_key_id: public_key}
+            connection = FakeHTTPSConnection()
+            transport = SignedVerifierHTTPSTransport(
+                verifier_endpoint,
+                connection_factory=lambda host, *, port, timeout, context: connection.configure(
+                    host, port=port, timeout=timeout, context=context
+                ),
+            )
+            client = SignedVerifierClient.from_trust_enrollment(
+                profile,
+                transport,
+                enrollment_bytes,
+                trusted_authority_keys={
+                    "synthetic-authority-exp683": authority_public_key
+                },
+                expected_endpoint_url=verifier_endpoint,
+                expected_worker_host_id=worker_host_id,
+                expected_verifier_host_id=verifier_host_id,
+                now=now,
             )
             stage = NoTouchStage()
             worker_content = base.decode() + "\n# signed client integration\n"
@@ -437,7 +581,7 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
                     stage_sink=stage,
                 )
 
-            self.assertEqual(transport.calls, 1)
+            self.assertEqual(connection.calls, 1)
             self.assertEqual(result.status, ExecutionStatus.FAILED)
             self.assertEqual(result.failure_code, "verifier-trust-unestablished")
             self.assertTrue(result.verifier_signature_valid)
@@ -448,7 +592,21 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
             self.assertEqual(
                 result.verifier_attestation_profile_digest, profile.profile_digest
             )
+            enrollment_digest = sha256_bytes(enrollment_bytes)
+            self.assertEqual(
+                result.verifier_trust_enrollment_digest, enrollment_digest
+            )
             self.assertEqual((stage.save_calls, stage.load_calls), (0, 0))
+            from app_contracts import worker_cli
+
+            evidence = worker_cli._remote_execution_evidence(result)
+            self.assertEqual(
+                evidence["verifier_attestation"]["trust_enrollment_digest"],
+                enrollment_digest,
+            )
+            self.assertEqual(evidence["failure_code"], "verifier-trust-unestablished")
+            self.assertNotIn("'signature':", repr(evidence))
+            self.assertNotIn("public_key", repr(evidence))
 
     def test_remote_replay_failure_closes_both_sessions_before_verifier(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -726,7 +884,7 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
                     verifier=AcceptingVerifier(),
                     sandbox_backend=self.FakeBackend(),
                 )
-                self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+                self.assertEqual(result.status, ExecutionStatus.VERIFIED, result.failure_code)
             self.assertFalse(root.exists())
 
             with materialize_github_snapshot(snapshot) as workspace:
@@ -800,6 +958,136 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
 
 
 class AuditOnlyVerifierAttestationTests(unittest.TestCase):
+    def test_caller_boolean_and_digest_without_verified_decision_cannot_stage(self):
+        from app_contracts.verifier_attestation import VerifiedVerifierAttestation
+        from app_contracts.verifier_process import VerifierProcessRequest, serialize_verifier_request
+
+        class CallerClaimOnlyVerifier:
+            def verify(self, prepared: VerifierInput):
+                normal = AcceptingVerifier().verify(prepared)
+                request = VerifierProcessRequest.from_verifier_input(prepared)
+                return VerifiedVerifierAttestation(
+                    verifier_result=normal,
+                    key_id="fixture-key-1",
+                    invocation_nonce="a" * 64,
+                    request_digest=sha256_bytes(serialize_verifier_request(request)),
+                    verifier_profile_digest="sha256:" + "b" * 64,
+                    issued_at="2026-10-08T00:00:00Z",
+                    attestation_digest="sha256:" + "c" * 64,
+                    trust_enrollment_digest="sha256:" + "d" * 64,
+                    independent_host_trust_established=True,
+                    host_trust_decision_digest="sha256:" + "e" * 64,
+                    host_trust_decision=None,
+                )
+
+        class NoTouchStage:
+            save_calls = 0
+            load_calls = 0
+
+            def save(self, artifact):
+                self.save_calls += 1
+                raise AssertionError("caller claim must not stage")
+
+            def load(self, digest):
+                self.load_calls += 1
+                raise AssertionError("caller claim must not stage")
+
+        class Worker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                source = (ROOT / "fixtures/repository/project/calculator.py").read_text(
+                    encoding="utf-8"
+                )
+                return WorkerProposal((("calculator.py", source + "\n# staged\n"),))
+
+        stage = NoTouchStage()
+        result = run_local_execution(
+            valid_request(), Worker(), verifier=CallerClaimOnlyVerifier(),
+            stage_sink=stage,
+        )
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "verifier-attestation-invalid")
+        self.assertEqual((stage.save_calls, stage.load_calls), (0, 0))
+
+    def test_authority_reviewed_host_decision_allows_verified_result(self):
+        from app_contracts.verifier_attestation import VerifiedVerifierAttestation
+        from app_contracts.verifier_process import VerifierProcessRequest, serialize_verifier_request
+        from app_contracts.verifier_host_trust_decision import (
+            build_signed_verifier_host_trust_decision,
+            verify_verifier_host_trust_decision,
+        )
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        class TrustedReceiptVerifier:
+            def verify(self, prepared: VerifierInput):
+                normal = AcceptingVerifier().verify(prepared)
+                request = VerifierProcessRequest.from_verifier_input(prepared)
+                request_digest = sha256_bytes(serialize_verifier_request(request))
+                authority_key = Ed25519PrivateKey.generate()
+                authority_public_key = authority_key.public_key().public_bytes(
+                    serialization.Encoding.Raw, serialization.PublicFormat.Raw
+                )
+                now = datetime.now(timezone.utc).replace(microsecond=0)
+                enrollment_digest = "sha256:" + "d" * 64
+                profile_digest = "sha256:" + "b" * 64
+                key_id = "fixture-key-1"
+                host_decision_bytes = build_signed_verifier_host_trust_decision(
+                    decision_id="synthetic-executor-host-review",
+                    authority_key_id="synthetic-authority-1",
+                    enrollment_digest=enrollment_digest,
+                    endpoint_url="https://verifier.example.test/v1/verify",
+                    verifier_id=normal.verifier_id,
+                    verifier_profile_digest=profile_digest,
+                    verifier_key_id=key_id,
+                    worker_host_id="worker-host-a",
+                    verifier_host_id="verifier-host-b",
+                    host_separation_evidence_digest="sha256:" + "f" * 64,
+                    signing_key=authority_key,
+                    issued_at=now,
+                    expires_at=now + timedelta(hours=1),
+                )
+                host_decision = verify_verifier_host_trust_decision(
+                    host_decision_bytes,
+                    trusted_authority_keys={"synthetic-authority-1": authority_public_key},
+                    expected_enrollment_digest=enrollment_digest,
+                    expected_endpoint_url="https://verifier.example.test/v1/verify",
+                    expected_verifier_id=normal.verifier_id,
+                    expected_verifier_profile_digest=profile_digest,
+                    expected_verifier_key_id=key_id,
+                    expected_worker_host_id="worker-host-a",
+                    expected_verifier_host_id="verifier-host-b",
+                    expected_host_separation_evidence_digest="sha256:" + "f" * 64,
+                    now=now,
+                )
+                return VerifiedVerifierAttestation(
+                    verifier_result=normal,
+                    key_id=key_id,
+                    invocation_nonce="a" * 64,
+                    request_digest=request_digest,
+                    verifier_profile_digest=profile_digest,
+                    issued_at="2026-10-08T00:00:00Z",
+                    attestation_digest="sha256:" + "c" * 64,
+                    trust_enrollment_digest=enrollment_digest,
+                    independent_host_trust_established=True,
+                    host_trust_decision_digest=host_decision.decision_digest,
+                    host_trust_decision=host_decision,
+                )
+
+        class Worker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                source = (ROOT / "fixtures/repository/project/calculator.py").read_text(
+                    encoding="utf-8"
+                )
+                return WorkerProposal((("calculator.py", source + "\n# staged\n"),))
+
+        result = run_local_execution(
+            valid_request(), Worker(), verifier=TrustedReceiptVerifier()
+        )
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED, result.failure_code)
+        self.assertTrue(result.verifier_signature_valid)
+        self.assertTrue(result.verifier_independent_host_trust_established)
+        self.assertRegex(result.verifier_host_trust_decision_digest, r"sha256:[0-9a-f]{64}")
+
     def test_signed_receipt_fails_before_durable_stage_calls(self):
         from app_contracts.verifier_attestation import VerifiedVerifierAttestation
         from app_contracts.verifier_process import VerifierProcessRequest, serialize_verifier_request
@@ -817,6 +1105,7 @@ class AuditOnlyVerifierAttestationTests(unittest.TestCase):
                     verifier_profile_digest="sha256:" + "b" * 64,
                     issued_at="2026-10-08T00:00:00Z",
                     attestation_digest="sha256:" + "c" * 64,
+                    trust_enrollment_digest="sha256:" + "d" * 64,
                 )
 
         class NoTouchStage:
@@ -847,8 +1136,57 @@ class AuditOnlyVerifierAttestationTests(unittest.TestCase):
         self.assertEqual(result.verifier_attestation_digest, "sha256:" + "c" * 64)
         self.assertEqual(result.verifier_attestation_key_id, "fixture-key-1")
         self.assertEqual(result.verifier_attestation_profile_digest, "sha256:" + "b" * 64)
+        self.assertEqual(result.verifier_trust_enrollment_digest, "sha256:" + "d" * 64)
         self.assertIs(result.verifier_signature_valid, True)
         self.assertIs(result.verifier_independent_host_trust_established, False)
+        self.assertEqual((stage.save_calls, stage.load_calls), (0, 0))
+
+    def test_malformed_enrollment_digest_invalidates_attestation_before_stage(self):
+        from app_contracts.verifier_attestation import VerifiedVerifierAttestation
+        from app_contracts.verifier_process import VerifierProcessRequest, serialize_verifier_request
+
+        class MalformedReceiptVerifier:
+            def verify(self, prepared: VerifierInput):
+                normal = AcceptingVerifier().verify(prepared)
+                request = VerifierProcessRequest.from_verifier_input(prepared)
+                return VerifiedVerifierAttestation(
+                    verifier_result=normal,
+                    key_id="fixture-key-1",
+                    invocation_nonce="a" * 64,
+                    request_digest=sha256_bytes(serialize_verifier_request(request)),
+                    verifier_profile_digest="sha256:" + "b" * 64,
+                    issued_at="2026-10-08T00:00:00Z",
+                    attestation_digest="sha256:" + "c" * 64,
+                    trust_enrollment_digest="not-a-digest",
+                )
+
+        class NoTouchStage:
+            save_calls = 0
+            load_calls = 0
+
+            def save(self, artifact):
+                self.save_calls += 1
+                raise AssertionError("invalid attestation must not stage")
+
+            def load(self, digest):
+                self.load_calls += 1
+                raise AssertionError("invalid attestation must not stage")
+
+        class Worker:
+            def propose(self, task: WorkerInput) -> WorkerProposal:
+                source = (ROOT / "fixtures/repository/project/calculator.py").read_text(
+                    encoding="utf-8"
+                )
+                return WorkerProposal((
+                    ("calculator.py", source + "\n# staged\n"),
+                ))
+
+        stage = NoTouchStage()
+        result = run_local_execution(
+            valid_request(), Worker(), verifier=MalformedReceiptVerifier(), stage_sink=stage
+        )
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "verifier-attestation-invalid")
         self.assertEqual((stage.save_calls, stage.load_calls), (0, 0))
 
 

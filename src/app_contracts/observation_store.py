@@ -10,6 +10,7 @@ import copy
 import json
 from pathlib import Path
 import sqlite3
+from threading import Lock
 from typing import Any
 
 from .digests import sha256_digest
@@ -49,6 +50,8 @@ def run_gated_dispatch(
     checkpoint: dict[str, Any],
     intent_event: dict[str, Any],
     dispatch,
+    once: bool = False,
+    on_intent_recorded=None,
 ):
     """Record the checkpoint and the intent event before dispatch.
 
@@ -65,13 +68,25 @@ def run_gated_dispatch(
         raise PreDispatchError("pre-dispatch gate refused: store is invalid")
     if not callable(dispatch):
         raise PreDispatchError("pre-dispatch gate refused: dispatch is not callable")
+    if on_intent_recorded is not None and not callable(on_intent_recorded):
+        raise PreDispatchError("pre-dispatch gate refused: intent callback is invalid")
     try:
+        if once:
+            persist_once = getattr(store, "record_checkpoint_and_intent_once", None)
+            if not callable(persist_once):
+                raise ObservationStoreError("one-shot journal insertion unavailable")
+            cursor = persist_once(checkpoint, intent_event)
+            if on_intent_recorded is not None:
+                on_intent_recorded(cursor)
+            return cursor, dispatch()
         persist_pair = getattr(store, "record_checkpoint_and_intent", None)
         if callable(persist_pair):
             cursor = persist_pair(checkpoint, intent_event)
         else:
             store.record_checkpoint(checkpoint)
             cursor = store.append(intent_event)
+        if on_intent_recorded is not None:
+            on_intent_recorded(cursor)
     except (ContractValidationError, EventConflictError, ObservationStoreError) as exc:
         raise PreDispatchError(f"pre-dispatch gate refused: {exc}") from exc
     return cursor, dispatch()
@@ -85,6 +100,7 @@ class ObservationStore:
         self._digests: dict[str, str] = {}
         self._checkpoints: list[dict[str, Any]] = []
         self._checkpoint_digests: dict[str, str] = {}
+        self._claim_lock = Lock()
 
     def append(self, event: dict[str, Any]) -> int:
         """Validate and append an event, returning its insertion cursor.
@@ -158,6 +174,17 @@ class ObservationStore:
         self._checkpoints.append(copy.deepcopy(checkpoint))
         self._checkpoint_digests[checkpoint_id] = digest
         return len(self._checkpoints) - 1
+
+    def record_checkpoint_and_intent_once(
+        self, checkpoint: dict[str, Any], intent_event: dict[str, Any]
+    ) -> int:
+        """Atomically append one intent ID only once within this store instance."""
+        validate(intent_event, EVENT_SCHEMA)
+        with self._claim_lock:
+            if intent_event["event_id"] in self._digests:
+                raise EventConflictError("one-shot intent already recorded")
+            self.record_checkpoint(checkpoint)
+            return self.append(intent_event)
 
     def checkpoints(self) -> tuple[dict[str, Any], ...]:
         """Return stored checkpoints in insertion order as detached copies."""
@@ -528,6 +555,70 @@ class SQLiteObservationStore:
                 return event_cursor
         except sqlite3.Error as exc:
             raise ObservationStoreError("observation journal: gated records could not be stored") from exc
+
+    def record_checkpoint_and_intent_once(
+        self, checkpoint: dict[str, Any], intent_event: dict[str, Any]
+    ) -> int:
+        """Commit one checkpoint/intent pair and reject any repeated intent ID.
+
+        `BEGIN IMMEDIATE` serializes competing local processes before checking
+        the unique event ID. Only the process that inserts the deterministic
+        one-shot intent may dispatch the associated publication callback.
+        """
+        validate(intent_event, EVENT_SCHEMA)
+        intent_digest = sha256_digest(intent_event)
+        intent_id = intent_event["event_id"]
+        checkpoint_digest = sha256_digest(checkpoint) if isinstance(checkpoint, dict) else ""
+        checkpoint_id = checkpoint.get("checkpoint_id") if isinstance(checkpoint, dict) else None
+        try:
+            with self._connection:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self.check_checkpoint(checkpoint)
+                known_event = self._connection.execute(
+                    "SELECT 1 FROM observation_events WHERE event_id = ?",
+                    (intent_id,),
+                ).fetchone()
+                if known_event is not None:
+                    raise EventConflictError("one-shot intent already recorded")
+                known_checkpoint = self._connection.execute(
+                    "SELECT digest FROM observation_checkpoints WHERE checkpoint_id = ?",
+                    (checkpoint_id,),
+                ).fetchone()
+                if known_checkpoint is not None:
+                    if known_checkpoint["digest"] != checkpoint_digest:
+                        raise EventConflictError("checkpoint id conflict")
+                else:
+                    checkpoint_cursor = self._connection.execute(
+                        "SELECT COALESCE(MAX(cursor) + 1, 0) FROM observation_checkpoints"
+                    ).fetchone()[0]
+                    self._connection.execute(
+                        "INSERT INTO observation_checkpoints(checkpoint_id, cursor, checkpoint_json, digest) "
+                        "VALUES (?, ?, ?, ?)",
+                        (
+                            checkpoint_id,
+                            checkpoint_cursor,
+                            json.dumps(checkpoint, sort_keys=True, separators=(",", ":")),
+                            checkpoint_digest,
+                        ),
+                    )
+                event_cursor = self._connection.execute(
+                    "SELECT COALESCE(MAX(cursor) + 1, 0) FROM observation_events"
+                ).fetchone()[0]
+                self._connection.execute(
+                    "INSERT INTO observation_events(event_id, cursor, event_json, digest) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        intent_id,
+                        event_cursor,
+                        json.dumps(intent_event, sort_keys=True, separators=(",", ":")),
+                        intent_digest,
+                    ),
+                )
+                return event_cursor
+        except (ContractValidationError, EventConflictError, ObservationStoreError):
+            raise
+        except sqlite3.Error as exc:
+            raise ObservationStoreError("observation journal: one-shot intent could not be stored") from exc
 
     def close(self) -> None:
         self._connection.close()

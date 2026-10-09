@@ -1,0 +1,61 @@
+{
+  "protocol_version": 1,
+  "source": {
+    "owner": "SoldatovAlexander",
+    "repository": "brainbooster_full_v11",
+    "commit": "2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e",
+    "tree": "2007066217aadafd9887fb3e3069220333b4fddb",
+    "file_count": 23,
+    "content_digest": "sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad",
+    "evidence_origin": "github_rest_api_claim"
+  },
+  "function": {
+    "method": "POST",
+    "path": "/save-session",
+    "write_table": "sessions",
+    "numeric_fields": ["level", "correct", "wrong", "total", "time_ms"],
+    "invalid_oracle": {"http_status": 422, "rows_written": 0},
+    "valid_control": {
+      "payload": {
+        "telegram_id": "synthetic-probe",
+        "level": 2,
+        "correct": 1,
+        "wrong": 0,
+        "total": 1,
+        "time_ms": 250
+      },
+      "expected": {"http_status": 200, "rows_written": 1}
+    }
+  },
+  "invalid_value_classes": [
+    {"id": "boolean", "value": true},
+    {"id": "fractional", "value": 1.5},
+    {"id": "numeric_string", "value": "2"},
+    {"id": "signed64_high_overflow", "value": 9223372036854775808},
+    {"id": "signed64_low_overflow", "value": -9223372036854775809}
+  ],
+  "case_expansion": {
+    "id_template": "invalid-{field}-{value_class}",
+    "one_mutated_field_per_case": true,
+    "reset_database_between_cases": true,
+    "count": 25
+  },
+  "scenario_blocks": [
+    {"id": "S1-canonical-repair", "expected_outcome": "target_patch_pass"},
+    {"id": "S2-transfer-time-ms", "expected_outcome": "target_patch_transfer_pass"},
+    {"id": "S3-incomplete-conflict", "expected_outcome": "clarification_no_change"},
+    {"id": "S4-test-tool-failure", "expected_outcome": "no_pass_no_retry"},
+    {"id": "S5-denied-publication", "expected_outcome": "refusal_no_provider_dispatch"}
+  ],
+  "arms": [
+    {"id": "A", "context": "structured", "correction": false},
+    {"id": "B", "context": "flat", "correction": false},
+    {"id": "C", "context": "structured", "correction": true},
+    {"id": "D", "context": "flat", "correction": true}
+  ],
+  "repeats_per_arm_scenario": 5,
+  "total_worker_run_attempts": 100,
+  "execution_state": "PREREGISTERED_NOT_RUN",
+  "credential_free": true,
+  "external_write": false
+}

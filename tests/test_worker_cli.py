@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
@@ -43,6 +43,9 @@ from app_contracts.github_snapshot import (
     GitHubSnapshotError,
 )
 from app_contracts.github_http_transport import GitHubRateLimitEvidence
+from app_contracts.observation_store import ObservationStore
+from app_contracts.observer_runtime import JournaledProposalWorker
+from app_contracts.observer_report import build_history_report
 from app_contracts.pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
 from app_contracts.openai_worker import OpenAIProposalWorker
 from app_contracts.deepseek_worker import DeepSeekProposalWorker
@@ -493,6 +496,9 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                 content_digest=content_digest,
             ),
             files=tuple(files),
+            verified_commit_object=cli.GitCommitObject(
+                cli.REMOTE_REPOSITORY_COMMIT, cli.REMOTE_REPOSITORY_TREE
+            ),
         )
 
     def profile(self) -> cli.RemoteSnapshotExecutionProfile:
@@ -518,6 +524,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         remaining=60,
         observed_monotonic=None,
         provider_call_approved=True,
+        snapshot_evidence_origin="github_rest_api_claim",
     ):
         evidence = GitHubRateLimitEvidence(
             status=status,
@@ -535,6 +542,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             task_id=task_id,
             readiness=evidence,
             provider_call_approved=provider_call_approved,
+            snapshot_evidence_origin=snapshot_evidence_origin,
         )
 
     def test_deepseek_profile_factory_injects_bounded_worker_without_credential_lookup(self):
@@ -576,9 +584,24 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             )
         self.assertEqual(calls, [])
 
+    def test_codeload_profile_does_not_require_a_raw_git_commit_source(self):
+        profile = replace(
+            self.profile(),
+            git_executable="/nonexistent/agent00x-git",
+            snapshot_evidence_origin="github_codeload_archive",
+        )
+        self.assertIs(cli._validate_remote_execution_profile(profile), profile)
+
     def test_explicit_runtime_wires_pinned_docker_and_sqlite_without_lookup(self):
         calls: list[str] = []
         captured: dict = {}
+        observer_store = ObservationStore()
+        execution_worker = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            observer_store,
+            process_id="process-cli-runtime-001",
+            task_id="task-cli-runtime-001",
+        )
         verifier_config = cli.VerifierContainerConfig(
             docker_executable="/usr/bin/docker",
             runtime_image_id="sha256:" + "a" * 64,
@@ -588,6 +611,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         def fake_main(argv, **kwargs):
             captured["argv"] = argv
             captured["profile"] = kwargs["remote_execution_profile"]
+            captured["execution_worker"] = kwargs["execution_worker"]
             return 0
 
         with tempfile.TemporaryDirectory(prefix="agent00x-runtime-factory-") as root:
@@ -607,6 +631,8 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                     execution_permit=self.permit(
                         "process-cli-runtime-001", "task-cli-runtime-001"
                     ),
+                    observation_store=observer_store,
+                    execution_worker=execution_worker,
                 )
 
             self.assertEqual(code, 0)
@@ -615,6 +641,8 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             self.assertEqual(captured["argv"], ["--remote-snapshot-execute"])
             profile = captured["profile"]
             self.assertEqual(profile.stage_database_path, database)
+            self.assertIs(profile.observation_store, observer_store)
+            self.assertIs(captured["execution_worker"], execution_worker)
             self.assertIs(type(profile.worker), DeepSeekProposalWorker)
             self.assertIs(type(profile.worker.channel), DeepSeekHTTPChannel)
             self.assertIs(type(profile.verifier), cli.DockerContainerVerifier)
@@ -887,6 +915,31 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                     task_id="task-cli-remote-001",
                 )
 
+    def test_permit_source_mismatch_fails_before_either_snapshot_reader(self):
+        permit = self.permit(snapshot_evidence_origin="github_rest_api_claim")
+        profile = replace(
+            self.profile(), snapshot_evidence_origin="github_codeload_archive"
+        )
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            patch.object(cli, "read_github_snapshot_contents") as rest_reader,
+            patch.object(cli, "read_github_archive_snapshot_contents") as archive_reader,
+        ):
+            code = cli.main(
+                ["--remote-snapshot-execute"],
+                stdout=out,
+                stderr=err,
+                remote_execution_profile=profile,
+                execution_permit=permit,
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(rest_reader.call_count, 0)
+        self.assertEqual(archive_reader.call_count, 0)
+        self.assertEqual(
+            json.loads(out.getvalue())["failure_code"],
+            "remote-execution-authorization-unavailable",
+        )
+
     def test_fixed_snapshot_profile_executes_and_emits_only_digest_evidence(self):
         snapshot = self.make_full_snapshot()
         result = self.verified_result()
@@ -915,6 +968,8 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertEqual(request.commit_oid, cli.REMOTE_REPOSITORY_COMMIT)
         self.assertIsNone(request.include_paths)
         self.assertIs(read.call_args.args[1], transport)
+        source = read.call_args.kwargs["commit_object_source"]
+        self.assertIs(type(source), cli.GitHubRawCommitObjectSource)
         args = execute.call_args.kwargs
         self.assertIs(args["worker"], profile.worker)
         self.assertIs(args["verifier"], profile.verifier)
@@ -927,13 +982,295 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertEqual(payload["external_write"], False)
         self.assertEqual(payload["approval"], "not_created")
         self.assertEqual(payload["publication"], "not_attempted")
+        self.assertEqual(
+            payload["raw_commit_object"],
+            {
+                "status": "verified-by-object-hash",
+                "commit_oid": cli.REMOTE_REPOSITORY_COMMIT,
+                "root_tree_oid": cli.REMOTE_REPOSITORY_TREE,
+            },
+        )
         self.assertIn(
-            "independent-verifier-trust-is-not-attested-by-this-cli",
+            "verifier-trust-depends-on-the-injected-authority-and-host-decision",
             payload["limitations"],
         )
         self.assertIn("verifier_identity_digest", payload)
         self.assertNotIn("SOURCE-CANARY", out.getvalue())
         self.assertNotIn("SYNTHETIC-PROMPT-CANARY", out.getvalue())
+
+    def test_observed_snapshot_intake_precedes_same_worker_executor_handoff(self):
+        snapshot = self.make_full_snapshot()
+        result = self.verified_result()
+        observer_store = ObservationStore()
+        profile = replace(self.profile(), observation_store=observer_store)
+        execution_worker = JournaledProposalWorker(
+            profile.worker,
+            observer_store,
+            process_id=profile.process_id,
+            task_id=profile.task_id,
+        )
+        execution_worker.run_controlled_step(
+            "GitHubReadiness.fetch",
+            lambda: "synthetic readiness metadata",
+            process_id=profile.process_id,
+        )
+        issued_permit = execution_worker.run_controlled_step(
+            "RemoteExecutionPermit.issue",
+            self.permit,
+            process_id=profile.process_id,
+        )
+        raw_source = lambda _claim: b"synthetic raw commit object"
+        captured = {}
+        out, err = io.StringIO(), io.StringIO()
+
+        def fake_snapshot_reader(request, transport, *, commit_object_source):
+            authorization_event = observer_store.events()[-1]
+            self.assertEqual(authorization_event["event_type"], "decision_applied")
+            self.assertEqual(authorization_event["decision_or_tool"], "RemoteExecutionPermit.consume")
+            self.assertEqual(authorization_event["status"], "ok")
+            response = transport(
+                "GET",
+                "https://api.github.com/repos/Owner/Repo/commits/"
+                + request.commit_oid,
+                {
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2026-03-10",
+                },
+                1_000_000,
+                allow_redirects=False,
+            )
+            self.assertEqual(response, {"status": 200, "body": b"{}"})
+            self.assertEqual(
+                commit_object_source(SimpleNamespace()), raw_source(None)
+            )
+            return snapshot
+
+        def fake_executor(
+            _snapshot,
+            *,
+            worker,
+            observation_store,
+            **_kwargs,
+        ):
+            self.assertEqual(
+                observation_store.events()[-1]["event_type"], "decision_applied"
+            )
+            self.assertEqual(observation_store.events()[-1]["status"], "ok")
+            captured["worker"] = worker
+            captured["store"] = observation_store
+            self.assertIs(worker, execution_worker)
+            return result
+
+        with (
+            patch.object(cli, "GitHubAnonymousSnapshotTransport", return_value=lambda *_args, **_kwargs: {"status": 200, "body": b"{}"}),
+            patch.object(cli, "GitHubRawCommitObjectSource", return_value=raw_source),
+            patch.object(cli, "read_github_snapshot_contents", side_effect=fake_snapshot_reader),
+            patch.object(cli, "REMOTE_REPOSITORY_CONTENT_DIGEST", snapshot.claim.content_digest),
+            patch.object(cli, "run_remote_snapshot_execution", side_effect=fake_executor),
+        ):
+            code = cli.main(
+                ["--remote-snapshot-execute"],
+                stdout=out,
+                stderr=err,
+                remote_execution_profile=profile,
+                execution_permit=issued_permit,
+                execution_worker=execution_worker,
+            )
+
+        events = observer_store.events()
+        evidence = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(
+            evidence["observer"],
+            {
+                "run_id": events[-1]["run_id"],
+                "as_of_cursor": len(events) - 1,
+                "completeness": "partial",
+            },
+        )
+        report = build_history_report(
+            list(enumerate(events)),
+            list(enumerate(observer_store.checkpoints())),
+            run_id=evidence["observer"]["run_id"],
+            as_of_cursor=evidence["observer"]["as_of_cursor"],
+        )
+        self.assertEqual(
+            report["snapshot"]["event_count"],
+            evidence["observer"]["as_of_cursor"] + 1,
+        )
+        self.assertEqual(report["snapshot"]["completeness"], "partial")
+        self.assertEqual(
+            [event["decision_or_tool"] for event in events if event["event_type"] == "tool_requested"],
+            [
+                "GitHubReadiness.fetch",
+                "GitHubSnapshot.GET.commit",
+                "GitHubRawCommitObjectSource.read",
+            ],
+        )
+        self.assertEqual(
+            [event["sequence"] for event in events], list(range(len(events)))
+        )
+        self.assertEqual(
+            [
+                event.get("decision_or_tool")
+                for event in events
+                if event.get("event_type")
+                in {"decision_proposed", "tool_requested"}
+                and event.get("decision_or_tool")
+                in {
+                    "GitHubReadiness.fetch",
+                    "RemoteExecutionPermit.issue",
+                    "RemoteExecutionPermit.consume",
+                    "PinnedSnapshot.validate-fixed-pin",
+                }
+            ],
+            [
+                "GitHubReadiness.fetch",
+                "RemoteExecutionPermit.issue",
+                "RemoteExecutionPermit.consume",
+                "PinnedSnapshot.validate-fixed-pin",
+            ],
+        )
+        self.assertEqual(len({event["run_id"] for event in events}), 1)
+        self.assertEqual(type(captured["worker"]).__name__, "JournaledProposalWorker")
+        self.assertTrue(
+            captured["worker"].matches(
+                observer_store,
+                process_id=profile.process_id,
+                task_id=profile.task_id,
+            )
+        )
+        self.assertIs(captured["store"], observer_store)
+        self.assertEqual(evidence["status"], "verified")
+
+    def test_observed_rejected_permit_stops_before_snapshot_intake(self):
+        observer_store = ObservationStore()
+        profile = replace(self.profile(), observation_store=observer_store)
+        out, err = io.StringIO(), io.StringIO()
+        rejected_permit = self.permit(process_id="process-other-cli-remote-001")
+        with (
+            patch.object(cli, "read_github_snapshot_contents") as read_snapshot,
+            patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+        ):
+            code = cli.main(
+                ["--remote-snapshot-execute"],
+                stdout=out,
+                stderr=err,
+                remote_execution_profile=profile,
+                execution_permit=rejected_permit,
+            )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(
+            json.loads(out.getvalue()),
+            {
+                "status": "error",
+                "failure_code": "remote-execution-authorization-unavailable",
+                "observer": {
+                    "run_id": observer_store.events()[0]["run_id"],
+                    "as_of_cursor": len(observer_store.events()) - 1,
+                    "completeness": "partial",
+                },
+            },
+        )
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(observer_store.events()[-1]["event_type"], "decision_applied")
+        self.assertEqual(observer_store.events()[-1]["status"], "denied")
+        read_snapshot.assert_not_called()
+
+    def test_observed_permit_journal_failures_stop_before_snapshot_intake(self):
+        class RefusingStore(ObservationStore):
+            def record_checkpoint(self, checkpoint):
+                if checkpoint.get("agent_id") == "service-execution-authorizer":
+                    raise RuntimeError("synthetic gate refusal")
+                return super().record_checkpoint(checkpoint)
+
+        class LoseTerminalStore(ObservationStore):
+            def append(self, event):
+                if (
+                    event.get("agent_id") == "service-execution-authorizer"
+                    and event.get("event_type") == "decision_applied"
+                ):
+                    raise RuntimeError("synthetic terminal loss")
+                return super().append(event)
+
+        for store_type, consumed in ((RefusingStore, False), (LoseTerminalStore, True)):
+            with self.subTest(store=store_type.__name__):
+                observer_store = store_type()
+                profile = replace(self.profile(), observation_store=observer_store)
+                permit = self.permit()
+                out, err = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(cli, "read_github_snapshot_contents") as read_snapshot,
+                    patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+                ):
+                    code = cli.main(
+                        ["--remote-snapshot-execute"],
+                        stdout=out,
+                        stderr=err,
+                        remote_execution_profile=profile,
+                        execution_permit=permit,
+                    )
+                self.assertEqual(code, 2)
+                self.assertEqual(
+                    json.loads(out.getvalue())["failure_code"],
+                    "remote-execution-authorization-unavailable",
+                )
+                self.assertEqual(err.getvalue(), "")
+                read_snapshot.assert_not_called()
+                self.assertEqual(permit._consumed, consumed)
+
+    def test_observed_pin_mismatch_is_journaled_before_executor_refusal(self):
+        snapshot = self.make_full_snapshot()
+        observer_store = ObservationStore()
+        profile = replace(self.profile(), observation_store=observer_store)
+        with (
+            patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+            patch.object(cli, "read_github_snapshot_contents", return_value=snapshot),
+            patch.object(cli, "run_remote_snapshot_execution") as execute,
+        ):
+            with self.assertRaisesRegex(ValueError, "^remote snapshot pin mismatch$"):
+                cli._run_pinned_remote_execution(profile)
+        events = observer_store.events()
+        self.assertEqual(events[-2]["event_type"], "decision_proposed")
+        self.assertEqual(events[-1]["event_type"], "decision_applied")
+        self.assertEqual(events[-1]["status"], "denied")
+        self.assertEqual(events[-1]["error_code"], "pinned-snapshot-rejected")
+        execute.assert_not_called()
+
+    def test_unknown_observed_pin_decision_never_reaches_executor(self):
+        class LoseDecisionTerminalStore:
+            def __init__(self):
+                self.inner = ObservationStore()
+
+            def append(self, event):
+                if event.get("event_type") == "decision_applied":
+                    raise RuntimeError("synthetic journal loss")
+                return self.inner.append(event)
+
+            def events(self):
+                return self.inner.events()
+
+            def record_checkpoint(self, checkpoint):
+                return self.inner.record_checkpoint(checkpoint)
+
+        snapshot = self.make_full_snapshot()
+        observer_store = LoseDecisionTerminalStore()
+        profile = replace(self.profile(), observation_store=observer_store)
+        with (
+            patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+            patch.object(cli, "read_github_snapshot_contents", return_value=snapshot),
+            patch.object(
+                cli, "REMOTE_REPOSITORY_CONTENT_DIGEST", snapshot.claim.content_digest
+            ),
+            patch.object(cli, "run_remote_snapshot_execution") as execute,
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "^remote CLI observer is unavailable$"
+            ):
+                cli._run_pinned_remote_execution(profile)
+        execute.assert_not_called()
 
     @unittest.skipUnless(
         os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1",
@@ -1302,6 +1639,43 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
 
     def test_snapshot_digest_mismatch_stops_before_execution(self):
         snapshot = self.make_full_snapshot()
+        observer_store = ObservationStore()
+        profile = replace(self.profile(), observation_store=observer_store)
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+            patch.object(cli, "read_github_snapshot_contents", return_value=snapshot),
+            patch.object(cli, "run_remote_snapshot_execution") as execute,
+        ):
+            code = cli.main(
+                ["--remote-snapshot-execute"],
+                stdout=out,
+                stderr=err,
+                remote_execution_profile=profile,
+                execution_permit=self.permit(),
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            json.loads(out.getvalue()),
+            {
+                "status": "failed",
+                "failure_code": "remote-snapshot-execution-failed",
+                "observer": {
+                    "run_id": observer_store.events()[0]["run_id"],
+                    "as_of_cursor": len(observer_store.events()) - 1,
+                    "completeness": "partial",
+                },
+            },
+        )
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(observer_store.events()[-1]["event_type"], "decision_applied")
+        self.assertEqual(observer_store.events()[-1]["status"], "denied")
+        execute.assert_not_called()
+
+    def test_missing_raw_commit_object_proof_stops_before_worker_or_target(self):
+        snapshot = replace(
+            self.make_full_snapshot(), verified_commit_object=None
+        )
         out, err = io.StringIO(), io.StringIO()
         with (
             patch.object(cli, "GitHubAnonymousSnapshotTransport"),
@@ -1315,6 +1689,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                 remote_execution_profile=self.profile(),
                 execution_permit=self.permit(),
             )
+
         self.assertEqual(code, 1)
         self.assertEqual(
             json.loads(out.getvalue()),
@@ -1345,6 +1720,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                 verifier_attestation_digest="sha256:" + "a" * 64,
                 verifier_attestation_key_id="fixture-key-1",
                 verifier_attestation_profile_digest="sha256:" + "b" * 64,
+                verifier_trust_enrollment_digest="sha256:" + "d" * 64,
                 verifier_signature_valid=True,
                 verifier_independent_host_trust_established=False,
             )
@@ -1356,6 +1732,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                 "attestation_digest": "sha256:" + "a" * 64,
                 "key_id": "fixture-key-1",
                 "verifier_profile_digest": "sha256:" + "b" * 64,
+                "trust_enrollment_digest": "sha256:" + "d" * 64,
                 "signature_valid": True,
                 "independent_host_trust_established": False,
             },
@@ -1369,6 +1746,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             verifier_attestation_digest="sha256:" + "a" * 64,
             verifier_attestation_key_id="fixture-key-1",
             verifier_attestation_profile_digest="sha256:" + "b" * 64,
+            verifier_trust_enrollment_digest="sha256:" + "d" * 64,
             verifier_signature_valid=True,
             verifier_independent_host_trust_established=False,
         )
@@ -1383,6 +1761,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                 "attestation_digest": "sha256:" + "a" * 64,
                 "key_id": "fixture-key-1",
                 "verifier_profile_digest": "sha256:" + "b" * 64,
+                "trust_enrollment_digest": "sha256:" + "d" * 64,
                 "signature_valid": True,
                 "independent_host_trust_established": False,
             },
@@ -1391,22 +1770,45 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertNotIn("verified_contents_digest", payload)
         self.assertNotIn("staged_change_digest", payload)
 
+    def test_caller_supplied_host_trust_boolean_cannot_be_projected_as_verified(self):
+        result = replace(
+            self.verified_result(),
+            verifier_attestation_digest="sha256:" + "a" * 64,
+            verifier_attestation_key_id="fixture-key-1",
+            verifier_attestation_profile_digest="sha256:" + "b" * 64,
+            verifier_trust_enrollment_digest="sha256:" + "d" * 64,
+            verifier_host_trust_decision_digest="sha256:" + "e" * 64,
+            verifier_signature_valid=True,
+            verifier_independent_host_trust_established=True,
+        )
+
+        payload = cli._remote_execution_evidence(result)
+
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["failure_code"], "verifier-attestation-invalid")
+        self.assertNotIn("verifier_attestation", payload)
+        serialized = json.dumps(payload)
+        self.assertNotIn('"signature":', serialized)
+        self.assertNotIn("public_key", serialized)
+
     def test_malformed_verified_attestation_is_sanitized_before_success_projection(self):
         result = replace(
             self.verified_result(),
             verifier_attestation_digest="SECRET-CANARY",
+            verifier_trust_enrollment_digest="SECRET-ENROLLMENT-CANARY",
             verifier_independent_host_trust_established=True,
         )
         payload = cli._remote_execution_evidence(result)
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["failure_code"], "verifier-attestation-invalid")
         self.assertNotIn("SECRET-CANARY", json.dumps(payload))
+        self.assertNotIn("SECRET-ENROLLMENT-CANARY", json.dumps(payload))
         self.assertNotIn("verifier_attestation", payload)
 
     def test_verified_evidence_reports_only_an_explicit_existing_stage_path(self):
         with tempfile.TemporaryDirectory(prefix="remote-stage-locator-") as root:
             database = Path(root) / "stage.sqlite3"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     "CREATE TABLE staged_artifacts (digest TEXT PRIMARY KEY)"
                 )
@@ -1447,6 +1849,15 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                         ):
                             cli._run_pinned_remote_execution(profile)
                     read_snapshot.assert_not_called()
+
+    def test_remote_profile_rejects_invalid_observer_before_snapshot(self):
+        profile = replace(self.profile(), observation_store=object())
+        with patch.object(cli, "read_github_snapshot_contents") as read_snapshot:
+            with self.assertRaisesRegex(
+                ValueError, "^remote CLI runtime is unavailable$"
+            ):
+                cli._run_pinned_remote_execution(profile)
+        read_snapshot.assert_not_called()
 
 
 class RemoteSnapshotCompositionTests(unittest.TestCase):
@@ -1560,6 +1971,38 @@ class RemoteSnapshotCompositionTests(unittest.TestCase):
         self.assertFalse(captured["path"].exists())
         self.assertNotIn("def routes", repr(result))
         self.assertNotIn("def routes", repr(request))
+
+    def test_composition_threads_explicit_observer_store_to_executor(self):
+        captured = {}
+        observer_store = SimpleNamespace(
+            append=lambda _event: 0,
+            events=lambda: (),
+            record_checkpoint=lambda _checkpoint: 0,
+        )
+
+        def fake_run(
+            request,
+            worker,
+            *,
+            verifier,
+            sandbox_backend,
+            stage_sink,
+            require_durable_stage,
+            observation_store,
+        ):
+            captured["observation_store"] = observation_store
+            captured["workspace"] = request.remote_workspace
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_origin="github_rest_api_claim",
+                failure_code="worker-failed",
+            )
+
+        with patch.object(snapshot_pipeline, "run_local_execution", side_effect=fake_run):
+            self.invoke(observation_store=observer_store)
+
+        self.assertIs(captured["observation_store"], observer_store)
+        self.assertTrue(captured["workspace"].closed)
 
     def test_executor_failures_and_exceptions_still_close_lease(self):
         outcomes = (

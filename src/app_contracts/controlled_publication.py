@@ -28,6 +28,11 @@ from .broker import (
 from .digests import sha256_bytes, sha256_digest
 from .gateway import GatewayDecision, GatewayPath
 from .mock_github import MockGitHubEndpoint, MockPullRequest
+from .observer_runtime import (
+    ControlledPublicationJournalError,
+    ControlledPublicationOutcomeUnknownError,
+    JournaledProposalWorker,
+)
 from .publication import (
     PublicationJournal,
     PublicationRecoveryRequired,
@@ -54,6 +59,7 @@ def run_approval_gate(
     engine_intent: Any = None,
     now: datetime,
     proceed: Callable[[PublicationIntent], T],
+    observer: JournaledProposalWorker | None = None,
 ) -> T:
     """Pass a seed-bound intent downstream only with a fresh matching approval.
 
@@ -69,22 +75,34 @@ def run_approval_gate(
     if not isinstance(approval, dict):
         raise ControlledPublicationError("controlled publication: approval is missing")
     moment = _require_clock(now)
-    if engine_intent is None:
-        check_intent_approved(asdict(intent), approval)
+
+    def validate_approval() -> bool:
+        if engine_intent is None:
+            check_intent_approved(asdict(intent), approval)
+        else:
+            _require_engine_intent_binding(intent, engine_intent)
+            try:
+                check_intent_approved(engine_intent, approval)
+            except Exception:
+                raise ControlledPublicationError(
+                    "controlled publication: approval binding is invalid"
+                ) from None
+            if _require_approval_expiry(
+                {"expires_at": engine_intent.get("expires_at")}
+            ) <= moment:
+                raise ControlledPublicationError(
+                    "controlled publication: engine intent expired"
+                )
+        if _require_approval_expiry(approval) <= moment:
+            raise ControlledPublicationError("controlled publication: approval expired")
+        return True
+
+    if observer is None:
+        validate_approval()
     else:
-        _require_engine_intent_binding(intent, engine_intent)
-        try:
-            check_intent_approved(engine_intent, approval)
-        except Exception:
-            raise ControlledPublicationError(
-                "controlled publication: approval binding is invalid"
-            ) from None
-        if _require_approval_expiry(
-            {"expires_at": engine_intent.get("expires_at")}
-        ) <= moment:
-            raise ControlledPublicationError("controlled publication: engine intent expired")
-    if _require_approval_expiry(approval) <= moment:
-        raise ControlledPublicationError("controlled publication: approval expired")
+        observer.run_controlled_step(
+            "Approval.validate", validate_approval, process_id=intent.process_id
+        )
     return proceed(intent)
 
 
@@ -99,6 +117,7 @@ def run_policy_gate(
     actuator_id: Any,
     now: datetime,
     proceed: Callable[[PublicationIntent, Any, dict], T],
+    observer: JournaledProposalWorker | None = None,
 ) -> T:
     """Evaluate the exact approval through Policy Engine before proceeding.
 
@@ -156,32 +175,54 @@ def run_policy_gate(
     if _require_approval_expiry({"expires_at": engine_intent["expires_at"]}) <= moment:
         raise ControlledPublicationError("controlled publication: engine intent expired")
 
-    decision = policy.decide(
-        decision_id=decision_id,
-        actuator_request={
-            "operation": "publish_pull_request",
-            "repository_id": intent.repository_id,
-            "actuator_id": actuator_id,
-            "staged_change_digest": intent.staged_change_digest,
-            "branch_namespace": engine_intent["branch_namespace"],
-            "idempotency_key": intent.idempotency_key,
-        },
-        approval=approval,
-        staged_change=staged_change,
-        intent=engine_intent,
-        now=moment,
+    def evaluate_policy() -> dict:
+        decision = policy.decide(
+            decision_id=decision_id,
+            actuator_request={
+                "operation": "publish_pull_request",
+                "repository_id": intent.repository_id,
+                "actuator_id": actuator_id,
+                "staged_change_digest": intent.staged_change_digest,
+                "branch_namespace": engine_intent["branch_namespace"],
+                "idempotency_key": intent.idempotency_key,
+            },
+            approval=approval,
+            staged_change=staged_change,
+            intent=engine_intent,
+            now=moment,
+        )
+        if not isinstance(decision, dict):
+            raise ControlledPublicationError(
+                "controlled publication: policy decision is invalid"
+            )
+        if decision.get("operation") != "publish_pull_request":
+            raise ControlledPublicationError(
+                "controlled publication: decision operation mismatch"
+            )
+        if decision.get("repository_id") != intent.repository_id:
+            raise ControlledPublicationError(
+                "controlled publication: decision repository mismatch"
+            )
+        if decision.get("staged_change_digest") != intent.staged_change_digest:
+            raise ControlledPublicationError(
+                "controlled publication: decision digest mismatch"
+            )
+        if decision.get("policy_version") != approval["policy_version"]:
+            raise ControlledPublicationError(
+                "controlled publication: decision policy version mismatch"
+            )
+        check_decision_usable(decision, now=moment)
+        return decision
+
+    decision = (
+        evaluate_policy()
+        if observer is None
+        else observer.run_controlled_step(
+            "PolicyEngine.evaluate",
+            evaluate_policy,
+            process_id=intent.process_id,
+        )
     )
-    if not isinstance(decision, dict):
-        raise ControlledPublicationError("controlled publication: policy decision is invalid")
-    if decision.get("operation") != "publish_pull_request":
-        raise ControlledPublicationError("controlled publication: decision operation mismatch")
-    if decision.get("repository_id") != intent.repository_id:
-        raise ControlledPublicationError("controlled publication: decision repository mismatch")
-    if decision.get("staged_change_digest") != intent.staged_change_digest:
-        raise ControlledPublicationError("controlled publication: decision digest mismatch")
-    if decision.get("policy_version") != approval["policy_version"]:
-        raise ControlledPublicationError("controlled publication: decision policy version mismatch")
-    check_decision_usable(decision, now=moment)
     return proceed(intent, approval, decision)
 
 
@@ -194,6 +235,7 @@ def run_gateway_gate(
     *,
     now: datetime,
     proceed: Callable[[PublicationIntent, Any, dict, GatewayDecision], T],
+    observer: JournaledProposalWorker | None = None,
 ) -> T:
     """Pass the approved intent to broker only on a matching gateway slow-allow.
 
@@ -222,21 +264,32 @@ def run_gateway_gate(
     moment = _require_clock(now)
     check_decision_usable(decision, now=moment)
     _require_bound_envelope(intent, envelope)
-    try:
-        gateway_decision = gateway(envelope, now=moment)
-    except Exception:
-        raise ControlledPublicationError(
-            "controlled publication: gateway invocation failed"
-        ) from None
-    if (
-        not isinstance(gateway_decision, GatewayDecision)
-        or gateway_decision.allowed is not True
-        or gateway_decision.path is not GatewayPath.SLOW
-        or not isinstance(gateway_decision.reason_codes, tuple)
-    ):
-        raise ControlledPublicationError(
-            "controlled publication: gateway has not authorized slow path"
+
+    def authorize_gateway() -> GatewayDecision:
+        try:
+            gateway_decision = gateway(envelope, now=moment)
+        except Exception:
+            raise ControlledPublicationError(
+                "controlled publication: gateway invocation failed"
+            ) from None
+        if (
+            not isinstance(gateway_decision, GatewayDecision)
+            or gateway_decision.allowed is not True
+            or gateway_decision.path is not GatewayPath.SLOW
+            or not isinstance(gateway_decision.reason_codes, tuple)
+        ):
+            raise ControlledPublicationError(
+                "controlled publication: gateway has not authorized slow path"
+            )
+        return gateway_decision
+
+    gateway_decision = (
+        authorize_gateway()
+        if observer is None
+        else observer.run_controlled_step(
+            "Gateway.authorize", authorize_gateway, process_id=intent.process_id
         )
+    )
     return proceed(intent, approval, decision, gateway_decision)
 
 
@@ -289,6 +342,7 @@ def run_broker_gate(
     proceed: Callable[[PublicationIntent, Any, dict, GatewayDecision, Any], T],
     seed: Any,
     journal: Any,
+    observer: JournaledProposalWorker | None = None,
 ) -> T:
     """Open one single-use channel for the same verified request.
 
@@ -360,25 +414,50 @@ def run_broker_gate(
         if not callable(gateway):
             raise ControlledPublicationError("controlled publication: gateway is invalid")
         _require_bound_envelope(policy_intent, envelope)
-        try:
-            gateway_decision = gateway(envelope, now=moment)
-        except Exception:
-            raise ControlledPublicationError(
-                "controlled publication: gateway invocation failed"
-            ) from None
-        if (
-            not isinstance(gateway_decision, GatewayDecision)
-            or gateway_decision.allowed is not True
-            or gateway_decision.path is not GatewayPath.SLOW
-            or not isinstance(gateway_decision.reason_codes, tuple)
-        ):
-            raise ControlledPublicationError(
-                "controlled publication: gateway has not authorized slow path"
+
+        def authorize_gateway() -> GatewayDecision:
+            try:
+                gateway_decision = gateway(envelope, now=moment)
+            except Exception:
+                raise ControlledPublicationError(
+                    "controlled publication: gateway invocation failed"
+                ) from None
+            if (
+                not isinstance(gateway_decision, GatewayDecision)
+                or gateway_decision.allowed is not True
+                or gateway_decision.path is not GatewayPath.SLOW
+                or not isinstance(gateway_decision.reason_codes, tuple)
+            ):
+                raise ControlledPublicationError(
+                    "controlled publication: gateway has not authorized slow path"
+                )
+            return gateway_decision
+
+        gateway_decision = (
+            authorize_gateway()
+            if observer is None
+            else observer.run_controlled_step(
+                "Gateway.authorize",
+                authorize_gateway,
+                process_id=policy_intent.process_id,
             )
+        )
         try:
-            channel = broker.open_github_publication_channel(
-                credential_grant, actuator_request, now=moment
+            channel = (
+                broker.open_github_publication_channel(
+                    credential_grant, actuator_request, now=moment
+                )
+                if observer is None
+                else observer.run_controlled_step(
+                    "CredentialBroker.open-channel",
+                    lambda: broker.open_github_publication_channel(
+                        credential_grant, actuator_request, now=moment
+                    ),
+                    process_id=policy_intent.process_id,
+                )
             )
+        except (ControlledPublicationJournalError, ControlledPublicationOutcomeUnknownError):
+            raise
         except Exception:
             raise ControlledPublicationError(
                 "controlled publication: broker invocation failed"
@@ -405,6 +484,7 @@ def run_broker_gate(
         actuator_id=actuator_id,
         now=moment,
         proceed=open_after_policy,
+        observer=observer,
     )
 
 
@@ -426,6 +506,8 @@ def run_controlled_local_publication(
     verified_files: Any = None,
     actuator_id: Any,
     now: datetime,
+    observer: JournaledProposalWorker | None = None,
+    trusted_verifier_authority_keys: Any = None,
 ) -> Any:
     """Run approval-to-publication through one explicitly typed channel.
 
@@ -458,6 +540,14 @@ def run_controlled_local_publication(
         raise ControlledPublicationError("controlled publication: GitHub channel type is required")
     else:
         verified_files = _validate_verified_files(seed, verified_files)
+    if observer is not None and (
+        type(observer) is not JournaledProposalWorker
+        or type(broker) is not InMemoryCredentialBroker
+        or type(endpoint) is not MockGitHubEndpoint
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: observer is limited to local mock path"
+        )
     _require_seed_intent_binding(seed, intent)
     if github_app_broker and seed.source_repository_id is not None:
         _require_broker_target_binding(seed, broker)
@@ -465,6 +555,8 @@ def run_controlled_local_publication(
     def after_approval(approved_intent: PublicationIntent) -> Any:
         try:
             staged_change = load_staged_change(seed)
+        except ControlledPublicationError:
+            raise
         except Exception:
             raise ControlledPublicationError(
                 "controlled publication: staged change load failed"
@@ -533,10 +625,19 @@ def run_controlled_local_publication(
                             )
 
                     before_publish = publish_verified_files
-                if before_publish is None:
-                    return execute_publication(journal, channel, request)
-                return execute_publication(
-                    journal, channel, request, before_publish=before_publish
+                def dispatch_publication():
+                    if before_publish is None:
+                        return execute_publication(journal, channel, request)
+                    return execute_publication(
+                        journal, channel, request, before_publish=before_publish
+                    )
+
+                if observer is None:
+                    return dispatch_publication()
+                return observer.run_controlled_step(
+                    "Publication.dispatch",
+                    dispatch_publication,
+                    process_id=gate_intent.process_id,
                 )
             except SimulatedCrash:
                 # Keep crash injection observable; the caller owns recovery.
@@ -590,6 +691,7 @@ def run_controlled_local_publication(
             proceed=publish_after_broker,
             seed=seed,
             journal=journal,
+            observer=observer,
         )
 
     return run_approval_gate(
@@ -598,6 +700,152 @@ def run_controlled_local_publication(
         engine_intent=engine_intent,
         now=now,
         proceed=after_approval,
+        observer=observer,
+    )
+
+
+def run_enrolled_signed_approval_local_mock_publication(
+    database_path: Any,
+    staged_change_digest: Any,
+    request_path: Any,
+    signed_approval_path: Any,
+    trust_profile_path: Any,
+    approver_enrollment_path: Any,
+    trusted_authority_keys: Any,
+    seed: Any,
+    intent: Any,
+    policy: Any,
+    engine_intent: Any,
+    load_staged_change: Any,
+    decision_id: Any,
+    gateway: Any,
+    envelope: Any,
+    broker: Any,
+    credential_grant: Any,
+    journal: Any,
+    endpoint: Any,
+    *,
+    actuator_id: Any,
+    now: datetime,
+    observer: JournaledProposalWorker | None = None,
+    trusted_verifier_authority_keys: Any = None,
+) -> Any:
+    """Verify an enrolled signed approval, then compose only the local mock path.
+
+    This coordinator deliberately has no provider-enabled mode. Approval bytes
+    and stage bindings are reloaded here; callers cannot pass a preconstructed
+    ``VerifiedSignedApproval`` or arbitrary approval mapping as authority.
+    The ordinary publication gates still recheck freshness, policy, gateway,
+    broker and the exact staged-change digest after this verification.
+    """
+    if (
+        type(broker) is not InMemoryCredentialBroker
+        or type(endpoint) is not MockGitHubEndpoint
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: enrolled approval path is mock-only"
+        )
+    if (
+        type(seed) is not PublicationSeed
+        or type(intent) is not PublicationIntent
+        or type(policy) is not DeterministicPolicy
+        or not callable(load_staged_change)
+        or type(engine_intent) is not dict
+    ):
+        raise ControlledPublicationError(
+            "controlled publication: enrolled approval binding is invalid"
+        )
+    try:
+        from .signed_approval import load_verified_signed_approval
+
+        verified = load_verified_signed_approval(
+            database_path,
+            staged_change_digest,
+            request_path,
+            signed_approval_path,
+            trust_profile_path,
+            approver_enrollment_path=approver_enrollment_path,
+            trusted_authority_keys=trusted_authority_keys,
+            trusted_verifier_authority_keys=trusted_verifier_authority_keys,
+            now=now,
+        )
+        if (
+            verified.approver_enrollment is None
+            or verified.result.get("status") != "policy_allowed"
+            or verified.result.get("decision") != "allow"
+            or verified.result.get("trust_profile_origin")
+            != "authority_enrolled_approver_key"
+            or verified.result.get("identity_authenticated") is not False
+            or verified.result.get("provider_write") is not False
+            or verified.result.get("approver_enrollment", {}).get(
+                "enrollment_digest"
+            ) != verified.approver_enrollment.enrollment_digest
+        ):
+            raise ValueError
+        artifact_payload = verified.artifact.payload_copy()
+        staged_change = artifact_payload["staged_change"]
+        expected_intent = verified.request["intent"]
+        if (
+            seed.process_id != expected_intent["process_id"]
+            or seed.repository_id != expected_intent["repository_id"]
+            or seed.base_commit != expected_intent["base_commit"]
+            or seed.staged_change_digest != verified.artifact.staged_change_digest
+            or seed.verified_contents_digest
+            != artifact_payload["seed"]["verified_contents_digest"]
+            or seed.source_repository_id
+            != expected_intent["source_repository_id"]
+            or engine_intent != expected_intent
+            or policy._config != verified.policy_config
+        ):
+            raise ValueError
+        intent_projection = {
+            name: getattr(intent, name)
+            for name in (
+                "process_id", "repository_id", "base_commit", "base_branch",
+                "branch", "staged_change_digest", "idempotency_key",
+                "source_repository_id",
+            )
+        }
+        if any(expected_intent.get(name) != value for name, value in intent_projection.items()):
+            raise ValueError
+    except ControlledPublicationError:
+        raise
+    except Exception:
+        raise ControlledPublicationError(
+            "controlled publication: enrolled approval verification failed"
+        ) from None
+
+    def load_exact_verified_stage(publication_seed: PublicationSeed) -> dict:
+        try:
+            candidate = load_staged_change(publication_seed)
+            if (
+                type(candidate) is not dict
+                or sha256_digest(candidate) != sha256_digest(staged_change)
+            ):
+                raise ValueError
+            return candidate
+        except Exception:
+            raise ControlledPublicationError(
+                "controlled publication: staged change digest mismatch"
+            ) from None
+
+    return run_controlled_local_publication(
+        seed,
+        intent,
+        verified.approval,
+        policy,
+        engine_intent,
+        load_exact_verified_stage,
+        decision_id,
+        gateway,
+        envelope,
+        broker,
+        credential_grant,
+        journal,
+        endpoint,
+        actuator_id=actuator_id,
+        now=now,
+        observer=observer,
     )
 
 

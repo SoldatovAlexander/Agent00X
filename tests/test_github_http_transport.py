@@ -208,6 +208,8 @@ class GitHubAnonymousSnapshotTransportTests(unittest.TestCase):
             ("GET", "http://api.github.com/repos/a/b/commits/" + "a" * 40, VALID_HEADERS, 1024, False),
             ("GET", "https://api.github.com/repos/a/../commits/" + "a" * 40, VALID_HEADERS, 1024, False),
             ("GET", "https://api.github.com/repos/a/b/git/commits/" + "a" * 40, VALID_HEADERS, 1024, False),
+            ("GET", "https://api.github.com/users/SoldatovAlexander/gpg_keys?per_page=5", VALID_HEADERS, 1024, False),
+            ("GET", "https://api.github.com/users/../gpg_keys", VALID_HEADERS, 1024, False),
             ("GET", VALID_COMMIT_URL + "?recursive=1", VALID_HEADERS, 1024, False),
             ("GET", VALID_TREE_URL + "&per_page=1", VALID_HEADERS, 1024, False),
             ("GET", VALID_BLOB_URL + "?download=1", VALID_HEADERS, 1024, False),
@@ -262,6 +264,28 @@ class GitHubAnonymousSnapshotTransportTests(unittest.TestCase):
             "/repos/fixture-owner/fixture-repository/git/blobs/" + "c" * 40,
         )
         self.assertEqual(connection.response.read_limits, [65])
+        self.assertTrue(connection.closed)
+
+    def test_public_gpg_key_endpoint_is_fixed_host_bounded_and_anonymous(self):
+        connection = FakeConnection(FakeResponse(b"[]"))
+        transport = GitHubAnonymousSnapshotTransport(
+            connection_factory=lambda *_args, **_kwargs: connection
+        )
+
+        result = transport(
+            "GET",
+            "https://api.github.com/users/SoldatovAlexander/gpg_keys",
+            VALID_HEADERS,
+            1024,
+            allow_redirects=False,
+        )
+
+        self.assertEqual(result, {"status": 200, "body": b"[]"})
+        self.assertEqual(
+            connection.request_args[1], "/users/SoldatovAlexander/gpg_keys"
+        )
+        self.assertNotIn("Authorization", connection.request_args[2])
+        self.assertEqual(connection.response.read_limits, [1025])
         self.assertTrue(connection.closed)
 
     def test_failure_is_sanitized_and_connection_is_closed(self):

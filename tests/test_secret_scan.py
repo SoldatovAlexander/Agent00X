@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.secret_scan import (
+    MAX_CANARY_NESTING_DEPTH,
+    MAX_CANARY_SURFACES,
+    MAX_CANARY_SURFACE_BYTES,
+    MAX_CANARY_SURFACE_NODES,
     CredentialLeakDetected,
     assert_canary_absent,
     assert_no_credential_pattern_content,
@@ -186,6 +190,37 @@ class CanaryCredentialTests(unittest.TestCase):
                 self.assertNotIsInstance(raised.exception, TypeError)
                 with self.assertRaises(ValueError):
                     assert_canary_absent(bad, self.clean_surfaces)
+
+    def test_oversized_or_too_many_surfaces_fail_closed_without_content_leak(self):
+        oversized = "x" * (MAX_CANARY_SURFACE_BYTES + 1)
+        self.assertEqual(
+            find_canary_surfaces(self.canary, {"oversized": oversized}),
+            ["oversized"],
+        )
+        with self.assertRaises(CredentialLeakDetected) as raised:
+            assert_canary_absent(self.canary, {"oversized": oversized})
+        self.assertEqual(str(raised.exception), "credential canary found")
+        self.assertNotIn(oversized[:32], str(raised.exception))
+
+        too_many = {f"surface-{index}": "clean" for index in range(MAX_CANARY_SURFACES + 1)}
+        with self.assertRaisesRegex(ValueError, "^surface count exceeds limit$"):
+            find_canary_surfaces(self.canary, too_many)
+        with self.assertRaises(ValueError):
+            assert_canary_absent(self.canary, too_many)
+
+    def test_depth_and_node_limits_fail_closed(self):
+        nested = "clean"
+        for _ in range(MAX_CANARY_NESTING_DEPTH + 1):
+            nested = [nested]
+        self.assertEqual(
+            find_canary_surfaces(self.canary, {"too-deep": nested}), ["too-deep"]
+        )
+
+        too_many_nodes = [None] * (MAX_CANARY_SURFACE_NODES + 1)
+        self.assertEqual(
+            find_canary_surfaces(self.canary, {"too-many-nodes": too_many_nodes}),
+            ["too-many-nodes"],
+        )
 
     def test_raised_finding_contains_no_surface_names(self):
         hostile_name = "surface-caller-secret-001"

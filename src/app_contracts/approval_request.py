@@ -13,6 +13,10 @@ import sys
 from typing import Mapping
 
 from .approval_signature import approval_signature_payload
+from .authority_key_set import (
+    AuthorityKeySetError,
+    load_control_plane_authority_key_set,
+)
 from .digests import sha256_bytes, sha256_digest
 from .durable_stage import (
     DurableStageStoreError,
@@ -24,9 +28,14 @@ from .publication_seed import (
     PublicationSeedError,
     bind_publication_seed_to_target,
     derive_publication_intent,
+    verifier_trust_intent_binding,
 )
 from .repository_binding import RepositoryTargetBinding, provider_repository_id
 from .stage_preview import MAX_PREVIEW_BYTES, StagePreviewError, build_stage_preview
+from .verifier_provenance import (
+    VerifierProvenanceError,
+    verify_staged_verifier_provenance,
+)
 
 
 APPROVAL_REQUEST_TTL_SECONDS = 300
@@ -35,10 +44,17 @@ _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _APPROVAL_ID_PATTERN = re.compile(r"approval-[a-z0-9-]{1,96}\Z")
 _PRINCIPAL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}\Z")
 _POLICY_VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_VERIFIER_PROVENANCE_REQUIRED_ORIGINS = frozenset(
+    {"github_rest_api_claim", "github_codeload_archive"}
+)
 
 
 class ApprovalRequestError(ValueError):
     """An unsigned approval request cannot be safely prepared."""
+
+
+def _requires_verified_verifier_provenance(snapshot_origin: str) -> bool:
+    return snapshot_origin in _VERIFIER_PROVENANCE_REQUIRED_ORIGINS
 
 
 def _validate_clock(value: datetime) -> datetime:
@@ -86,6 +102,7 @@ def build_approval_request(
     approver_id: str,
     policy_version: str,
     now: datetime,
+    trusted_verifier_authority_keys: object | None = None,
 ) -> dict:
     """Create a bounded, unsigned request and exact bytes for out-of-band signing."""
     if type(artifact) is not StagedArtifact or type(binding) is not RepositoryTargetBinding:
@@ -110,6 +127,21 @@ def build_approval_request(
         payload = validated.payload_copy()
         source_seed = PublicationSeed(**payload["seed"])
         seed = bind_publication_seed_to_target(source_seed, binding)
+        verified_provenance = None
+        if _requires_verified_verifier_provenance(seed.snapshot_origin):
+            if trusted_verifier_authority_keys is None:
+                raise ApprovalRequestError(
+                    "approval request: verifier provenance trust is unavailable"
+                )
+            verified_provenance = verify_staged_verifier_provenance(
+                validated,
+                trusted_authority_keys=trusted_verifier_authority_keys,
+                now=moment,
+            )
+            if verified_provenance.request_input_reconstructed is not True:
+                raise ApprovalRequestError(
+                    "approval request: verifier request is not reconstructed"
+                )
         intent = derive_publication_intent(seed, branch, base_branch)
         source_stage = payload["staged_change"]
         if (
@@ -137,6 +169,13 @@ def build_approval_request(
             "branch_namespace": intent.branch.split("/", 1)[0],
             "idempotency_key": intent.idempotency_key,
             "staged_change_digest": intent.staged_change_digest,
+            "verifier_trust": verifier_trust_intent_binding(
+                seed,
+                signed_evidence_available=(
+                    type(payload.get("verifier_trust_evidence")) is dict
+                ),
+                verified_provenance=verified_provenance,
+            ),
         }
         unsigned_approval = {
             "schema_version": 1,
@@ -163,6 +202,13 @@ def build_approval_request(
             "staged_change_digest": intent.staged_change_digest,
             "verified_contents_digest": seed.verified_contents_digest,
             "intent_digest": sha256_digest(engine_intent),
+            "verifier_trust": verifier_trust_intent_binding(
+                seed,
+                signed_evidence_available=(
+                    type(payload.get("verifier_trust_evidence")) is dict
+                ),
+                verified_provenance=verified_provenance,
+            ),
             "approver_id": approver_id,
             "policy_version": policy_version,
             "expires_at": expires_at,
@@ -230,6 +276,7 @@ def main(
     *,
     environ: Mapping[str, str] | None = None,
     now: datetime | None = None,
+    trusted_verifier_authority_keys: object | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         description="Prepare an unsigned human review request for an exact verified stage."
@@ -241,9 +288,37 @@ def main(
     parser.add_argument("approval_id", help="unique approval-... identifier")
     parser.add_argument("approver_id", help="trusted approver principal identifier")
     parser.add_argument("policy_version", help="exact policy version for later validation")
+    parser.add_argument(
+        "--verifier-authority-key-set",
+        help="caller-pinned public verifier-authority key set JSON",
+    )
+    parser.add_argument(
+        "--verifier-authority-key-set-digest",
+        help="out-of-band pinned sha256 digest for the public key set",
+    )
     args = parser.parse_args(argv)
     metadata = os.environ if environ is None else environ
     try:
+        key_set_inputs = (
+            args.verifier_authority_key_set,
+            args.verifier_authority_key_set_digest,
+        )
+        if any(value is None for value in key_set_inputs) and not all(
+            value is None for value in key_set_inputs
+        ):
+            raise ApprovalRequestError(
+                "approval request: verifier authority key set is unavailable"
+            )
+        if args.verifier_authority_key_set is not None:
+            loaded_keys, _key_set_digest = load_control_plane_authority_key_set(
+                args.verifier_authority_key_set,
+                expected_digest=args.verifier_authority_key_set_digest,
+            )
+            if trusted_verifier_authority_keys is not None:
+                raise ApprovalRequestError(
+                    "approval request: verifier authority key source is ambiguous"
+                )
+            trusted_verifier_authority_keys = loaded_keys
         binding = repository_target_binding_from_metadata(metadata)
         generated_at = datetime.now(timezone.utc) if now is None else now
         request = load_approval_request(
@@ -256,8 +331,9 @@ def main(
             approver_id=args.approver_id,
             policy_version=args.policy_version,
             now=generated_at,
+            trusted_verifier_authority_keys=trusted_verifier_authority_keys,
         )
-    except ApprovalRequestError as exc:
+    except (ApprovalRequestError, AuthorityKeySetError, VerifierProvenanceError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps(request, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2))

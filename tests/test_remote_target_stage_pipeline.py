@@ -10,7 +10,9 @@ import sys
 import tempfile
 import unittest
 import uuid
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
+from io import StringIO
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,13 +22,13 @@ from app_contracts.deepseek_worker import (
     ChatCompletionChoice,
     ChatCompletionMessage,
     ChatCompletionsModelResult,
-    DeepSeekProposalWorker,
 )
 from app_contracts.digests import sha256_bytes, sha256_digest
 from app_contracts.brainbooster_target_profile import (
     EXPECTED_CANDIDATE_DIGEST,
     PINNED_COMMIT,
     PINNED_CONTENT_DIGEST,
+    PINNED_FILE_COUNT,
     PINNED_HTTP_DB_TEST_COMMAND,
     PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
     PINNED_HTTP_DB_VERIFIER_PROBE,
@@ -39,6 +41,7 @@ from app_contracts.brainbooster_target_profile import (
     VERIFIER_RUNTIME_IMAGE_ID,
     PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
 )
+from app_contracts.container_proposal_worker import ContainerProposalWorker
 from app_contracts.durable_stage import SQLiteStagedArtifactStore
 from app_contracts.executor import (
     ExecutionError,
@@ -48,12 +51,18 @@ from app_contracts.executor import (
     verifier_snapshot_tree_digest,
 )
 from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
+from app_contracts.github_archive_snapshot import (
+    GitHubArchiveSnapshotRequest,
+    GitHubCodeloadArchiveTransport,
+    read_github_archive_snapshot_contents,
+)
 from app_contracts.github_snapshot import (
     GitHubSnapshotRequest,
     read_github_snapshot_contents,
 )
 from app_contracts.sandbox import DockerSandboxBackend
 from app_contracts.stage_approval import run_local_mock_publication
+from app_contracts.stage_copy import copy_staged_evidence
 from app_contracts.stage_preview import render_stage_preview
 from app_contracts.verifier_container import (
     DockerContainerVerifier,
@@ -167,17 +176,170 @@ def _control_plane_candidate(source: str) -> str:
     )
     new = (
         "    try:\n"
-        "        level = int(data.get('level', 1))\n"
-        "        correct = int(data.get('correct', 0))\n"
-        "        wrong = int(data.get('wrong', 0))\n"
-        "        total = int(data.get('total', 10))\n"
-        "        time_ms = int(data.get('time_ms', 0))\n"
+        "        def sqlite_integer(value):\n"
+        "            if type(value) is int:\n"
+        "                parsed = value\n"
+        "            elif (type(value) is str and value.isascii() and value.lstrip('+-').isdigit()):\n"
+        "                parsed = int(value)\n"
+        "            else:\n"
+        "                raise ValueError\n"
+        "            if parsed < -(2 ** 63) or parsed > 2 ** 63 - 1:\n"
+        "                raise ValueError\n"
+        "            return parsed\n"
+        "        level = sqlite_integer(data.get('level', 1))\n"
+        "        correct = sqlite_integer(data.get('correct', 0))\n"
+        "        wrong = sqlite_integer(data.get('wrong', 0))\n"
+        "        total = sqlite_integer(data.get('total', 10))\n"
+        "        time_ms = sqlite_integer(data.get('time_ms', 0))\n"
         "    except (OverflowError, TypeError, ValueError):\n"
         "        raise HTTPException(status_code=422, detail='numeric session fields must be integers') from None\n"
     )
     if candidate == source or candidate.count(old) != 1:
         raise ValueError("synthetic candidate base did not match pinned route")
     return candidate.replace(old, new, 1)
+
+
+class _CandidateRouter:
+    def post(self, *_args, **_kwargs):
+        return lambda function: function
+
+
+class _CandidateHTTPException(Exception):
+    def __init__(self, *, status_code: int, detail: str) -> None:
+        self.status_code = status_code
+        self.detail = detail
+
+
+class _CandidateCursor:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def execute(self, _query: str, values: tuple[object, ...]) -> None:
+        self.calls.append(values)
+
+
+class _CandidateConnection:
+    def __init__(self) -> None:
+        self.commits = 0
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+def _execute_candidate(
+    source: str, data: dict[str, object]
+) -> tuple[list, int, Exception | None]:
+    module = type(sys)("fastapi")
+    module.APIRouter = _CandidateRouter
+    module.HTTPException = _CandidateHTTPException
+    cursor = _CandidateCursor()
+    connection = _CandidateConnection()
+    namespace = {"c": cursor, "conn": connection}
+    with patch.dict("sys.modules", {"fastapi": module}):
+        exec(compile(_control_plane_candidate(source), "<synthetic-route>", "exec"), namespace)
+    failure: Exception | None = None
+    try:
+        namespace["save_session"](data)
+    except Exception as exc:
+        failure = exc
+    return cursor.calls, connection.commits, failure
+
+
+def _candidate_source_fixture() -> str:
+    return """from fastapi import APIRouter
+router = APIRouter()
+def save_session(data):
+    level = int(data.get('level', 1))
+    correct = int(data.get('correct', 0))
+    wrong = int(data.get('wrong', 0))
+    total = int(data.get('total', 10))
+    time_ms = int(data.get('time_ms', 0))
+    c.execute('insert into sessions values (?, ?, ?, ?, ?, ?)',
+              (data.get('telegram_id'), level, correct, wrong, total, time_ms))
+    conn.commit()
+"""
+
+
+_PINNED_TARGET_EVIDENCE_FIELDS = frozenset(
+    {
+        "schema",
+        "repository_id",
+        "snapshot_evidence_origin",
+        "commit_oid",
+        "tree_oid",
+        "snapshot_content_digest",
+        "file_count",
+        "candidate_digest",
+        "execution_status",
+        "staged_change_digest",
+        "verified_contents_digest",
+        "verifier_id",
+        "worker_calls",
+        "preview_approval",
+        "preview_publication",
+        "receipt_staged_change_digest",
+        "receipt_repository_id",
+        "publication_kind",
+        "external_write",
+        "provider_calls",
+        "credential_used",
+    }
+)
+
+
+def _emit_pinned_target_evidence(record: dict[str, object]) -> None:
+    if os.environ.get("AGENT00X_EMIT_PINNED_TARGET_EVIDENCE") != "1":
+        return
+    if set(record) != _PINNED_TARGET_EVIDENCE_FIELDS:
+        raise ValueError("pinned evidence record fields did not match allowlist")
+    print(
+        "AGENT00X_PINNED_TARGET_EVIDENCE="
+        + json.dumps(record, sort_keys=True, separators=(",", ":"))
+    )
+
+
+class PinnedTargetEvidenceFormattingTests(unittest.TestCase):
+    def test_default_is_quiet_and_opt_in_record_uses_only_fixed_fields(self):
+        record = {
+            "schema": "agent00x.pinned-target-evidence.v2",
+            "repository_id": "SoldatovAlexander/brainbooster_full_v11",
+            "snapshot_evidence_origin": "github_codeload_archive",
+            "commit_oid": PINNED_COMMIT,
+            "tree_oid": PINNED_TREE,
+            "snapshot_content_digest": PINNED_CONTENT_DIGEST,
+            "file_count": 23,
+            "candidate_digest": EXPECTED_CANDIDATE_DIGEST,
+            "execution_status": "verified",
+            "staged_change_digest": "sha256:" + "0" * 64,
+            "verified_contents_digest": "sha256:" + "1" * 64,
+            "verifier_id": "docker-image:pinned/code:pinned",
+            "worker_calls": 1,
+            "preview_approval": "not_created",
+            "preview_publication": "not_attempted",
+            "receipt_staged_change_digest": "sha256:" + "0" * 64,
+            "receipt_repository_id": "SoldatovAlexander/brainbooster_full_v11",
+            "publication_kind": "local_mock",
+            "external_write": False,
+            "provider_calls": 0,
+            "credential_used": False,
+        }
+        output = StringIO()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGENT00X_EMIT_PINNED_TARGET_EVIDENCE", None)
+            with redirect_stdout(output):
+                _emit_pinned_target_evidence(record)
+        self.assertEqual(output.getvalue(), "")
+
+        with patch.dict(os.environ, {"AGENT00X_EMIT_PINNED_TARGET_EVIDENCE": "1"}):
+            with redirect_stdout(output):
+                _emit_pinned_target_evidence(record)
+        line = output.getvalue().strip()
+        self.assertTrue(line.startswith("AGENT00X_PINNED_TARGET_EVIDENCE="))
+        encoded = json.loads(line.split("=", 1)[1])
+        self.assertEqual(set(encoded), _PINNED_TARGET_EVIDENCE_FIELDS)
+        self.assertFalse(encoded["external_write"])
+        self.assertEqual(encoded["provider_calls"], 0)
+        self.assertFalse(encoded["credential_used"])
 
 
 class _FixedProposalChannel:
@@ -329,7 +491,14 @@ class PinnedTargetCommandContractTests(unittest.TestCase):
         )
         self.assertIn("uvicorn", PINNED_HTTP_DB_VERIFIER_PROBE)
         self.assertIn("SELECT COUNT(*) FROM sessions", PINNED_HTTP_DB_VERIFIER_PROBE)
-        self.assertIn("malformed=5 overflow=1 valid=1", PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn(
+            "malformed=5 overflow=1 sqlite_range=10 valid=1",
+            PINNED_HTTP_DB_VERIFIER_PROBE,
+        )
+        self.assertIn("9223372036854775808", PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn("-9223372036854775809", PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('fail("sqlite-range-status")', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('fail("sqlite-range-no-write")', PINNED_HTTP_DB_VERIFIER_PROBE)
 
     def test_route_probe_command_is_trimmed_before_execution_request(self):
         request_fields = {
@@ -357,6 +526,68 @@ class PinnedTargetCommandContractTests(unittest.TestCase):
         self.assertEqual(request.test_command[-1], ROUTE_BEHAVIOR_PROBE.strip())
 
 
+class SQLiteIntegerCandidateTests(unittest.TestCase):
+    def test_both_sqlite_overflow_boundaries_for_all_five_fields_fail_before_write(self):
+        source = _candidate_source_fixture()
+        fields = ("level", "correct", "wrong", "total", "time_ms")
+        valid = {
+            "telegram_id": "synthetic-probe",
+            "level": 2,
+            "correct": 1,
+            "wrong": 0,
+            "total": 1,
+            "time_ms": 250,
+        }
+        for field in fields:
+            for value in (9223372036854775808, -9223372036854775809):
+                with self.subTest(field=field, value=value):
+                    payload = dict(valid)
+                    payload[field] = value
+                    writes, commits, failure = _execute_candidate(source, payload)
+                    self.assertIsInstance(failure, _CandidateHTTPException)
+                    self.assertEqual(failure.status_code, 422)
+                    self.assertEqual(writes, [])
+                    self.assertEqual(commits, 0)
+
+    def test_bool_fractional_nonfinite_and_unparseable_values_fail_before_write(self):
+        source = _candidate_source_fixture()
+        fields = ("level", "correct", "wrong", "total", "time_ms")
+        valid = {
+            "telegram_id": "synthetic-probe",
+            "level": 2,
+            "correct": 1,
+            "wrong": 0,
+            "total": 1,
+            "time_ms": 250,
+        }
+        for field in fields:
+            for value in (True, 1.5, float("inf"), float("nan"), "not-a-number"):
+                with self.subTest(field=field, value=repr(value)):
+                    payload = dict(valid)
+                    payload[field] = value
+                    writes, commits, failure = _execute_candidate(source, payload)
+                    self.assertIsInstance(failure, _CandidateHTTPException)
+                    self.assertEqual(failure.status_code, 422)
+                    self.assertEqual(writes, [])
+                    self.assertEqual(commits, 0)
+
+    def test_valid_sqlite_integer_record_is_inserted_once(self):
+        writes, commits, failure = _execute_candidate(
+            _candidate_source_fixture(),
+            {
+                "telegram_id": "synthetic-probe",
+                "level": 2,
+                "correct": 1,
+                "wrong": 0,
+                "total": 1,
+                "time_ms": 250,
+            },
+        )
+        self.assertIsNone(failure)
+        self.assertEqual(writes, [("synthetic-probe", 2, 1, 0, 1, 250)])
+        self.assertEqual(commits, 1)
+
+
 @unittest.skipUnless(
     os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1",
     "pinned target Docker pipeline is opt-in",
@@ -365,6 +596,15 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
     def test_control_plane_candidate_reaches_trusted_container_stage_and_mock_receipt(self):
         docker = shutil.which("docker")
         self.assertTrue(docker and Path(docker).is_absolute())
+        retain_stage = os.environ.get("AGENT00X_RETAIN_PINNED_STAGE") == "1"
+        retained_stage_path = Path(
+            "/Volumes/DATA/Agent00X-local-evidence/exp788-stage.sqlite3"
+        )
+        if retain_stage:
+            self.assertTrue(retained_stage_path.parent.is_dir())
+            self.assertFalse(retained_stage_path.parent.is_symlink())
+            self.assertFalse(retained_stage_path.exists())
+            self.assertFalse(retained_stage_path.is_symlink())
         for image_id in (TARGET_RUNTIME_IMAGE_ID, VERIFIER_RUNTIME_IMAGE_ID):
             inspect = subprocess.run(
                 [docker, "image", "inspect", "--format", "{{.Id}}", image_id],
@@ -385,21 +625,41 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
             repository=PINNED_REPOSITORY,
             commit_oid=PINNED_COMMIT,
         )
-        snapshot = read_github_snapshot_contents(
-            request, GitHubAnonymousSnapshotTransport(timeout_seconds=15)
-        )
+        source = os.environ.get("AGENT00X_PINNED_SOURCE", "rest")
+        self.assertIn(source, {"rest", "codeload"})
+        if source == "codeload":
+            archive_request = GitHubArchiveSnapshotRequest(
+                owner=PINNED_OWNER,
+                repository=PINNED_REPOSITORY,
+                commit_oid=PINNED_COMMIT,
+                tree_oid=PINNED_TREE,
+                content_digest=PINNED_CONTENT_DIGEST,
+                file_count=PINNED_FILE_COUNT,
+            )
+            snapshot = read_github_archive_snapshot_contents(
+                archive_request,
+                GitHubCodeloadArchiveTransport(timeout_seconds=15),
+            )
+        else:
+            snapshot = read_github_snapshot_contents(
+                request, GitHubAnonymousSnapshotTransport(timeout_seconds=15)
+            )
         self.assertEqual(snapshot.claim.commit_oid, PINNED_COMMIT)
         self.assertEqual(snapshot.claim.tree_oid, PINNED_TREE)
         self.assertTrue(snapshot.claim.full_snapshot)
-        self.assertEqual(len(snapshot.files), 23)
+        self.assertEqual(len(snapshot.files), PINNED_FILE_COUNT)
         self.assertEqual(snapshot.claim.content_digest, PINNED_CONTENT_DIGEST)
+        self.assertEqual(
+            snapshot.claim.evidence_origin,
+            "github_codeload_archive" if source == "codeload" else "github_rest_api_claim",
+        )
         route_blob = next(blob for blob in snapshot.files if blob.path == "backend/routes.py")
         candidate = _control_plane_candidate(route_blob.content.decode("utf-8"))
         candidate_digest = sha256_bytes(candidate.encode("utf-8"))
         self.assertEqual(candidate_digest, EXPECTED_CANDIDATE_DIGEST)
 
         channel = _FixedProposalChannel(candidate)
-        worker = DeepSeekProposalWorker(channel)
+        worker = ContainerProposalWorker(channel, docker_executable=docker)
         verifier = DockerContainerVerifier(
             VerifierContainerConfig(
                 docker,
@@ -412,6 +672,7 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
         )
         sandbox_backend = _target_sandbox_backend()
         test_command = PINNED_HTTP_DB_TEST_COMMAND
+        stage_copy_evidence = None
         with patch.dict(
             os.environ,
             {
@@ -458,6 +719,12 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
                         result.verifier_result.verifier_id,
                         f"docker-image:{verifier_image_id}/code:{verifier_code_digest}",
                     )
+                if retain_stage:
+                    stage_copy_evidence = copy_staged_evidence(
+                        stage_db.resolve(strict=True),
+                        result.staged_change_digest,
+                        retained_stage_path,
+                    )
 
             preview = json.loads(render_stage_preview(artifact))
             self.assertEqual(preview["stage"]["staged_change_digest"], result.staged_change_digest)
@@ -467,10 +734,48 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
                 artifact,
                 result.staged_change_digest,
                 "agent/exp466-local-mock",
+                "master",
                 now=datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc),
             )
             self.assertEqual(receipt.staged_change_digest, result.staged_change_digest)
             self.assertEqual(receipt.repository_id, f"{PINNED_OWNER}/{PINNED_REPOSITORY}")
+            if os.environ.get("AGENT00X_EMIT_PINNED_TARGET_EVIDENCE") == "1":
+                record = {
+                    "schema": "agent00x.pinned-target-evidence.v2",
+                    "repository_id": f"{PINNED_OWNER}/{PINNED_REPOSITORY}",
+                    "snapshot_evidence_origin": snapshot.claim.evidence_origin,
+                    "commit_oid": snapshot.claim.commit_oid,
+                    "tree_oid": snapshot.claim.tree_oid,
+                    "snapshot_content_digest": snapshot.claim.content_digest,
+                    "file_count": len(snapshot.files),
+                    "candidate_digest": candidate_digest,
+                    "execution_status": result.status.value,
+                    "staged_change_digest": result.staged_change_digest,
+                    "verified_contents_digest": result.verified_contents_digest,
+                    "verifier_id": result.verifier_result.verifier_id,
+                    "worker_calls": channel.calls,
+                    "preview_approval": preview["approval"],
+                    "preview_publication": preview["publication"],
+                    "receipt_staged_change_digest": receipt.staged_change_digest,
+                    "receipt_repository_id": receipt.repository_id,
+                    "publication_kind": "local_mock",
+                    "external_write": False,
+                    "provider_calls": 0,
+                    "credential_used": False,
+                }
+                _emit_pinned_target_evidence(record)
+            if stage_copy_evidence is not None:
+                print(
+                    "AGENT00X_PINNED_STAGE_COPY_EVIDENCE="
+                    + json.dumps(
+                        {
+                            **stage_copy_evidence,
+                            "destination_database": str(retained_stage_path),
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
 
 
 if __name__ == "__main__":

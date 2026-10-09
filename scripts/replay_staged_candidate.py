@@ -44,11 +44,17 @@ from app_contracts.brainbooster_target_profile import (  # noqa: E402
     VERIFIER_RUNTIME_IMAGE_ID,
 )
 from app_contracts.executor import ExecutionStatus, WorkerProposal  # noqa: E402
+from app_contracts.observation_store import SQLiteObservationStore  # noqa: E402
+from app_contracts.observer_runtime import JournaledProposalWorker  # noqa: E402
 from app_contracts.github_http_transport import (  # noqa: E402
     GitHubAnonymousSnapshotTransport,
     GitHubHTTPTransportError,
 )
+from app_contracts.github_git_commit_source import (  # noqa: E402
+    GitHubRawCommitObjectSource,
+)
 from app_contracts.github_snapshot import (  # noqa: E402
+    GitCommitObject,
     GitHubSnapshotRequest,
     GitHubSnapshotError,
     read_github_snapshot_contents,
@@ -60,6 +66,8 @@ from app_contracts.verifier_container import (  # noqa: E402
     VerifierContainerConfig,
 )
 from app_contracts.remote_snapshot_pipeline import run_remote_snapshot_execution  # noqa: E402
+from app_contracts.repository_process import _safe_test_failure_category  # noqa: E402
+from app_contracts.validator import ContractValidationError  # noqa: E402
 
 ALLOWED_CHANGE_PATH = "backend/routes.py"
 REMOTE_REPOSITORY_OWNER = PINNED_OWNER
@@ -79,10 +87,70 @@ _ALLOWED_COMMANDS = frozenset({"python3"})
 _VERIFIER_ID = (
     f"docker-image:{VERIFIER_RUNTIME_IMAGE_ID}/code:{VERIFIER_RUNTIME_CODE_DIGEST}"
 )
+_REPLAY_FAILURE_CODES = {
+    "replay: source and output databases must differ": "database-paths-invalid",
+    "replay: source digest is invalid": "source-digest-invalid",
+    "replay: runtime is unavailable": "runtime-unavailable",
+    "replay: docker is unavailable": "runtime-unavailable",
+    "replay: readiness request failed": "readiness-request-failed",
+    "replay: readiness HTTP status failed": "readiness-http-status-failed",
+    "replay: readiness metadata is invalid": "readiness-metadata-invalid",
+    "replay: readiness quota is insufficient": "readiness-quota-low",
+    "replay: pinned snapshot fetch failed": "snapshot-fetch-failed",
+    "replay: pinned snapshot mismatch": "snapshot-pin-mismatch",
+    "replay: raw commit proof mismatch": "raw-commit-proof-mismatch",
+    "replay: pinned target file is invalid": "snapshot-target-invalid",
+    "replay: candidate verification failed": "candidate-verification-failed",
+    "replay: exact stage readback failed": "stage-readback-failed",
+    "replay: committed stage readback failed": "stage-readback-failed",
+    "replay: output database commit failed": "stage-persist-failed",
+    "replay: evidence is invalid": "evidence-validation-failed",
+    "replay: source stage is invalid": "source-stage-invalid",
+    "replay: source database is unavailable": "source-stage-invalid",
+    "replay: output database path is unavailable": "output-path-invalid",
+    "replay: database paths are invalid": "output-path-invalid",
+    "replay: output database already exists": "output-path-invalid",
+}
+_SAFE_TARGET_TEST_FAILURE_CODES = frozenset(
+    {
+        "readiness-exit",
+        "readiness-timeout",
+        "malformed-status",
+        "malformed-no-write",
+        "overflow-status",
+        "overflow-no-write",
+        "sqlite-range-status",
+        "sqlite-range-no-write",
+        "valid-status",
+        "valid-body",
+        "valid-row",
+    }
+)
+_TEST_FAILURE_MESSAGE_PREFIX = (
+    "verification failed; staged change was not created: "
+)
 
 
 class ReplayError(ValueError):
     """A stored-candidate replay failed a bounded validation gate."""
+
+
+def _safe_failure_marker(error: object) -> str:
+    """Render only a fixed failure category; never expose exception text."""
+
+    code = "operation-failed"
+    if isinstance(error, ReplayError):
+        code = _REPLAY_FAILURE_CODES.get(str(error), code)
+    elif type(error) is ContractValidationError:
+        message = str(error)
+        if message.startswith(_TEST_FAILURE_MESSAGE_PREFIX):
+            category = message.removeprefix(_TEST_FAILURE_MESSAGE_PREFIX)
+            safe_category = _safe_test_failure_category(
+                f"agent00x:test-failure:{category}"
+            )
+            if safe_category in _SAFE_TARGET_TEST_FAILURE_CODES:
+                code = f"target-test-{safe_category}"
+    return f"replay: operation failed closed [{code}]"
 
 
 class _StoredCandidateWorker:
@@ -101,8 +169,10 @@ def replay_staged_candidate(
     transport: object,
     sandbox_backend: object,
     verifier: object,
+    commit_object_source: object,
     test_command: tuple[str, ...] = PINNED_HTTP_DB_TEST_COMMAND,
     snapshot_reader: Callable = read_github_snapshot_contents,
+    observation_store: object | None = None,
     _commit_output: Callable[[Path, Path], None] | None = None,
 ) -> dict:
     """Verify a source stage, re-fetch its exact public pin, and persist replay.
@@ -120,6 +190,7 @@ def replay_staged_candidate(
         not callable(getattr(transport, "read_rate_limit", None))
         or not callable(getattr(sandbox_backend, "create", None))
         or not callable(getattr(verifier, "verify", None))
+        or not callable(commit_object_source)
         or not callable(snapshot_reader)
         or type(test_command) is not tuple
         or not test_command
@@ -127,31 +198,75 @@ def replay_staged_candidate(
         raise ReplayError("replay: runtime is unavailable")
 
     artifact, candidate = _load_source_candidate(source_path, source_digest)
+    process_id = f"process-replay-{source_digest[-12:]}"
+    task_id = f"task-replay-{source_digest[-12:]}"
+    execution_worker: object = _StoredCandidateWorker(candidate)
+    if observation_store is not None:
+        try:
+            execution_worker = JournaledProposalWorker(
+                execution_worker,
+                observation_store,
+                process_id=process_id,
+                task_id=task_id,
+            )
+        except Exception:
+            raise ReplayError("replay: observer is unavailable") from None
     try:
-        readiness = transport.read_rate_limit()
+        readiness_dispatch = transport.read_rate_limit
+        if type(execution_worker) is JournaledProposalWorker:
+            readiness = execution_worker.run_controlled_step(
+                "GitHubReadiness.fetch",
+                readiness_dispatch,
+                process_id=process_id,
+            )
+        else:
+            readiness = readiness_dispatch()
     except Exception:
         raise ReplayError("replay: readiness request failed") from None
+    status = getattr(readiness, "status", None)
+    remaining = getattr(readiness, "remaining", None)
+    reset_unix = getattr(readiness, "reset_unix", None)
+    if type(status) is not int or status != 200:
+        raise ReplayError("replay: readiness HTTP status failed")
     if (
-        getattr(readiness, "status", None) != 200
-        or type(getattr(readiness, "remaining", None)) is not int
-        or readiness.remaining < 25
-        or type(getattr(readiness, "reset_unix", None)) is not int
-        or readiness.reset_unix <= 0
+        type(remaining) is not int
+        or not 0 <= remaining <= 1_000_000
+        or type(reset_unix) is not int
+        or not 0 < reset_unix <= 9_999_999_999_999
     ):
-        raise ReplayError("replay: readiness gate failed")
+        raise ReplayError("replay: readiness metadata is invalid")
+    permit_eligible = remaining >= 25
+    if type(execution_worker) is JournaledProposalWorker:
+        permit_eligible = execution_worker.run_controlled_step(
+            "RemoteExecutionPermit.issue",
+            lambda: permit_eligible,
+            process_id=process_id,
+        )
+    if permit_eligible is not True:
+        raise ReplayError("replay: readiness quota is insufficient")
 
     request = GitHubSnapshotRequest(
         owner=REMOTE_REPOSITORY_OWNER,
         repository=REMOTE_REPOSITORY_NAME,
         commit_oid=REMOTE_REPOSITORY_COMMIT,
     )
+    snapshot_transport = transport
+    observed_commit_source = commit_object_source
+    if type(execution_worker) is JournaledProposalWorker:
+        snapshot_transport = execution_worker.snapshot_transport(transport)
+        observed_commit_source = execution_worker.raw_commit_source(commit_object_source)
     try:
-        snapshot = snapshot_reader(request, transport)
+        snapshot = snapshot_reader(
+            request,
+            snapshot_transport,
+            commit_object_source=observed_commit_source,
+        )
     except Exception:
         raise ReplayError("replay: pinned snapshot fetch failed") from None
     claim = getattr(snapshot, "claim", None)
     files = getattr(snapshot, "files", None)
-    if (
+    verified_commit_object = getattr(snapshot, "verified_commit_object", None)
+    pin_matches = not (
         getattr(claim, "owner", None) != REMOTE_REPOSITORY_OWNER
         or getattr(claim, "repository", None) != REMOTE_REPOSITORY_NAME
         or getattr(claim, "commit_oid", None) != REMOTE_REPOSITORY_COMMIT
@@ -161,8 +276,22 @@ def replay_staged_candidate(
         or type(files) is not tuple
         or len(files) != REMOTE_REPOSITORY_FILE_COUNT
         or sum(getattr(blob, "path", None) == ALLOWED_CHANGE_PATH for blob in files) != 1
-    ):
+    )
+    if type(execution_worker) is JournaledProposalWorker:
+        try:
+            pin_matches = execution_worker.record_snapshot_pin_decision(pin_matches)
+        except Exception:
+            raise ReplayError("replay: snapshot observer is unavailable") from None
+    if not pin_matches:
         raise ReplayError("replay: pinned snapshot mismatch")
+    if (
+        type(verified_commit_object) is not GitCommitObject
+        or verified_commit_object.commit_oid != REMOTE_REPOSITORY_COMMIT
+        or verified_commit_object.tree_oid != REMOTE_REPOSITORY_TREE
+        or verified_commit_object.commit_oid != claim.commit_oid
+        or verified_commit_object.tree_oid != claim.tree_oid
+    ):
+        raise ReplayError("replay: raw commit proof mismatch")
     try:
         original_content = next(
             blob.content.decode("utf-8", errors="strict")
@@ -184,18 +313,19 @@ def replay_staged_candidate(
         with SQLiteStagedArtifactStore(temporary_path) as stage_sink:
             result = run_remote_snapshot_execution(
                 snapshot,
-                process_id=f"process-replay-{source_digest[-12:]}",
-                task_id=f"task-replay-{source_digest[-12:]}",
+                process_id=process_id,
+                task_id=task_id,
                 task_instruction=_TASK_INSTRUCTION,
                 declared_change_paths=(ALLOWED_CHANGE_PATH,),
                 allowed_commands=_ALLOWED_COMMANDS,
                 test_command=test_command,
-                worker=_StoredCandidateWorker(candidate),
+                worker=execution_worker,
                 verifier=verifier,
                 sandbox_backend=sandbox_backend,
                 context_files=((ALLOWED_CHANGE_PATH, original_content),),
                 test_timeout_seconds=PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
                 stage_sink=stage_sink,
+                observation_store=observation_store,
             )
             if result.status is not ExecutionStatus.VERIFIED or not result.staged_change_digest:
                 raise ReplayError("replay: candidate verification failed")
@@ -236,7 +366,7 @@ def replay_staged_candidate(
             )
         ):
             raise ReplayError("replay: evidence is invalid")
-        return {
+        evidence = {
             "schema": "stored-candidate-replay-evidence/v1",
             "status": "verified",
             "source_stage_digest": artifact.staged_change_digest,
@@ -245,6 +375,11 @@ def replay_staged_candidate(
             "commit": REMOTE_REPOSITORY_COMMIT,
             "tree": REMOTE_REPOSITORY_TREE,
             "content_digest": REMOTE_REPOSITORY_CONTENT_DIGEST,
+            "raw_commit_object": {
+                "status": "verified-by-object-hash",
+                "commit_oid": verified_commit_object.commit_oid,
+                "root_tree_oid": verified_commit_object.tree_oid,
+            },
             **digests,
             "verifier_identity_digest": "sha256:"
             + hashlib.sha256(verifier_id.encode("utf-8")).hexdigest(),
@@ -255,10 +390,15 @@ def replay_staged_candidate(
             "external_write": False,
             "limitations": [
                 "replayed-not-live-worker",
-                "snapshot-is-unauthenticated-github-api-claim",
+                "raw-commit-object-and-content-hashes-verified",
+                "github-tls-transport-provenance-not-independent",
+                "human-authorship-not-independently-verified",
                 "same-host-verifier-trust-not-independent",
             ],
         }
+        if type(execution_worker) is JournaledProposalWorker:
+            evidence["observer"] = execution_worker.observer_reference()
+        return evidence
     except Exception:
         try:
             output_is_owned = (
@@ -384,6 +524,7 @@ def _production_runtime():
         GitHubAnonymousSnapshotTransport(timeout_seconds=15),
         DockerSandboxBackend(TARGET_RUNTIME_IMAGE_ID),
         verifier,
+        GitHubRawCommitObjectSource("/usr/bin/git", timeout_seconds=15),
     )
 
 
@@ -394,25 +535,57 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("source_database")
     parser.add_argument("source_stage_digest")
     parser.add_argument("output_database")
+    parser.add_argument(
+        "--observer-database",
+        help="optional new SQLite database for a partial replay observation run",
+    )
     args = parser.parse_args(argv)
     if os.environ.get("RUN_DOCKER_SANDBOX_TESTS") != "1":
         print("replay: explicit Docker opt-in is required", file=sys.stderr)
         return 2
     try:
-        transport, sandbox, verifier = _production_runtime()
-        evidence = replay_staged_candidate(
-            args.source_database,
-            args.source_stage_digest,
-            args.output_database,
-            transport=transport,
-            sandbox_backend=sandbox,
-            verifier=verifier,
-        )
-    except (ReplayError, DurableStageStoreError, GitHubHTTPTransportError, GitHubSnapshotError):
-        print("replay: operation failed closed", file=sys.stderr)
+        source_path = _validate_existing_database(args.source_database)
+        output_path = _validate_new_database_path(args.output_database)
+        if not isinstance(args.source_stage_digest, str) or _DIGEST_PATTERN.fullmatch(
+            args.source_stage_digest
+        ) is None:
+            raise ReplayError("replay: source digest is invalid")
+        _load_source_candidate(source_path, args.source_stage_digest)
+        observer_path = None
+        if args.observer_database is not None:
+            observer_path = _validate_new_database_path(args.observer_database)
+            if observer_path.resolve(strict=False) == output_path.resolve(strict=False):
+                raise ReplayError("replay: observer and stage databases must differ")
+        if _paths_alias(source_path, output_path):
+            raise ReplayError("replay: source and output databases must differ")
+        transport, sandbox, verifier, commit_object_source = _production_runtime()
+        if observer_path is None:
+            evidence = replay_staged_candidate(
+                args.source_database,
+                args.source_stage_digest,
+                args.output_database,
+                transport=transport,
+                sandbox_backend=sandbox,
+                verifier=verifier,
+                commit_object_source=commit_object_source,
+            )
+        else:
+            with SQLiteObservationStore(observer_path) as observation_store:
+                evidence = replay_staged_candidate(
+                    args.source_database,
+                    args.source_stage_digest,
+                    args.output_database,
+                    transport=transport,
+                    sandbox_backend=sandbox,
+                    verifier=verifier,
+                    commit_object_source=commit_object_source,
+                    observation_store=observation_store,
+                )
+    except (ReplayError, DurableStageStoreError, GitHubHTTPTransportError, GitHubSnapshotError) as exc:
+        print(_safe_failure_marker(exc), file=sys.stderr)
         return 2
-    except Exception:
-        print("replay: operation failed closed", file=sys.stderr)
+    except Exception as exc:
+        print(_safe_failure_marker(exc), file=sys.stderr)
         return 2
     print(json.dumps(evidence, ensure_ascii=False, allow_nan=False, sort_keys=True))
     return 0

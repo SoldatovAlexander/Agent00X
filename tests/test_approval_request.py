@@ -257,6 +257,33 @@ class ApprovalRequestTests(unittest.TestCase):
                     imported.add((node.module or "").rsplit(".", 1)[-1])
             self.assertFalse(forbidden.intersection(imported))
 
+    def test_cli_reports_wal_and_shm_stage_as_not_quiescent(self):
+        with tempfile.TemporaryDirectory(prefix="approval-request-sidecar-") as temporary:
+            database = Path(temporary) / "stage.sqlite3"
+            with SQLiteStagedArtifactStore(database) as store:
+                store.save(self.artifact)
+            before = database.read_bytes()
+            for suffix in ("-wal", "-shm"):
+                sidecar = database.with_name(database.name + suffix)
+                self.assertFalse(sidecar.exists())
+                sidecar.touch()
+                args = [
+                    str(database), self.artifact.staged_change_digest,
+                    "agent/process-durable-stage-001", "master",
+                    "approval-stage-review-001", "user-alice", "production-policy-v1",
+                ]
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    code = main(args, environ=METADATA, now=NOW)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertEqual(
+                    stderr.getvalue().strip(),
+                    "approval request: stage database is not quiescent",
+                )
+                self.assertEqual(database.read_bytes(), before)
+                sidecar.unlink()
+
     def test_verified_runtime_evidence_hands_exact_stage_to_read_only_approval_cli(self):
         request, prepared, result, _ = get_verified_artifact()
         artifact = build_staged_artifact(request, prepared, result)

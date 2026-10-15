@@ -17,7 +17,12 @@ from app_contracts.deepseek_worker import (
     DeepSeekProposalWorker,
     build_chat_completions_payload,
 )
-from app_contracts.executor import ExecutionError, WorkerInput, WorkerProposal
+from app_contracts.executor import (
+    ExecutionError,
+    WorkerInput,
+    WorkerProposal,
+    WorkerTerminalOutcome,
+)
 
 
 def valid_task(**overrides) -> WorkerInput:
@@ -95,13 +100,26 @@ class RequestMappingTests(unittest.TestCase):
         self.assertNotIn("tools", payload)
         self.assertEqual([message["role"] for message in payload["messages"]], ["system", "user"])
         self.assertIn("json", payload["messages"][0]["content"].lower())
-        self.assertIn('{"changes":[{"path":"relative/path","content":"complete file text"}]}', payload["messages"][0]["content"])
+        self.assertIn('"agent00x-worker-result/v2"', payload["messages"][0]["content"])
+        self.assertIn('"target_test_outcome_unknown"', payload["messages"][0]["content"])
         self.assertEqual(payload["messages"][1]["content"], "Do the fix\n\nContext file: calculator.py\nfile body")
         serialized = json.dumps(payload)
         for sentinel in ("process-local-001", "task-local-001", "fixture-repository", "fixture-base-001"):
             self.assertNotIn(sentinel, serialized)
         for sentinel in ("credential", "api_key", "apikey", "Authorization", "Bearer sk-"):
             self.assertNotIn(sentinel, serialized)
+
+    def test_explicit_local_timeout_is_forwarded_and_capped(self):
+        channel = FakeChannel(result())
+        DeepSeekProposalWorker(channel=channel, timeout_seconds=180).propose(valid_task())
+        self.assertEqual(channel.timeouts, [180])
+
+        invalid_channel = FakeChannel(result())
+        with self.assertRaises(ExecutionError):
+            DeepSeekProposalWorker(
+                channel=invalid_channel, timeout_seconds=181
+            ).propose(valid_task())
+        self.assertEqual(invalid_channel.calls, 0)
 
     def test_builder_uses_only_instruction_and_context(self):
         payload = build_chat_completions_payload(valid_task())
@@ -132,6 +150,25 @@ class RequestMappingTests(unittest.TestCase):
 
 
 class ResponseValidationTests(unittest.TestCase):
+    def test_terminal_outcome_is_parsed_without_patch(self):
+        channel = FakeChannel(
+            result(
+                json.dumps(
+                    {
+                        "schema": "agent00x-worker-result/v2",
+                        "outcome": "blocked",
+                        "changes": None,
+                        "reason_code": "target_test_outcome_unknown",
+                    }
+                )
+            )
+        )
+        self.assertEqual(
+            DeepSeekProposalWorker(channel).propose(valid_task()),
+            WorkerTerminalOutcome("blocked", "target_test_outcome_unknown"),
+        )
+        self.assertEqual(channel.calls, 1)
+
     def test_rejects_non_stop_or_malformed_provider_results(self):
         cases = (
             None,

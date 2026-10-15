@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -17,7 +18,12 @@ from app_contracts.executor import (
     VerifierResult,
     VerifierVerdict,
     WorkerProposal,
+    WorkerTerminalOutcome,
     run_local_execution,
+)
+from app_contracts.brainbooster_target_profile import (
+    PINNED_HTTP_DB_FAILURE_CODES,
+    PINNED_HTTP_DB_TEST_COMMAND,
 )
 from app_contracts.observation_store import (
     ObservationStore,
@@ -39,6 +45,7 @@ from app_contracts.observer_runtime import (
     ExecutionAuthorizationOutcomeUnknownError,
     ControlledPublicationJournalError,
     ControlledPublicationOutcomeUnknownError,
+    JournaledModelChannel,
     SnapshotJournalError,
     SnapshotOutcomeUnknownError,
     StageCallFailedError,
@@ -60,6 +67,143 @@ def fixed_clock():
 
 
 class ObserverRuntimeTests(unittest.TestCase):
+    def test_model_channel_is_checkpointed_without_retaining_request_or_response(self):
+        store = ObservationStore()
+        calls = []
+        private_request = "private-model-request-marker"
+        private_response = "private-model-response-marker"
+
+        class ModelChannel:
+            def create_chat_completion(self, payload, *, timeout_seconds):
+                events = store.events()
+                calls.append((payload, timeout_seconds, events[-1]["event_type"]))
+                return {"private_response": private_response}
+
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-model-call-001",
+            task_id="task-model-call-001",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        channel = JournaledModelChannel(ModelChannel())
+        channel.bind(run)
+        payload = {"messages": [{"content": private_request}]}
+
+        result = channel.create_chat_completion(payload, timeout_seconds=17)
+
+        self.assertEqual(result, {"private_response": private_response})
+        self.assertEqual(calls, [(payload, 17, "tool_requested")])
+        events = store.events()
+        model_events = [
+            event for event in events
+            if event.get("decision_or_tool") == "ModelChannel.create_chat_completion"
+        ]
+        self.assertEqual([event["event_type"] for event in model_events], [
+            "tool_requested", "tool_completed"
+        ])
+        self.assertEqual(model_events[0]["status"], "pending")
+        self.assertEqual(model_events[1]["status"], "ok")
+        self.assertEqual(
+            model_events[1]["causal_event_ids"], [model_events[0]["event_id"]]
+        )
+        serialized_events = repr(events)
+        self.assertNotIn(private_request, serialized_events)
+        self.assertNotIn(private_response, serialized_events)
+        self.assertEqual(run.observer_reference()["as_of_cursor"], 2)
+
+        with self.assertRaises(ControlledPublicationJournalError):
+            channel.create_chat_completion(payload, timeout_seconds=17)
+        self.assertEqual(len(calls), 1)
+
+        resumed = JournaledProposalWorker.resume_existing(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-model-call-001",
+            run_id=run.observer_reference()["run_id"],
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        resumed_channel = JournaledModelChannel(ModelChannel())
+        resumed_channel.bind(resumed)
+        with self.assertRaises(ControlledPublicationJournalError):
+            resumed_channel.create_chat_completion(payload, timeout_seconds=17)
+        self.assertEqual(len(calls), 1)
+
+    def test_model_channel_cannot_dispatch_until_bound_to_observer_run(self):
+        calls = []
+
+        class ModelChannel:
+            def create_chat_completion(self, payload, *, timeout_seconds):
+                calls.append(True)
+                return None
+
+        channel = JournaledModelChannel(ModelChannel())
+        with self.assertRaises(ControlledPublicationJournalError):
+            channel.create_chat_completion({}, timeout_seconds=1)
+        self.assertEqual(calls, [])
+
+    def test_terminal_worker_result_journals_only_fixed_outcome_code(self):
+        store = ObservationStore()
+        worker = JournaledProposalWorker(
+            SimpleNamespace(
+                propose=lambda _request: WorkerTerminalOutcome(
+                    "blocked", "target_test_outcome_unknown"
+                )
+            ),
+            store,
+            process_id="process-terminal-outcome-001",
+            task_id="task-terminal-outcome-001",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        result = worker.propose(
+            SimpleNamespace(
+                process_id="process-terminal-outcome-001",
+                task_id="task-terminal-outcome-001",
+            )
+        )
+        self.assertEqual(result.outcome, "blocked")
+        completed = [
+            event
+            for event in store.events()
+            if event.get("event_type") == "tool_completed"
+        ]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(
+            completed[0]["safe_parameters"], {"worker_outcome": "blocked"}
+        )
+        self.assertNotIn("target_test_outcome_unknown", str(completed[0]))
+
+    def test_terminal_worker_result_journal_failure_is_unknown(self):
+        class FailTerminalStore(ObservationStore):
+            def append(self, event):
+                if event.get("event_type") == "tool_completed":
+                    raise RuntimeError("synthetic journal failure")
+                return super().append(event)
+
+        store = FailTerminalStore()
+        worker = JournaledProposalWorker(
+            SimpleNamespace(
+                propose=lambda _request: WorkerTerminalOutcome(
+                    "denied", "publication_not_authorized"
+                )
+            ),
+            store,
+            process_id="process-terminal-journal-001",
+            task_id="task-terminal-journal-001",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        with self.assertRaises(WorkerOutcomeUnknownError):
+            worker.propose(
+                SimpleNamespace(
+                    process_id="process-terminal-journal-001",
+                    task_id="task-terminal-journal-001",
+                )
+            )
+
     def test_resume_existing_preserves_run_sequence_and_one_shot_flags(self):
         store = ObservationStore()
         original = JournaledProposalWorker(
@@ -251,6 +395,151 @@ class ObserverRuntimeTests(unittest.TestCase):
                 self.assertEqual(events[1]["causal_event_ids"], [events[0]["event_id"]])
                 self.assertEqual(events[0]["decision_or_tool"], step)
                 self.assertEqual(events[1]["decision_or_tool"], step)
+
+    def test_resume_preserves_worker_proposal_validation_one_shot_flag(self):
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-proposal-validation-resume",
+            task_id="task-proposal-validation-resume",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        run_id = run.observer_reference()["run_id"]
+        run.run_controlled_step(
+            "WorkerProposal.validate",
+            lambda: True,
+            process_id="process-proposal-validation-resume",
+        )
+        resumed = JournaledProposalWorker.resume_existing(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-proposal-validation-resume",
+            run_id=run_id,
+        )
+        with self.assertRaises(ControlledPublicationJournalError):
+            resumed.run_controlled_step(
+                "WorkerProposal.validate",
+                lambda: True,
+                process_id="process-proposal-validation-resume",
+            )
+        self.assertTrue(
+            resumed.run_controlled_step(
+                "Approval.validate",
+                lambda: True,
+                process_id="process-proposal-validation-resume",
+            )
+        )
+
+    def test_resume_preserves_prepared_binding_validation_one_shot_flag(self):
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-prepared-binding-resume",
+            task_id="task-prepared-binding-resume",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        run_id = run.observer_reference()["run_id"]
+        run.run_controlled_step(
+            "PreparedChange.validate-binding",
+            lambda: True,
+            process_id="process-prepared-binding-resume",
+        )
+        resumed = JournaledProposalWorker.resume_existing(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-prepared-binding-resume",
+            run_id=run_id,
+        )
+        with self.assertRaises(ControlledPublicationJournalError):
+            resumed.run_controlled_step(
+                "PreparedChange.validate-binding",
+                lambda: True,
+                process_id="process-prepared-binding-resume",
+            )
+        self.assertTrue(
+            resumed.run_controlled_step(
+                "Approval.validate",
+                lambda: True,
+                process_id="process-prepared-binding-resume",
+            )
+        )
+
+    def test_resume_preserves_sandbox_snapshot_binding_one_shot_flag(self):
+        store = ObservationStore()
+        process_id = "process-sandbox-binding-resume"
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id=process_id,
+            task_id="task-sandbox-binding-resume",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        run_id = run.observer_reference()["run_id"]
+        run.run_controlled_step(
+            "SandboxSnapshot.validate-binding",
+            lambda: True,
+            process_id=process_id,
+        )
+        resumed = JournaledProposalWorker.resume_existing(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id=process_id,
+            run_id=run_id,
+        )
+        with self.assertRaises(ControlledPublicationJournalError):
+            resumed.run_controlled_step(
+                "SandboxSnapshot.validate-binding",
+                lambda: True,
+                process_id=process_id,
+            )
+        self.assertTrue(
+            resumed.run_controlled_step(
+                "Approval.validate",
+                lambda: True,
+                process_id=process_id,
+            )
+        )
+
+    def test_resume_preserves_proposal_application_one_shot_flag(self):
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-proposal-application-resume",
+            task_id="task-proposal-application-resume",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        run_id = run.observer_reference()["run_id"]
+        run.run_controlled_step(
+            "PreparedChange.apply-proposal",
+            lambda: True,
+            process_id="process-proposal-application-resume",
+        )
+        resumed = JournaledProposalWorker.resume_existing(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-proposal-application-resume",
+            run_id=run_id,
+        )
+        with self.assertRaises(ControlledPublicationJournalError):
+            resumed.run_controlled_step(
+                "PreparedChange.apply-proposal",
+                lambda: True,
+                process_id="process-proposal-application-resume",
+            )
+        self.assertTrue(
+            resumed.run_controlled_step(
+                "Approval.validate",
+                lambda: True,
+                process_id="process-proposal-application-resume",
+            )
+        )
 
     def test_controlled_publication_gate_journal_refusal_blocks_each_dispatch(self):
         class RefusingStepStore(ObservationStore):
@@ -634,21 +923,34 @@ class ObserverRuntimeTests(unittest.TestCase):
                 "tool_completed",
                 "tool_requested",
                 "tool_completed",
+                "decision_proposed",
+                "decision_applied",
+                "decision_proposed",
+                "decision_applied",
                 "tool_requested",
                 "tool_completed",
+                "decision_proposed",
+                "decision_applied",
                 "tool_requested",
                 "tool_completed",
                 "tool_requested",
                 "tool_completed",
             ],
         )
-        self.assertEqual([event["sequence"] for event in events], list(range(11)))
+        self.assertEqual([event["sequence"] for event in events], list(range(17)))
         self.assertEqual(len({event["run_id"] for event in events}), 1)
         self.assertEqual(events[1]["decision_or_tool"], "SandboxBackend.create.target-execution")
-        self.assertEqual(events[5]["decision_or_tool"], "SandboxSession.run.target-tests")
-        self.assertEqual(events[7]["decision_or_tool"], "IndependentVerifier.verify")
-        self.assertEqual(events[9]["decision_or_tool"], "SandboxSession.close.target-execution")
-        self.assertEqual(len(store.checkpoints()), 5)
+        self.assertEqual(events[5]["decision_or_tool"], "WorkerProposal.validate")
+        self.assertEqual(events[7]["decision_or_tool"], "PreparedChange.apply-proposal")
+        self.assertEqual(
+            events[9]["decision_or_tool"], "SandboxSession.run.target-tests"
+        )
+        self.assertEqual(
+            events[11]["decision_or_tool"], "PreparedChange.validate-binding"
+        )
+        self.assertEqual(events[13]["decision_or_tool"], "IndependentVerifier.verify")
+        self.assertEqual(events[15]["decision_or_tool"], "SandboxSession.close.target-execution")
+        self.assertEqual(len(store.checkpoints()), 8)
 
     def test_executor_sandbox_create_gate_refusal_prevents_backend_call(self):
         class RefusingStore(ObservationStore):
@@ -912,6 +1214,7 @@ class ObserverRuntimeTests(unittest.TestCase):
         event = store.events()[-1]
         self.assertEqual(event["event_type"], "tool_failed")
         self.assertEqual(event["error_code"], "sandbox-command-nonzero")
+        self.assertEqual(event["safe_parameters"], {"sandbox_return_code": 7})
         journal = repr(store.events())
         for canary in (
             "SYNTHETIC-ARGV-CANARY",
@@ -919,6 +1222,212 @@ class ObserverRuntimeTests(unittest.TestCase):
             "SYNTHETIC-STDERR-CANARY",
         ):
             self.assertNotIn(canary, journal)
+
+    def test_sandbox_return_code_is_recorded_only_for_bounded_exact_integers(self):
+        for returncode in (True, False, -256, 256, 1.5, "7", None):
+            with self.subTest(returncode=repr(returncode)):
+                store = ObservationStore()
+                run = JournaledProposalWorker(
+                    SimpleNamespace(propose=lambda _request: "synthetic"),
+                    store,
+                    process_id="process-sandbox-return-code",
+                    task_id="task-sandbox-return-code",
+                    id_factory=fixed_ids(),
+                    clock=fixed_clock(),
+                )
+                run.propose(
+                    SimpleNamespace(
+                        process_id="process-sandbox-return-code",
+                        task_id="task-sandbox-return-code",
+                    )
+                )
+
+                class FakeSession:
+                    def run(self, argv, timeout_seconds=30):
+                        return SimpleNamespace(
+                            argv=tuple(argv), returncode=returncode,
+                            stdout="SYNTHETIC-OUTPUT-CANARY",
+                            stderr="SYNTHETIC-ERROR-CANARY",
+                        )
+
+                run.sandbox_session(FakeSession(), purpose="target-tests").run(
+                    ["python3", "-c", "synthetic"], timeout_seconds=1
+                )
+                event = store.events()[-1]
+                self.assertNotIn("safe_parameters", event)
+                self.assertNotIn("SYNTHETIC-OUTPUT-CANARY", repr(store.events()))
+                self.assertNotIn("SYNTHETIC-ERROR-CANARY", repr(store.events()))
+
+    def test_fixed_target_probe_persists_only_all_allowlisted_failure_codes(self):
+        marker_prefix = "agent00x:test-failure:"
+        self.assertEqual(len(PINNED_HTTP_DB_FAILURE_CODES), 57)
+        for index, code in enumerate(sorted(PINNED_HTTP_DB_FAILURE_CODES)):
+            with self.subTest(code=code):
+                store = ObservationStore()
+                process_id = f"process-target-diagnostic-{index:03d}"
+                task_id = f"task-target-diagnostic-{index:03d}"
+                run = JournaledProposalWorker(
+                    SimpleNamespace(propose=lambda _request: "synthetic"),
+                    store,
+                    process_id=process_id,
+                    task_id=task_id,
+                    id_factory=fixed_ids(),
+                    clock=fixed_clock(),
+                )
+                run.propose(SimpleNamespace(process_id=process_id, task_id=task_id))
+
+                class FakeSession:
+                    def run(self, argv, timeout_seconds=30):
+                        return SimpleNamespace(
+                            argv=tuple(argv),
+                            returncode=1,
+                            stdout=marker_prefix + code + "\n",
+                            stderr="SYNTHETIC-RAW-STDERR-CANARY",
+                        )
+
+                run.sandbox_session(FakeSession(), purpose="target-tests").run(
+                    PINNED_HTTP_DB_TEST_COMMAND, timeout_seconds=30
+                )
+                event = store.events()[-1]
+                self.assertEqual(
+                    event["safe_parameters"],
+                    {"sandbox_return_code": 1, "sandbox_failure_code": code},
+                )
+                serialized = repr(store.events())
+                self.assertNotIn(marker_prefix, serialized)
+                self.assertNotIn("SYNTHETIC-RAW-STDERR-CANARY", serialized)
+
+    def test_target_probe_failure_marker_rejects_unknown_extra_and_wrong_scope(self):
+        marker = "agent00x:test-failure:valid-row\n"
+        invalid_stdout = (
+            "agent00x:test-failure:unknown-code\n",
+            marker + "EXTRA-RAW-OUTPUT-CANARY\n",
+            marker.rstrip("\n"),
+            "agent00x:test-failure:SECRET-TOKEN\n",
+        )
+        for index, stdout in enumerate(invalid_stdout):
+            with self.subTest(stdout_index=index):
+                store = ObservationStore()
+                process_id = f"process-target-marker-negative-{index:03d}"
+                task_id = f"task-target-marker-negative-{index:03d}"
+                run = JournaledProposalWorker(
+                    SimpleNamespace(propose=lambda _request: "synthetic"),
+                    store,
+                    process_id=process_id,
+                    task_id=task_id,
+                    id_factory=fixed_ids(),
+                    clock=fixed_clock(),
+                )
+                run.propose(SimpleNamespace(process_id=process_id, task_id=task_id))
+
+                class FakeSession:
+                    def run(self, argv, timeout_seconds=30):
+                        return SimpleNamespace(argv=tuple(argv), returncode=1, stdout=stdout, stderr="")
+
+                run.sandbox_session(FakeSession(), purpose="target-tests").run(
+                    PINNED_HTTP_DB_TEST_COMMAND, timeout_seconds=30
+                )
+                self.assertNotIn("sandbox_failure_code", store.events()[-1].get("safe_parameters", {}))
+                self.assertNotIn("EXTRA-RAW-OUTPUT-CANARY", repr(store.events()))
+
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: "synthetic"),
+            store,
+            process_id="process-target-marker-wrong-scope",
+            task_id="task-target-marker-wrong-scope",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        run.propose(SimpleNamespace(
+            process_id="process-target-marker-wrong-scope",
+            task_id="task-target-marker-wrong-scope",
+        ))
+
+        class FakeSession:
+            def run(self, argv, timeout_seconds=30):
+                return SimpleNamespace(
+                    argv=tuple(argv), returncode=1, stdout=marker, stderr=""
+                )
+
+        run.sandbox_session(FakeSession(), purpose="verifier-replay").run(
+            PINNED_HTTP_DB_TEST_COMMAND, timeout_seconds=30
+        )
+        self.assertNotIn(
+            "sandbox_failure_code", store.events()[-1].get("safe_parameters", {})
+        )
+
+    def test_sandbox_success_records_zero_return_code(self):
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: "synthetic"),
+            store,
+            process_id="process-sandbox-return-zero",
+            task_id="task-sandbox-return-zero",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        run.propose(
+            SimpleNamespace(
+                process_id="process-sandbox-return-zero",
+                task_id="task-sandbox-return-zero",
+            )
+        )
+
+        class FakeSession:
+            def run(self, argv, timeout_seconds=30):
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        run.sandbox_session(FakeSession(), purpose="target-tests").run(
+            ["python3", "-c", "synthetic"], timeout_seconds=1
+        )
+        event = store.events()[-1]
+        self.assertEqual(event["event_type"], "tool_completed")
+        self.assertEqual(event["safe_parameters"], {"sandbox_return_code": 0})
+
+    def test_sandbox_return_code_persists_without_command_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "sandbox-history.sqlite3"
+            with SQLiteObservationStore(database) as store:
+                run = JournaledProposalWorker(
+                    SimpleNamespace(propose=lambda _request: "synthetic"),
+                    store,
+                    process_id="process-sandbox-sqlite-code",
+                    task_id="task-sandbox-sqlite-code",
+                    id_factory=fixed_ids(),
+                    clock=fixed_clock(),
+                )
+                run.propose(
+                    SimpleNamespace(
+                        process_id="process-sandbox-sqlite-code",
+                        task_id="task-sandbox-sqlite-code",
+                    )
+                )
+
+                class FakeSession:
+                    def run(self, argv, timeout_seconds=30):
+                        return SimpleNamespace(
+                            argv=tuple(argv), returncode=1,
+                            stdout="agent00x:test-failure:valid-row\nSYNTHETIC-PERSIST-STDOUT-CANARY",
+                            stderr="SYNTHETIC-PERSIST-STDERR-CANARY",
+                        )
+
+                result = run.sandbox_session(
+                    FakeSession(), purpose="target-tests"
+                ).run(PINNED_HTTP_DB_TEST_COMMAND, timeout_seconds=1)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(
+                    store.events()[-1]["safe_parameters"],
+                    {"sandbox_return_code": 1},
+                )
+            database_bytes = database.read_bytes()
+            report = json.dumps(report_from_sqlite(database), sort_keys=True)
+            for canary in (
+                b"SYNTHETIC-PERSIST-STDOUT-CANARY",
+                b"SYNTHETIC-PERSIST-STDERR-CANARY",
+            ):
+                self.assertNotIn(canary, database_bytes)
+                self.assertNotIn(canary.decode(), report)
 
     def test_sandbox_lifecycle_is_journaled_in_order_and_redacted(self):
         store = ObservationStore()

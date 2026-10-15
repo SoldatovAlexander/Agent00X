@@ -13,6 +13,7 @@ from app_contracts.deepseek_http_channel import (
 from app_contracts.worker_model_protocol import (
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
+    MAX_LOCAL_MODEL_TIMEOUT_SECONDS,
     MAX_TIMEOUT_SECONDS,
     ModelRequestProtocolError,
     encode_chat_completions_request,
@@ -44,6 +45,7 @@ class WorkerModelProtocolTests(unittest.TestCase):
         self.assertEqual(MAX_REQUEST_BYTES, 128_000)
         self.assertEqual(MAX_RESPONSE_BYTES, 65_536)
         self.assertEqual(MAX_TIMEOUT_SECONDS, 30.0)
+        self.assertEqual(MAX_LOCAL_MODEL_TIMEOUT_SECONDS, 180.0)
 
     def test_http_adapter_preserves_protocol_bytes_and_fixed_error_contract(self):
         payload = _valid_payload()

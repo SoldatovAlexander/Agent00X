@@ -15,19 +15,27 @@ VP-02 из [плана валидации](12-validation-plan-v1.md) требу�
 GitHub publication. R5 допускает только синтетические проверки, пока нет новой
 точной live-карточки и свежего разрешения.
 
-Сейчас `scripts/run_pinned_deepseek_worker.py` создаёт
-`DeepSeekProposalWorker(channel=DeepSeekHTTPChannel(credential_source))` в
-host-процессе. Канал закрепляет HTTPS host `api.deepseek.com`, path
+`scripts/run_pinned_deepseek_worker.py` по умолчанию выбирает
+`ContainerProposalWorker` с фиксированным образом и `network=none`; ограниченный
+host-side one-shot model channel остаётся вне контейнера. Это локальное
+соединение существующих компонентов, а не доказательство end-to-end границы:
+вызов модели и совместимость socket mount требуют отдельного opt-in Docker
+теста. CLI сохраняет `--worker-backend host-process` только как явный
+legacy/development выбор; fallback с restricted-container на него запрещён.
+Его `DeepSeekHTTPChannel` закрепляет HTTPS host `api.deepseek.com`, path
 `/chat/completions`, модель `deepseek-flash`, ограничивает payload 128,000
-байт, ответ — 65,536 байт и request deadline — максимум 30 секунд. Это
-ограничения прикладного HTTP-адаптера, а не изоляция процесса Worker: код
-Worker и канал находятся в одном host execution context.
+байт, ответ — 65,536 байт и request deadline — максимум 30 секунд. Этот
+legacy path не удовлетворяет изоляции Worker.
 
 `DockerSandboxBackend` запускает target/verifier с `--network none`, read-only
 root filesystem, `cap-drop ALL`, `no-new-privileges`, non-root user, лимитами
 ресурсов и только двумя bind mounts: snapshot read-only и workspace read-write.
-Этот профиль не используется для текущего live DeepSeek Worker и не доказывает
-его сетевую изоляцию.
+CLI wiring по умолчанию направляет Worker через этот профиль; синтетические
+проверки подтверждают выбор адаптера и fail-closed отказ при ошибке его
+создания. Предыдущие opt-in Docker-тесты (EXP-776/777/781) проверяли контейнерный
+adapter на synthetic roundtrip. Ни они, ни CLI wiring не доказывают live model
+call, host-side broker/socket mount на macOS/Docker Desktop, независимый verifier,
+credential redaction в реальном провайдерном ответе или внешнюю публикацию.
 
 ## Сравнение вариантов
 

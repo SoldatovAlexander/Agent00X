@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import socket
 import stat
@@ -18,6 +19,7 @@ from app_contracts.deepseek_worker import (
     ChatCompletionsModelResult,
 )
 from app_contracts.worker_model_ipc import (
+    StdioChatCompletionsChannel,
     UnixSocketChatCompletionsBroker,
     UnixSocketChatCompletionsChannel,
     WorkerModelIPCError,
@@ -281,6 +283,71 @@ class WorkerModelIPCTests(unittest.TestCase):
             with self.subTest(timeout=invalid):
                 with self.assertRaisesRegex(WorkerModelIPCError, "timeout is invalid"):
                     client.create_chat_completion(valid_payload(), timeout_seconds=invalid)
+
+    def test_local_timeout_profile_is_bounded_and_one_shot(self):
+        channel = FakeChannel()
+        broker, thread, failures = self.start_broker(channel, timeout=180)
+        client = UnixSocketChatCompletionsChannel(
+            self.socket_path, maximum_timeout_seconds=180
+        )
+        result = client.create_chat_completion(valid_payload(), timeout_seconds=180)
+        thread.join(timeout=2)
+        broker.close()
+
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(failures, "broker failed")
+        self.assertEqual(channel.calls, 1)
+        self.assertLessEqual(channel.timeout, 180)
+        self.assertGreater(channel.timeout, 179.9)
+        self.assertIs(type(result), ChatCompletionsModelResult)
+        with self.assertRaisesRegex(WorkerModelIPCError, "timeout is invalid"):
+            UnixSocketChatCompletionsChannel(
+                self.socket_path, maximum_timeout_seconds=181
+            )
+
+    def test_r5_60_second_timeout_profile_is_accepted_with_existing_cap(self):
+        reader_fd, writer_fd = os.pipe()
+        reader = os.fdopen(reader_fd, "rb", buffering=0)
+        writer = os.fdopen(writer_fd, "wb", buffering=0)
+        try:
+            StdioChatCompletionsChannel(
+                reader, writer, maximum_timeout_seconds=60.0
+            )
+        finally:
+            reader.close()
+            writer.close()
+
+        socket_channel = UnixSocketChatCompletionsChannel(
+            self.socket_path, maximum_timeout_seconds=60.0
+        )
+        self.assertEqual(socket_channel._maximum_timeout_seconds, 60.0)
+
+    def test_channel_maximum_timeout_rejects_invalid_values(self):
+        invalid_values = (True, 0, -1, float("nan"), float("inf"), 181)
+        reader_fd, writer_fd = os.pipe()
+        reader = os.fdopen(reader_fd, "rb", buffering=0)
+        writer = os.fdopen(writer_fd, "wb", buffering=0)
+        try:
+            for value in invalid_values:
+                with self.subTest(channel="stdio", timeout=value):
+                    with self.assertRaisesRegex(
+                        WorkerModelIPCError, "timeout is invalid"
+                    ):
+                        StdioChatCompletionsChannel(
+                            reader, writer, maximum_timeout_seconds=value
+                        )
+        finally:
+            reader.close()
+            writer.close()
+
+        for value in invalid_values:
+            with self.subTest(channel="unix_socket", timeout=value):
+                with self.assertRaisesRegex(
+                    WorkerModelIPCError, "timeout is invalid"
+                ):
+                    UnixSocketChatCompletionsChannel(
+                        self.socket_path, maximum_timeout_seconds=value
+                    )
 
     def test_bad_parent_permissions_fail_closed(self):
         child = self.directory / "shared"

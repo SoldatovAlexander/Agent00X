@@ -31,6 +31,7 @@ from app_contracts.executor import (
     VerifierVerdict,
     WorkerInput,
     WorkerProposal,
+    WorkerTerminalOutcome,
     ExecutorSandboxBackend,
     _build_verifier_input,
     _read_pinned_snapshot_files,
@@ -38,6 +39,7 @@ from app_contracts.executor import (
     validate_worker_proposal,
 )
 from app_contracts.validator import ContractValidationError
+from app_contracts.observation_store import ObservationStore, ObservationStoreError
 from app_contracts.repository_process import prepare_change
 from app_contracts.digests import sha256_bytes, sha256_digest
 from app_contracts.github_snapshot import (
@@ -189,11 +191,23 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
         return GitHubSnapshotContents(claim=claim, files=(blob,))
 
     class FakeBackend:
-        def __init__(self, replay_returncode=0):
+        def __init__(
+            self,
+            replay_returncode=0,
+            *,
+            target_returncode=0,
+            target_stdout="",
+            target_stderr="",
+        ):
             self.temporary_directories = []
             self.sessions = []
             self.commands = []
+            self.closed_workspace_contents = []
+            self.closed_snapshot_contents = []
             self.replay_returncode = replay_returncode
+            self.target_returncode = target_returncode
+            self.target_stdout = target_stdout
+            self.target_stderr = target_stderr
 
         def create(self, snapshot: Path, allowed_commands: set[str]):
             from app_contracts.sandbox import CommandResult
@@ -224,18 +238,71 @@ class RemoteSnapshotExecutionTests(unittest.TestCase):
                         ).read_text(encoding="utf-8")
                     return CommandResult(
                         tuple(argv),
-                        backend.replay_returncode if self.index == 2 else 0,
-                        "REPLAY-OUTPUT-CANARY" if self.index == 2 else "",
-                        "REPLAY-ERROR-CANARY" if self.index == 2 else "",
+                        backend.replay_returncode if self.index == 2 else backend.target_returncode,
+                        "REPLAY-OUTPUT-CANARY" if self.index == 2 else backend.target_stdout,
+                        "REPLAY-ERROR-CANARY" if self.index == 2 else backend.target_stderr,
                     )
 
                 def close(self):
+                    backend.closed_workspace_contents.append(
+                        (workspace / "calculator.py").read_text(encoding="utf-8")
+                    )
+                    backend.closed_snapshot_contents.append(
+                        (copied_snapshot / "calculator.py").read_text(encoding="utf-8")
+                    )
                     self.closed = True
                     temporary.cleanup()
 
             session = Session()
             self.sessions.append(session)
             return session
+
+    def test_allowlisted_target_test_failure_reaches_only_fixed_cli_marker(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            snapshot_path = Path(temporary_directory) / "remote-snapshot"
+            base = b"def add(left, right):\n    return left + right\n"
+            remote_snapshot = self.make_snapshot(snapshot_path, base)
+            request = ExecutionRequest(
+                process_id="process-target-test-category",
+                task_id="task-target-test-category",
+                repository_id="fixture-owner/fixture-repository",
+                base_commit=remote_snapshot.claim.commit_oid,
+                snapshot_path=snapshot_path,
+                allowed_commands=frozenset({"python3"}),
+                declared_change_paths=("calculator.py",),
+                test_command=("python3", "-c", "pass"),
+                remote_snapshot=remote_snapshot,
+            )
+
+            class FakeWorker:
+                def propose(self, _worker_input):
+                    return WorkerProposal((("calculator.py", base.decode() + "# candidate\n"),))
+
+            stdout_canary = "PRIVATE-STDOUT-CANARY"
+            stderr_canary = "PRIVATE-STDERR-CANARY"
+            backend = self.FakeBackend(
+                target_returncode=1,
+                target_stdout=(
+                    stdout_canary + "\nagent00x:test-failure:valid-row\n"
+                ),
+                target_stderr=stderr_canary,
+            )
+            result = run_local_execution(
+                request,
+                FakeWorker(),
+                verifier=AcceptingVerifier(),
+                sandbox_backend=backend,
+            )
+
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "target-test-valid-row")
+        from app_contracts import worker_cli
+
+        evidence = worker_cli._remote_execution_evidence(result)
+        self.assertEqual(evidence["failure_code"], "target-test-valid-row")
+        serialized = json.dumps(evidence) + repr(result)
+        self.assertNotIn(stdout_canary, serialized)
+        self.assertNotIn(stderr_canary, serialized)
 
     def test_remote_claim_is_bound_to_worker_verifier_and_execution_result(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -2113,11 +2180,13 @@ print("local_executor_import=ok")
                 return WorkerProposal((("calculator.py", "invalid but different"),))
 
         request = valid_request(test_command=("python3", "-c", "raise SystemExit(1)"))
-        with self.assertRaisesRegex(
-            ContractValidationError,
-        "^verification failed; staged change was not created: allowlisted-tests-failed$",
-        ):
-            run_local_execution(request, FakeWorker(), verifier=AcceptingVerifier())
+        result = run_local_execution(
+            request, FakeWorker(), verifier=AcceptingVerifier()
+        )
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(
+            result.failure_code, "target-test-allowlisted-tests-failed"
+        )
 
     def test_local_coordinator_closes_injected_sandbox_on_worker_failure(self):
         class TrackingBackend:
@@ -3143,6 +3212,557 @@ class ExplicitWorkerInputTests(unittest.TestCase):
         ok_request = valid_request(context_files=ok_context)
         self.assertEqual(ok_request.context_files, ok_context)
         self.assertIsNot(ok_request.context_files, ok_context)
+
+
+class WorkerTerminalOutcomeTests(unittest.TestCase):
+    def test_terminal_outcome_stops_before_tests_verifier_and_stage(self):
+        request = valid_request()
+        calls = []
+
+        class Session:
+            snapshot = request.snapshot_path
+            workspace = request.snapshot_path
+
+            def run(self, *_args, **_kwargs):
+                calls.append("target-test")
+                raise AssertionError("target tests must not run")
+
+            def close(self):
+                calls.append("sandbox.close")
+
+        class Backend:
+            def create(self, *_args, **_kwargs):
+                calls.append("sandbox.create")
+                return Session()
+
+        class Worker:
+            def propose(self, _task):
+                calls.append("worker.propose")
+                return WorkerTerminalOutcome(
+                    "clarification_required", "conflicting_requirements"
+                )
+
+        class Verifier:
+            def verify(self, _prepared):
+                calls.append("verifier")
+                raise AssertionError("verifier must not run")
+
+        class StageSink:
+            def save(self, _artifact):
+                calls.append("stage.save")
+
+            def load(self, _digest):
+                calls.append("stage.load")
+
+        with patch("app_contracts.executor.prepare_change") as prepare:
+            result = run_local_execution(
+                request,
+                Worker(),
+                verifier=Verifier(),
+                sandbox_backend=Backend(),
+                stage_sink=StageSink(),
+                require_durable_stage=True,
+            )
+        prepare.assert_not_called()
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.worker_terminal_outcome, "clarification_required")
+        self.assertEqual(
+            result.worker_terminal_reason_code, "conflicting_requirements"
+        )
+        self.assertEqual(calls, ["sandbox.create", "worker.propose", "sandbox.close"])
+
+
+class WorkerProposalDecisionObservationTests(unittest.TestCase):
+    def _execute(
+        self, store, raw_proposal=None, verifier=None, stage_sink=None, backend=None
+    ):
+        request = valid_request()
+        candidate = (
+            (ROOT / "fixtures/repository/project/calculator.py").read_text(
+                encoding="utf-8"
+            )
+            + "\n# PRIVATE_CANDIDATE_CANARY\n"
+        )
+
+        class Worker:
+            def propose(self, _task):
+                if raw_proposal is not None:
+                    return raw_proposal
+                return WorkerProposal((("calculator.py", candidate),))
+
+        return run_local_execution(
+            request,
+            Worker(),
+            verifier=verifier or AcceptingVerifier(),
+            sandbox_backend=backend or RemoteSnapshotExecutionTests.FakeBackend(),
+            observation_store=store,
+            stage_sink=stage_sink,
+            require_durable_stage=stage_sink is not None,
+        )
+
+    def test_proposal_acceptance_is_journaled_before_preparation_and_redacted(self):
+        store = ObservationStore()
+        result = self._execute(store)
+        events = store.events()
+        labels = [event.get("decision_or_tool") for event in events]
+        proposed = labels.index("WorkerProposal.validate")
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(events[proposed]["event_type"], "decision_proposed")
+        self.assertEqual(events[proposed + 1]["event_type"], "decision_applied")
+        self.assertEqual(events[proposed + 1]["status"], "ok")
+        self.assertIn(
+            events[proposed]["checkpoint_id"],
+            {checkpoint["checkpoint_id"] for checkpoint in store.checkpoints()},
+        )
+        self.assertNotIn("PRIVATE_CANDIDATE_CANARY", repr(events))
+        self.assertEqual(
+            len(
+                [
+                    checkpoint
+                    for checkpoint in store.checkpoints()
+                    if checkpoint.get("kind") == "decision"
+                    and checkpoint.get("agent_id") == "service-publication-observer"
+                ]
+            ),
+            3,
+        )
+
+    def test_invalid_proposal_is_recorded_denied_and_keeps_validation_error(self):
+        store = ObservationStore()
+        with self.assertRaisesRegex(
+            ExecutionError, "^execution proposal: shape is invalid$"
+        ):
+            self._execute(store, raw_proposal=object())
+        events = store.events()
+        decision_events = [
+            event
+            for event in events
+            if event.get("decision_or_tool") == "WorkerProposal.validate"
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in decision_events],
+            ["decision_proposed", "decision_applied"],
+        )
+        self.assertEqual(decision_events[-1]["status"], "denied")
+        self.assertEqual(decision_events[-1]["error_code"], "publication-gate-denied")
+        self.assertNotIn("PRIVATE_CANDIDATE_CANARY", repr(events))
+
+    def test_pinned_sandbox_binding_is_journaled_before_worker_dispatch(self):
+        store = ObservationStore()
+        candidate = (
+            (ROOT / "fixtures/repository/project/calculator.py").read_text(
+                encoding="utf-8"
+            )
+            + "\n# PRIVATE_CANDIDATE_CANARY\n"
+        )
+
+        class Worker:
+            calls = 0
+
+            def propose(self, _task):
+                self.calls += 1
+                return WorkerProposal((("calculator.py", candidate),))
+
+        worker = Worker()
+        with pinned_test_request() as request:
+            result = run_local_execution(
+                request,
+                worker,
+                verifier=AcceptingVerifier(),
+                sandbox_backend=RemoteSnapshotExecutionTests.FakeBackend(),
+                observation_store=store,
+            )
+
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(worker.calls, 1)
+        events = store.events()
+        binding = [
+            (index, event)
+            for index, event in enumerate(events)
+            if event.get("decision_or_tool")
+            == "SandboxSnapshot.validate-binding"
+        ]
+        worker_intent = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("decision_or_tool") == "ProposalWorker.propose"
+            and event.get("event_type") == "tool_requested"
+        )
+        self.assertEqual(
+            [event["event_type"] for _, event in binding],
+            ["decision_proposed", "decision_applied"],
+        )
+        self.assertEqual(binding[1][1]["status"], "ok")
+        self.assertLess(binding[1][0], worker_intent)
+        self.assertIn(
+            binding[0][1]["checkpoint_id"],
+            {checkpoint["checkpoint_id"] for checkpoint in store.checkpoints()},
+        )
+        self.assertNotIn("PRIVATE_CANDIDATE_CANARY", repr(events))
+
+    def test_pinned_sandbox_binding_gate_refusal_or_unknown_stops_worker(self):
+        class RefusingStore(ObservationStore):
+            def record_checkpoint(self, checkpoint):
+                if checkpoint.get("state_ref", "").endswith(
+                    "publication-sandboxsnapshot-validate-binding"
+                ):
+                    raise ObservationStoreError("synthetic gate refusal")
+                return super().record_checkpoint(checkpoint)
+
+        class LosingTerminalStore(ObservationStore):
+            def append(self, event):
+                if (
+                    event.get("agent_id") == "service-publication-observer"
+                    and event.get("decision_or_tool")
+                    == "SandboxSnapshot.validate-binding"
+                    and event.get("event_type") == "decision_applied"
+                ):
+                    raise RuntimeError("synthetic terminal loss")
+                return super().append(event)
+
+        class NeverWorker:
+            calls = 0
+
+            def propose(self, _task):
+                self.calls += 1
+                raise AssertionError("worker must not run")
+
+        for store, expected_code in (
+            (RefusingStore(), "snapshot-binding-observation-gate-failed"),
+            (LosingTerminalStore(), "snapshot-binding-outcome-unknown"),
+        ):
+            with self.subTest(expected_code=expected_code):
+                worker = NeverWorker()
+                with pinned_test_request() as request:
+                    result = run_local_execution(
+                        request,
+                        worker,
+                        verifier=AcceptingVerifier(),
+                        sandbox_backend=RemoteSnapshotExecutionTests.FakeBackend(),
+                        observation_store=store,
+                    )
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(result.failure_code, expected_code)
+                self.assertEqual(worker.calls, 0)
+
+    def test_pinned_sandbox_binding_mismatch_is_journaled_denied(self):
+        class TamperingBackend(RemoteSnapshotExecutionTests.FakeBackend):
+            def create(self, snapshot, allowed_commands):
+                session = super().create(snapshot, allowed_commands)
+                copied_file = session.snapshot / "calculator.py"
+                copied_file.chmod(copied_file.stat().st_mode | 0o200)
+                copied_file.write_text(
+                    "synthetic mismatch\n", encoding="utf-8"
+                )
+                return session
+
+        class NeverWorker:
+            calls = 0
+
+            def propose(self, _task):
+                self.calls += 1
+                raise AssertionError("worker must not run")
+
+        store = ObservationStore()
+        worker = NeverWorker()
+        with pinned_test_request() as request:
+            try:
+                result = run_local_execution(
+                    request,
+                    worker,
+                    verifier=AcceptingVerifier(),
+                    sandbox_backend=TamperingBackend(),
+                    observation_store=store,
+                )
+            except ExecutionError as error:
+                self.assertEqual(str(error), "execution snapshot: digest mismatch")
+            else:
+                self.fail(
+                    f"snapshot tampering was not rejected: {result!r}; "
+                    f"events={store.events()!r}"
+                )
+        self.assertEqual(worker.calls, 0)
+        events = [
+            event
+            for event in store.events()
+            if event.get("decision_or_tool")
+            == "SandboxSnapshot.validate-binding"
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in events],
+            ["decision_proposed", "decision_applied"],
+        )
+        self.assertEqual(events[-1]["status"], "denied")
+        self.assertNotIn("synthetic mismatch", repr(events))
+
+    def test_refused_or_unknown_proposal_decision_never_prepares_change(self):
+        class RefusingStore(ObservationStore):
+            def record_checkpoint(self, checkpoint):
+                if checkpoint.get("state_ref", "").endswith(
+                    "publication-workerproposal-validate"
+                ):
+                    raise ObservationStoreError("synthetic gate refusal")
+                return super().record_checkpoint(checkpoint)
+
+        class LosingTerminalStore(ObservationStore):
+            def append(self, event):
+                if (
+                    event.get("agent_id") == "service-publication-observer"
+                    and event.get("decision_or_tool") == "WorkerProposal.validate"
+                    and event.get("event_type") == "decision_applied"
+                ):
+                    raise RuntimeError("synthetic terminal loss")
+                return super().append(event)
+
+        for store, expected_code in (
+            (RefusingStore(), "proposal-validation-observation-gate-failed"),
+            (LosingTerminalStore(), "proposal-validation-outcome-unknown"),
+        ):
+            with self.subTest(expected_code=expected_code):
+                with patch("app_contracts.executor.prepare_change") as prepare:
+                    result = self._execute(store)
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(
+                    result.failure_code,
+                    expected_code,
+                    repr(
+                        [
+                            (event.get("event_type"), event.get("decision_or_tool"))
+                            for event in store.events()
+                        ]
+                    ),
+                )
+                prepare.assert_not_called()
+
+    def test_prepared_change_binding_is_journaled_before_verifier(self):
+        store = ObservationStore()
+        test_case = self
+
+        class CheckingVerifier:
+            def verify(self, prepared):
+                events = store.events()
+                binding = [
+                    event
+                    for event in events
+                    if event.get("decision_or_tool")
+                    == "PreparedChange.validate-binding"
+                ]
+                test_case.assertEqual(
+                    [event["event_type"] for event in binding],
+                    ["decision_proposed", "decision_applied"],
+                )
+                test_case.assertEqual(binding[-1]["status"], "ok")
+                test_case.assertEqual(
+                    events[-1]["decision_or_tool"], "IndependentVerifier.verify"
+                )
+                return AcceptingVerifier().verify(prepared)
+
+        result = self._execute(store, verifier=CheckingVerifier())
+        events = store.events()
+        proposed = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("decision_or_tool") == "PreparedChange.validate-binding"
+            and event["event_type"] == "decision_proposed"
+        )
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(events[proposed + 1]["status"], "ok")
+        self.assertNotIn("PRIVATE_CANDIDATE_CANARY", repr(events))
+        self.assertEqual(
+            len(
+                [
+                    checkpoint
+                    for checkpoint in store.checkpoints()
+                    if checkpoint.get("kind") == "decision"
+                    and checkpoint.get("agent_id") == "service-publication-observer"
+                ]
+            ),
+            3,
+        )
+
+    def test_proposal_workspace_application_is_journaled_before_target_tests(self):
+        store = ObservationStore()
+        backend = RemoteSnapshotExecutionTests.FakeBackend()
+        result = self._execute(store, backend=backend)
+        events = store.events()
+        applied = [
+            (index, event)
+            for index, event in enumerate(events)
+            if event.get("decision_or_tool") == "PreparedChange.apply-proposal"
+        ]
+        target_test_intent = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("decision_or_tool") == "SandboxSession.run.target-tests"
+            and event.get("event_type") == "tool_requested"
+        )
+
+        self.assertEqual(result.status, ExecutionStatus.VERIFIED)
+        self.assertEqual(
+            [event["event_type"] for _, event in applied],
+            ["decision_proposed", "decision_applied"],
+        )
+        self.assertEqual(applied[1][1]["status"], "ok")
+        self.assertLess(applied[1][0], target_test_intent)
+        self.assertIn(
+            "PRIVATE_CANDIDATE_CANARY", backend.closed_workspace_contents[0]
+        )
+        self.assertNotIn("PRIVATE_CANDIDATE_CANARY", repr(events))
+
+    def test_refused_workspace_application_gate_writes_no_candidate(self):
+        class RefusingStore(ObservationStore):
+            def record_checkpoint(self, checkpoint):
+                if checkpoint.get("state_ref", "").endswith(
+                    "publication-preparedchange-apply-proposal"
+                ):
+                    raise ObservationStoreError("synthetic gate refusal")
+                return super().record_checkpoint(checkpoint)
+
+        backend = RemoteSnapshotExecutionTests.FakeBackend()
+        verifier = AcceptingVerifier()
+        stage_calls = []
+
+        class Stage:
+            def save(self, _artifact):
+                stage_calls.append("save")
+
+            def load(self, _digest):
+                stage_calls.append("load")
+
+        stage = Stage()
+        result = self._execute(
+            RefusingStore(), verifier=verifier, stage_sink=stage, backend=backend
+        )
+
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(
+            result.failure_code, "proposal-application-observation-gate-failed"
+        )
+        self.assertEqual(backend.commands, [])
+        self.assertEqual(verifier.calls, 0)
+        self.assertEqual(
+            backend.closed_workspace_contents[0],
+            backend.closed_snapshot_contents[0],
+        )
+        self.assertEqual(stage_calls, [])
+
+    def test_lost_workspace_application_terminal_stops_before_tests_and_verifier(self):
+        class LosingTerminalStore(ObservationStore):
+            def append(self, event):
+                if (
+                    event.get("agent_id") == "service-publication-observer"
+                    and event.get("decision_or_tool")
+                    == "PreparedChange.apply-proposal"
+                    and event.get("event_type") == "decision_applied"
+                ):
+                    raise RuntimeError("synthetic terminal loss")
+                return super().append(event)
+
+        backend = RemoteSnapshotExecutionTests.FakeBackend()
+        verifier = AcceptingVerifier()
+        stage_calls = []
+
+        class Stage:
+            def save(self, _artifact):
+                stage_calls.append("save")
+
+            def load(self, _digest):
+                stage_calls.append("load")
+
+        result = self._execute(
+            LosingTerminalStore(),
+            verifier=verifier,
+            stage_sink=Stage(),
+            backend=backend,
+        )
+
+        self.assertEqual(result.status, ExecutionStatus.FAILED)
+        self.assertEqual(result.failure_code, "proposal-application-outcome-unknown")
+        self.assertEqual(backend.commands, [])
+        self.assertEqual(verifier.calls, 0)
+        self.assertEqual(stage_calls, [])
+        self.assertIn(
+            "PRIVATE_CANDIDATE_CANARY",
+            backend.closed_workspace_contents[0],
+        )
+
+    def test_prepared_binding_gate_refusal_or_unknown_stops_before_verifier_and_stage(self):
+        class RefusingStore(ObservationStore):
+            def record_checkpoint(self, checkpoint):
+                if checkpoint.get("state_ref", "").endswith(
+                    "publication-preparedchange-validate-binding"
+                ):
+                    raise ObservationStoreError("synthetic gate refusal")
+                return super().record_checkpoint(checkpoint)
+
+        class LosingTerminalStore(ObservationStore):
+            def append(self, event):
+                if (
+                    event.get("agent_id") == "service-publication-observer"
+                    and event.get("decision_or_tool")
+                    == "PreparedChange.validate-binding"
+                    and event.get("event_type") == "decision_applied"
+                ):
+                    raise RuntimeError("synthetic terminal loss")
+                return super().append(event)
+
+        class NeverVerifier:
+            calls = 0
+
+            def verify(self, _prepared):
+                self.calls += 1
+                raise AssertionError("verifier must not run")
+
+        class NeverStage:
+            calls = []
+
+            def save(self, _artifact):
+                self.calls.append("save")
+
+            def load(self, _digest):
+                self.calls.append("load")
+
+        for store, expected_code in (
+            (RefusingStore(), "prepared-binding-observation-gate-failed"),
+            (LosingTerminalStore(), "prepared-binding-outcome-unknown"),
+        ):
+            with self.subTest(expected_code=expected_code):
+                verifier = NeverVerifier()
+                stage = NeverStage()
+                result = self._execute(store, verifier=verifier, stage_sink=stage)
+                self.assertEqual(result.status, ExecutionStatus.FAILED)
+                self.assertEqual(result.failure_code, expected_code)
+                self.assertEqual(verifier.calls, 0)
+                self.assertEqual(stage.calls, [])
+
+    def test_invalid_prepared_binding_is_recorded_denied_and_preserves_error(self):
+        store = ObservationStore()
+        invalid_prepared = SimpleNamespace(
+            staged_change={
+                "process_id": "process-foreign-001",
+                "repository_id": "fixture-repository",
+                "base_commit": "fixture-base-001",
+            },
+            verified_contents=(("calculator.py", "PRIVATE_VERIFIED_CANARY"),),
+        )
+        with patch(
+            "app_contracts.executor.prepare_change", return_value=invalid_prepared
+        ):
+            with self.assertRaisesRegex(
+                ExecutionError, "^execution preparation: binding mismatch$"
+            ):
+                self._execute(store)
+        decision_events = [
+            event
+            for event in store.events()
+            if event.get("decision_or_tool") == "PreparedChange.validate-binding"
+        ]
+        self.assertEqual(
+            [event["event_type"] for event in decision_events],
+            ["decision_proposed", "decision_applied"],
+        )
+        self.assertEqual(decision_events[-1]["status"], "denied")
+        self.assertNotIn("PRIVATE_VERIFIED_CANARY", repr(store.events()))
 
 
 if __name__ == "__main__":

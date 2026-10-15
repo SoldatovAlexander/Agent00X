@@ -4,6 +4,7 @@ import base64
 from datetime import datetime, timezone
 import inspect
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -13,6 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from app_contracts.brainbooster_target_profile import TARGET_RUNTIME_IMAGE_ID
 from app_contracts.observation_store import ObservationStore, SQLiteObservationStore
 from app_contracts.digests import canonical_json, sha256_bytes
 from app_contracts.observer_artifact_store import (
@@ -20,10 +22,13 @@ from app_contracts.observer_artifact_store import (
     SQLiteObserverArtifactStore,
 )
 from app_contracts.simulation_branch import (
+    MaterializedSimulationWorkspace,
     SimulationBranchError,
+    apply_simulation_step,
     create_simulation_branch,
     materialize_simulation_workspace,
 )
+from app_contracts.sandbox import DockerSandboxBackend
 
 
 def source_event(event_id="event-simulation-source-001"):
@@ -107,6 +112,47 @@ def save_manifest(database, manifest):
             classification="internal",
             redaction_status="complete",
         ).artifact_ref
+
+
+def materialized_workspace(files):
+    manifest = workspace_manifest(files)
+    manifest_bytes = canonical_json(manifest)
+    manifest_digest = sha256_bytes(manifest_bytes)
+    return MaterializedSimulationWorkspace(
+        checkpoint_id="checkpoint-simulation-source-001",
+        manifest_ref=f"artifact://sha256/{manifest_digest.removeprefix('sha256:')}",
+        manifest_digest=manifest_digest,
+        files=tuple(sorted(files, key=lambda item: item[0])),
+    )
+
+
+def materialized_workspace_from_store(files):
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "artifacts.sqlite3"
+        manifest_ref = save_manifest(database, workspace_manifest(files))
+        checkpoint = source_checkpoint()
+        checkpoint["workspace_manifest_ref"] = manifest_ref
+        with SQLiteObserverArtifactStore(database, read_only=True) as artifact_store:
+            return materialize_simulation_workspace(checkpoint, artifact_store)
+
+
+def simulation_patch(workspace, correction_value, path, old_content, replacement):
+    return {
+        "schema": "simulation-step-patch/v1",
+        "step_id": "step-simulation-correction-001",
+        "correction_id": correction_value["correction_id"],
+        "correction_version": correction_value["version"],
+        "correction_digest": sha256_bytes(canonical_json(correction_value)),
+        "source_manifest_digest": workspace.manifest_digest,
+        "operations": [
+            {
+                "path": path,
+                "expected_content_digest": sha256_bytes(old_content),
+                "replacement_base64": base64.b64encode(replacement).decode("ascii"),
+                "replacement_digest": sha256_bytes(replacement),
+            }
+        ],
+    }
 
 
 class SimulationBranchTests(unittest.TestCase):
@@ -419,6 +465,259 @@ class SimulationBranchTests(unittest.TestCase):
                     database,
                     workspace_manifest((("src/too-large.py", b"x" * (200 * 1024)),)),
                 )
+
+    def test_applies_one_digest_bound_alternative_step_only_in_memory(self):
+        original = materialized_workspace_from_store(
+            (
+                ("backend/routes.py", b"def save(): return 'old'\n"),
+                ("tests/test_routes.py", b"assert True\n"),
+            )
+        )
+        original_files = original.files
+        replacement = b"def save(): return 'corrected'\n"
+        correction_value = correction()
+        patch = simulation_patch(
+            original,
+            correction_value,
+            "backend/routes.py",
+            b"def save(): return 'old'\n",
+            replacement,
+        )
+
+        result = apply_simulation_step(original, correction_value, patch)
+
+        self.assertEqual(result.files, (
+            ("backend/routes.py", replacement),
+            ("tests/test_routes.py", b"assert True\n"),
+        ))
+        self.assertEqual(result.changed_paths, ("backend/routes.py",))
+        self.assertEqual(original.files, original_files)
+        self.assertEqual(result.checkpoint_id, original.checkpoint_id)
+        self.assertEqual(result.source_manifest_digest, original.manifest_digest)
+        self.assertEqual(
+            result,
+            apply_simulation_step(original, correction_value, patch),
+        )
+        evidence = result.evidence()
+        self.assertEqual(evidence["result_digest"], result.result_digest)
+        self.assertEqual(evidence["correction_id"], correction_value["correction_id"])
+        self.assertEqual(evidence["correction_digest"], patch["correction_digest"])
+        self.assertIs(evidence["code_executed"], False)
+        self.assertIs(evidence["external_effects_replayed"], False)
+        self.assertNotIn("corrected", repr(result))
+        self.assertNotIn("corrected", json.dumps(evidence))
+
+    def test_simulation_step_rejects_unbound_or_unsafe_patches(self):
+        workspace = materialized_workspace((("src/routes.py", b"old\n"),))
+        correction_value = correction()
+        valid = simulation_patch(
+            workspace, correction_value, "src/routes.py", b"old\n", b"new\n"
+        )
+        malformed = []
+
+        wrong_source = json.loads(json.dumps(valid))
+        wrong_source["source_manifest_digest"] = "sha256:" + "0" * 64
+        malformed.append(wrong_source)
+
+        wrong_correction_digest = json.loads(json.dumps(valid))
+        wrong_correction_digest["correction_digest"] = "sha256:" + "0" * 64
+        malformed.append(wrong_correction_digest)
+
+        wrong_correction_version = json.loads(json.dumps(valid))
+        wrong_correction_version["correction_version"] += 1
+        malformed.append(wrong_correction_version)
+
+        wrong_preimage = json.loads(json.dumps(valid))
+        wrong_preimage["operations"][0]["expected_content_digest"] = (
+            "sha256:" + "0" * 64
+        )
+        malformed.append(wrong_preimage)
+
+        wrong_replacement_digest = json.loads(json.dumps(valid))
+        wrong_replacement_digest["operations"][0]["replacement_digest"] = (
+            "sha256:" + "0" * 64
+        )
+        malformed.append(wrong_replacement_digest)
+
+        invalid_base64 = json.loads(json.dumps(valid))
+        invalid_base64["operations"][0]["replacement_base64"] = "%%%"
+        malformed.append(invalid_base64)
+
+        unsafe_path = json.loads(json.dumps(valid))
+        unsafe_path["operations"][0]["path"] = "../routes.py"
+        malformed.append(unsafe_path)
+
+        missing_path = json.loads(json.dumps(valid))
+        missing_path["operations"][0]["path"] = "src/missing.py"
+        malformed.append(missing_path)
+
+        case_variant_path = json.loads(json.dumps(valid))
+        case_variant_path["operations"][0]["path"] = "SRC/routes.py"
+        malformed.append(case_variant_path)
+
+        duplicate_operation = json.loads(json.dumps(valid))
+        duplicate_operation["operations"].append(
+            json.loads(json.dumps(duplicate_operation["operations"][0]))
+        )
+        malformed.append(duplicate_operation)
+
+        no_op = simulation_patch(
+            workspace, correction_value, "src/routes.py", b"old\n", b"old\n"
+        )
+        malformed.append(no_op)
+
+        oversized = simulation_patch(
+            workspace,
+            correction_value,
+            "src/routes.py",
+            b"old\n",
+            b"x" * (96 * 1024 + 1),
+        )
+        malformed.append(oversized)
+
+        credential_like = simulation_patch(
+            workspace,
+            correction_value,
+            "src/routes.py",
+            b"old\n",
+            b"-----BEGIN PRIVATE KEY-----",
+        )
+        malformed.append(credential_like)
+
+        extra_field = json.loads(json.dumps(valid))
+        extra_field["dispatch"] = True
+        malformed.append(extra_field)
+
+        before = workspace.files
+        for patch in malformed:
+            with self.subTest(patch=patch.get("step_id")):
+                with self.assertRaises(SimulationBranchError):
+                    apply_simulation_step(workspace, correction_value, patch)
+                self.assertEqual(workspace.files, before)
+
+        different_correction = correction()
+        different_correction["correction_id"] = "correction-simulation-other-001"
+        with self.assertRaises(SimulationBranchError):
+            apply_simulation_step(workspace, different_correction, valid)
+
+        newer_correction = correction()
+        newer_correction["version"] += 1
+        with self.assertRaises(SimulationBranchError):
+            apply_simulation_step(workspace, newer_correction, valid)
+
+        foreign_correction = correction()
+        foreign_correction["checkpoint_id"] = "checkpoint-simulation-foreign-001"
+        with self.assertRaises(SimulationBranchError):
+            apply_simulation_step(workspace, foreign_correction, valid)
+
+        rejected_correction = correction()
+        rejected_correction["review_status"] = "rejected"
+        with self.assertRaises(SimulationBranchError):
+            apply_simulation_step(workspace, rejected_correction, valid)
+
+    def test_simulation_step_api_has_no_execution_or_dispatch_callback(self):
+        signature = inspect.signature(apply_simulation_step)
+        self.assertEqual(tuple(signature.parameters), ("workspace", "correction", "patch"))
+        self.assertNotIn("worker", signature.parameters)
+        self.assertNotIn("dispatch", signature.parameters)
+        workspace = materialized_workspace((("src/routes.py", b"old\n"),))
+        correction_value = correction()
+        patch = simulation_patch(
+            workspace, correction_value, "src/routes.py", b"old\n", b"new\n"
+        )
+        with self.assertRaises(TypeError):
+            apply_simulation_step(
+                workspace, correction_value, patch, dispatch=lambda: None
+            )
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1"
+        and os.environ.get("AGENT00X_TARGET_IMAGE_ID") == TARGET_RUNTIME_IMAGE_ID
+        and os.environ.get("AGENT00X_DOCKER_EXECUTABLE") == "/usr/local/bin/docker",
+        "exact pinned simulation Docker test is opt-in",
+    )
+    def test_materialized_correction_runs_only_in_pinned_network_none_docker(self):
+        original_source = (
+            ("calculator.py", b"def add(left, right):\n    return left - right\n"),
+            (
+                "test_calculator.py",
+                b"import unittest\nfrom calculator import add\n\n"
+                b"class CalculatorTests(unittest.TestCase):\n"
+                b"    def test_add(self):\n"
+                b"        self.assertEqual(add(20, 22), 42)\n\n"
+                b"if __name__ == '__main__':\n"
+                b"    unittest.main()\n",
+            ),
+        )
+        workspace = materialized_workspace_from_store(original_source)
+        source_files_before = workspace.files
+        correction_value = correction()
+        replacement = b"def add(left, right):\n    return left + right\n"
+        patch = simulation_patch(
+            workspace,
+            correction_value,
+            "calculator.py",
+            original_source[0][1],
+            replacement,
+        )
+        step = apply_simulation_step(workspace, correction_value, patch)
+        evidence = step.evidence()
+
+        def write_tree(root: Path, files: tuple[tuple[str, bytes], ...]) -> None:
+            for relative_path, content in files:
+                destination = root / relative_path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("xb") as stream:
+                    stream.write(content)
+
+        command = ["python3", "-m", "unittest", "discover", "-v"]
+        with tempfile.TemporaryDirectory(prefix="simulation-docker-") as directory:
+            root = Path(directory)
+            baseline_root = root / "baseline"
+            candidate_root = root / "candidate"
+            baseline_root.mkdir()
+            candidate_root.mkdir()
+            write_tree(baseline_root, original_source)
+            write_tree(candidate_root, step.files)
+            backend = DockerSandboxBackend(TARGET_RUNTIME_IMAGE_ID)
+
+            with backend.create(baseline_root, {"python3"}) as sandbox:
+                self.assertEqual(sandbox.security_profile, "container-network-none")
+                self.assertIs(sandbox.network_isolated, True)
+                baseline = sandbox.run(command, timeout_seconds=20)
+            self.assertNotEqual(baseline.returncode, 0)
+
+            with backend.create(candidate_root, {"python3"}) as sandbox:
+                self.assertEqual(sandbox.security_profile, "container-network-none")
+                self.assertIs(sandbox.network_isolated, True)
+                candidate = sandbox.run(command, timeout_seconds=20)
+            self.assertEqual(candidate.returncode, 0, "corrected target test failed")
+            self.assertEqual(workspace.files, source_files_before)
+            self.assertEqual(
+                tuple((path, (baseline_root / path).read_bytes()) for path, _ in original_source),
+                original_source,
+            )
+            self.assertEqual(
+                tuple((path, (candidate_root / path).read_bytes()) for path, _ in step.files),
+                step.files,
+            )
+            self.assertEqual(evidence["source_manifest_digest"], workspace.manifest_digest)
+            self.assertEqual(evidence["result_digest"], step.result_digest)
+            self.assertIs(evidence["external_effects_replayed"], False)
+            self.assertIs(evidence["code_executed"], False)
+            run_evidence = {
+                "source_manifest_digest": workspace.manifest_digest,
+                "step_digest": step.step_digest,
+                "result_digest": step.result_digest,
+                "changed_paths": list(step.changed_paths),
+                "baseline_returncode": baseline.returncode,
+                "candidate_returncode": candidate.returncode,
+                "sandbox_profile": "container-network-none",
+                "network_isolated": True,
+                "code_executed": True,
+                "external_effects_replayed": False,
+            }
+            self.assertNotIn("return left + right", json.dumps(run_evidence))
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from app_contracts.verifier_trust_enrollment import (
 
 AUTHORITY_KEY_ID = "control-plane-enrollment-v1"
 VERIFIER_KEY_ID = "remote-verifier-signing-v1"
-ENDPOINT = "https://verifier.example.com/v1/verify"
+ENDPOINT = "https://testdev.local/v1/verify"
 VERIFIER_ID = "docker-image:sha256:" + "1" * 64 + "/code:sha256:" + "2" * 64
 PROFILE_DIGEST = "sha256:" + "3" * 64
 HOST_EVIDENCE_DIGEST = "sha256:" + "4" * 64

@@ -29,6 +29,7 @@ from .executor import (
     VerifierVerdict,
     run_local_execution,
 )
+from .repository_process import SAFE_TARGET_TEST_FAILURE_CODES
 from .openai_worker import OpenAIProposalWorker, ResponsesModelResult
 from .credential_source import CredentialSource
 from .deepseek_worker import (
@@ -68,6 +69,8 @@ from .publication_seed import build_publication_seed, derive_publication_intent
 from .sandbox import DockerSandboxBackend, LocalProcessSandboxBackend
 from .verifier_container import DockerContainerVerifier, VerifierContainerConfig
 from .verifier_process import SubprocessVerifier, VerifierProcessConfig
+from .signed_verifier_client import SignedVerifierClient
+from .signed_verifier_service import BRAINBOOSTER_VERIFIER_PROFILE
 
 DEMO_NAME = "worker-cli-synthetic"
 DEMO_DECLARED_PATHS = ("calculator.py",)
@@ -98,7 +101,7 @@ REMOTE_REPOSITORY_CONTENT_DIGEST = (
 )
 REMOTE_EXECUTION_IMAGE = (
     "python:3.11.16-slim@sha256:"
-    "8b29ec24b5f3c929a79b55772b95c93311b7133f1cf7fa0a6141ef621f8e3c57"
+    "e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e"
 )
 _IMAGE_ID_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _IMAGE_PATH_COMPONENT = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
@@ -112,6 +115,7 @@ _PINNED_IMAGE_REFERENCE_PATTERN = re.compile(
     rf"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?"
     rf"@sha256:[0-9a-f]{{64}}\Z"
 )
+PINNED_SIGNED_VERIFIER_ENDPOINT_URL = "https://testdev.local/v1/verify"
 _SAFE_EXECUTION_FAILURE_CODES = frozenset(
     {
         "worker-failed",
@@ -132,8 +136,18 @@ _SAFE_EXECUTION_FAILURE_CODES = frozenset(
         "verifier-attestation-invalid",
         "stage-persistence-failed",
     }
-)
-_READINESS_THRESHOLD = 25
+) | SAFE_TARGET_TEST_FAILURE_CODES
+
+
+class _RemoteSnapshotPreparationFailure(ValueError):
+    """Sanitized boundary for unexpected pinned-snapshot preparation errors."""
+
+
+class _RemoteExecutionPipelineFailure(RuntimeError):
+    """Sanitized boundary for unexpected execution-pipeline errors."""
+
+
+_READINESS_THRESHOLD = 36
 _READINESS_MAX_AGE_SECONDS = 120.0
 _CARD_ID_PATTERN = re.compile(r"EXP-[0-9]{3,6}\Z")
 _PERMIT_SEAL = object()
@@ -334,7 +348,8 @@ def build_deepseek_remote_execution_profile(
     declared_change_paths: tuple[str, ...],
     allowed_commands: frozenset[str],
     test_command: tuple[str, ...],
-    credential_source: CredentialSource,
+    credential_source: CredentialSource | None,
+    proposal_worker: object | None = None,
     verifier: object,
     sandbox_backend: object,
     stage_sink: object,
@@ -350,7 +365,7 @@ def build_deepseek_remote_execution_profile(
     later invoked after pinned snapshot intake and the executor's checks.
     """
 
-    if not callable(credential_source):
+    if proposal_worker is None and not callable(credential_source):
         raise ValueError("remote CLI runtime is unavailable")
     try:
         profile = RemoteSnapshotExecutionProfile(
@@ -360,8 +375,12 @@ def build_deepseek_remote_execution_profile(
             declared_change_paths=declared_change_paths,
             allowed_commands=allowed_commands,
             test_command=test_command,
-            worker=DeepSeekProposalWorker(
-                channel=DeepSeekHTTPChannel(credential_source)
+            worker=(
+                proposal_worker
+                if proposal_worker is not None
+                else DeepSeekProposalWorker(
+                    channel=DeepSeekHTTPChannel(credential_source)
+                )
             ),
             verifier=verifier,
             sandbox_backend=sandbox_backend,
@@ -395,10 +414,14 @@ def run_remote_snapshot_with_runtime(
     allowed_commands: frozenset[str],
     test_command: tuple[str, ...],
     execution_image: str,
-    credential_source: CredentialSource,
-    verifier_config: VerifierContainerConfig,
+    credential_source: CredentialSource | None,
+    proposal_worker: object | None = None,
+    verifier_config: VerifierContainerConfig | None = None,
     stage_database_path: Path | str,
     execution_permit: RemoteExecutionPermit,
+    verifier_client: SignedVerifierClient | None = None,
+    expected_worker_host_id: str | None = None,
+    expected_verifier_host_id: str | None = None,
     test_timeout_seconds: int = 30,
     git_executable: str = "/usr/bin/git",
     observation_store: object | None = None,
@@ -415,12 +438,47 @@ def run_remote_snapshot_with_runtime(
     called from the module's default CLI entrypoint.
     """
 
+    docker_verifier_selected = (
+        verifier_client is None and type(verifier_config) is VerifierContainerConfig
+    )
+    signed_verifier_selected = (
+        type(verifier_client) is SignedVerifierClient and verifier_config is None
+    )
+    verifier_trust_decision = (
+        verifier_client.host_trust_decision
+        if signed_verifier_selected
+        else None
+    )
     if (
-        type(verifier_config) is not VerifierContainerConfig
+        not (docker_verifier_selected or signed_verifier_selected)
         or type(execution_image) is not str
         or (
             _IMAGE_ID_PATTERN.fullmatch(execution_image) is None
             and _PINNED_IMAGE_REFERENCE_PATTERN.fullmatch(execution_image) is None
+        )
+        or (
+            signed_verifier_selected
+            and (
+                verifier_client.has_current_independent_host_trust() is not True
+                or verifier_client.verifier_profile_digest
+                != BRAINBOOSTER_VERIFIER_PROFILE.profile_digest
+                or verifier_client.endpoint_url
+                != PINNED_SIGNED_VERIFIER_ENDPOINT_URL
+                or verifier_trust_decision is None
+                or type(expected_worker_host_id) is not str
+                or type(expected_verifier_host_id) is not str
+                or verifier_trust_decision.worker_host_id
+                != expected_worker_host_id
+                or verifier_trust_decision.verifier_host_id
+                != expected_verifier_host_id
+            )
+        )
+        or (
+            docker_verifier_selected
+            and (
+                expected_worker_host_id is not None
+                or expected_verifier_host_id is not None
+            )
         )
     ):
         raise ValueError("remote CLI runtime is unavailable")
@@ -438,7 +496,11 @@ def run_remote_snapshot_with_runtime(
             or (database_path.exists() and not database_path.is_file())
         ):
             raise ValueError()
-        verifier = DockerContainerVerifier(verifier_config)
+        verifier = (
+            verifier_client
+            if signed_verifier_selected
+            else DockerContainerVerifier(verifier_config)
+        )
         sandbox_backend = DockerSandboxBackend(execution_image)
         validated_profile = build_deepseek_remote_execution_profile(
             process_id=process_id,
@@ -448,6 +510,7 @@ def run_remote_snapshot_with_runtime(
             allowed_commands=allowed_commands,
             test_command=test_command,
             credential_source=credential_source,
+            proposal_worker=proposal_worker,
             verifier=verifier,
             sandbox_backend=sandbox_backend,
             stage_sink=_UnopenedStageSink(),
@@ -870,43 +933,50 @@ def _run_pinned_remote_execution(
             except WorkerJournalError:
                 raise ValueError("remote CLI observer is unavailable") from None
 
-    if profile.snapshot_evidence_origin == "github_rest_api_claim":
-        request = GitHubSnapshotRequest(
-            owner=REMOTE_REPOSITORY_OWNER,
-            repository=REMOTE_REPOSITORY_NAME,
-            commit_oid=REMOTE_REPOSITORY_COMMIT,
-        )
-        transport = GitHubAnonymousSnapshotTransport(timeout_seconds=15)
-        commit_object_source = GitHubRawCommitObjectSource(profile.git_executable)
-        if type(execution_worker) is JournaledProposalWorker:
-            try:
-                transport = execution_worker.snapshot_transport(transport)
-                commit_object_source = execution_worker.raw_commit_source(
-                    commit_object_source
-                )
-            except WorkerJournalError:
-                raise ValueError("remote CLI observer is unavailable") from None
-        snapshot = read_github_snapshot_contents(
-            request,
-            transport,
-            commit_object_source=commit_object_source,
-        )
-    else:
-        request = GitHubArchiveSnapshotRequest(
-            owner=REMOTE_REPOSITORY_OWNER,
-            repository=REMOTE_REPOSITORY_NAME,
-            commit_oid=REMOTE_REPOSITORY_COMMIT,
-            tree_oid=REMOTE_REPOSITORY_TREE,
-            content_digest=REMOTE_REPOSITORY_CONTENT_DIGEST,
-            file_count=REMOTE_REPOSITORY_FILE_COUNT,
-        )
-        transport = GitHubCodeloadArchiveTransport(timeout_seconds=15)
-        if type(execution_worker) is JournaledProposalWorker:
-            try:
-                transport = execution_worker.codeload_archive_transport(transport)
-            except WorkerJournalError:
-                raise ValueError("remote CLI observer is unavailable") from None
-        snapshot = read_github_archive_snapshot_contents(request, transport)
+    try:
+        if profile.snapshot_evidence_origin == "github_rest_api_claim":
+            request = GitHubSnapshotRequest(
+                owner=REMOTE_REPOSITORY_OWNER,
+                repository=REMOTE_REPOSITORY_NAME,
+                commit_oid=REMOTE_REPOSITORY_COMMIT,
+            )
+            transport = GitHubAnonymousSnapshotTransport(timeout_seconds=15)
+            commit_object_source = GitHubRawCommitObjectSource(profile.git_executable)
+            if type(execution_worker) is JournaledProposalWorker:
+                try:
+                    transport = execution_worker.snapshot_transport(transport)
+                    commit_object_source = execution_worker.raw_commit_source(
+                        commit_object_source
+                    )
+                except WorkerJournalError:
+                    raise ValueError("remote CLI observer is unavailable") from None
+            snapshot = read_github_snapshot_contents(
+                request,
+                transport,
+                commit_object_source=commit_object_source,
+            )
+        else:
+            request = GitHubArchiveSnapshotRequest(
+                owner=REMOTE_REPOSITORY_OWNER,
+                repository=REMOTE_REPOSITORY_NAME,
+                commit_oid=REMOTE_REPOSITORY_COMMIT,
+                tree_oid=REMOTE_REPOSITORY_TREE,
+                content_digest=REMOTE_REPOSITORY_CONTENT_DIGEST,
+                file_count=REMOTE_REPOSITORY_FILE_COUNT,
+            )
+            transport = GitHubCodeloadArchiveTransport(timeout_seconds=15)
+            if type(execution_worker) is JournaledProposalWorker:
+                try:
+                    transport = execution_worker.codeload_archive_transport(transport)
+                except WorkerJournalError:
+                    raise ValueError("remote CLI observer is unavailable") from None
+            snapshot = read_github_archive_snapshot_contents(request, transport)
+    except (GitHubSnapshotError, GitHubArchiveSnapshotError):
+        raise
+    except Exception:
+        raise _RemoteSnapshotPreparationFailure(
+            "remote snapshot preparation failed"
+        ) from None
     claim = snapshot.claim
     commit_object_matches = (
         type(snapshot.verified_commit_object) is GitCommitObject
@@ -932,7 +1002,7 @@ def _run_pinned_remote_execution(
         except WorkerJournalError:
             raise ValueError("remote CLI observer is unavailable") from None
     if not pin_matches:
-        raise ValueError("remote snapshot pin mismatch")
+        raise _RemoteSnapshotPreparationFailure("remote snapshot pin mismatch")
     files_by_path = {blob.path: blob for blob in snapshot.files}
     if any(path not in files_by_path for path in profile.declared_change_paths):
         raise ValueError("remote CLI request is invalid")
@@ -943,32 +1013,37 @@ def _run_pinned_remote_execution(
         )
         for path in profile.declared_change_paths
     )
-    result = run_remote_snapshot_execution(
-        snapshot,
-        process_id=profile.process_id,
-        task_id=profile.task_id,
-        task_instruction=profile.task_instruction,
-        declared_change_paths=profile.declared_change_paths,
-        allowed_commands=profile.allowed_commands,
-        test_command=profile.test_command,
-        test_timeout_seconds=profile.test_timeout_seconds,
-        worker=execution_worker,
-        verifier=profile.verifier,
-        sandbox_backend=profile.sandbox_backend,
-        context_files=context_files,
-        stage_sink=profile.stage_sink,
-        observation_store=profile.observation_store,
-    )
-    return _remote_execution_evidence(
-        result,
-        stage_database_path=profile.stage_database_path,
-        snapshot=snapshot,
-        observer_reference=(
-            execution_worker.observer_reference()
-            if type(execution_worker) is JournaledProposalWorker
-            else None
-        ),
-    )
+    try:
+        result = run_remote_snapshot_execution(
+            snapshot,
+            process_id=profile.process_id,
+            task_id=profile.task_id,
+            task_instruction=profile.task_instruction,
+            declared_change_paths=profile.declared_change_paths,
+            allowed_commands=profile.allowed_commands,
+            test_command=profile.test_command,
+            test_timeout_seconds=profile.test_timeout_seconds,
+            worker=execution_worker,
+            verifier=profile.verifier,
+            sandbox_backend=profile.sandbox_backend,
+            context_files=context_files,
+            stage_sink=profile.stage_sink,
+            observation_store=profile.observation_store,
+        )
+        return _remote_execution_evidence(
+            result,
+            stage_database_path=profile.stage_database_path,
+            snapshot=snapshot,
+            observer_reference=(
+                execution_worker.observer_reference()
+                if type(execution_worker) is JournaledProposalWorker
+                else None
+            ),
+        )
+    except Exception:
+        raise _RemoteExecutionPipelineFailure(
+            "remote execution pipeline failed"
+        ) from None
 
 
 def _remote_execution_evidence(
@@ -1029,6 +1104,14 @@ def _remote_execution_evidence(
         ):
             raise ValueError("remote CLI observer reference is invalid")
         base["observer"] = dict(observer_reference)
+    terminal_result = _worker_terminal_cli_result(result)
+    if terminal_result is not None:
+        if terminal_result.get("status") == "failed":
+            return {
+                **base,
+                **terminal_result,
+            }
+        return {**base, **terminal_result}
     attestation = None
     attestation_fields = (
         result.verifier_attestation_digest,
@@ -1186,6 +1269,29 @@ def _remote_execution_evidence(
     return {**base, "status": "failed", "failure_code": failure_code}
 
 
+def _worker_terminal_cli_result(result: ExecutionResult) -> dict | None:
+    if (
+        result.worker_terminal_outcome is None
+        and result.worker_terminal_reason_code is None
+    ):
+        return None
+    expected_terminal = {
+        "clarification_required": (
+            "conflicting_requirements",
+            "needs_input",
+        ),
+        "blocked": ("target_test_outcome_unknown", "blocked"),
+        "denied": ("publication_not_authorized", "denied"),
+    }
+    expected = expected_terminal.get(result.worker_terminal_outcome)
+    if expected is None or result.worker_terminal_reason_code != expected[0]:
+        return {
+            "status": "failed",
+            "failure_code": "remote-snapshot-execution-failed",
+        }
+    return {"status": expected[1], "reason_code": expected[0]}
+
+
 def _valid_verified_host_trust_decision(
     decision: object,
     *,
@@ -1335,6 +1441,16 @@ def main(
                 else "remote-snapshot-fetch-failed"
             )
             payload = {"status": "failed", "failure_code": failure_code}
+        except _RemoteSnapshotPreparationFailure:
+            payload = {
+                "status": "failed",
+                "failure_code": "remote-snapshot-preparation-failed",
+            }
+        except _RemoteExecutionPipelineFailure:
+            payload = {
+                "status": "failed",
+                "failure_code": "remote-execution-pipeline-failed",
+            }
         except Exception:
             payload = {
                 "status": "failed",
@@ -1404,6 +1520,10 @@ def main(
             )
             + "\n"
         )
+        return 0
+    terminal_result = _worker_terminal_cli_result(result)
+    if terminal_result is not None and terminal_result.get("status") != "failed":
+        stdout.write(json.dumps(terminal_result, sort_keys=True, separators=(",", ":")) + "\n")
         return 0
     code = result.failure_code if isinstance(result.failure_code, str) and result.failure_code else "cli-execution-failed"
     stdout.write(json.dumps({"status": "failed", "failure_code": code}) + "\n")

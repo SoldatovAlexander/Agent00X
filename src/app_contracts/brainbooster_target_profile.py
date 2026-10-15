@@ -9,21 +9,23 @@ PINNED_REPOSITORY = "brainbooster_full_v11"
 PINNED_COMMIT = "2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e"
 PINNED_TREE = "2007066217aadafd9887fb3e3069220333b4fddb"
 PINNED_FILE_COUNT = 23
-PINNED_CONTENT_DIGEST = "sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad"
+# app-process-snapshot-tree/v1 binds relative paths, bytes, and executable mode.
+PINNED_SNAPSHOT_TREE_DIGEST = (
+    "sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad"
+)
+# Compatibility alias: snapshot claims serialize this value as `content_digest`.
+PINNED_CONTENT_DIGEST = PINNED_SNAPSHOT_TREE_DIGEST
 TARGET_RUNTIME_IMAGE_ID = (
-    "sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812"
-)
-VERIFIER_RUNTIME_IMAGE_ID = (
-    "sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a"
-)
-VERIFIER_RUNTIME_CODE_DIGEST = (
-    "sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5"
+    "sha256:f22c0b03d5d60c44f433935952199aeaed497b4d3fb3400933e69a144e0fc187"
 )
 EXPECTED_CANDIDATE_DIGEST = "sha256:6166fc4c2a73db910a064de140e71f7bfcbebe3b99846651a3c69770cce39a18"
 VERIFIER_CONTEXT_MODULES = (
     "__init__.py",
+    "brainbooster_target_profile.py",
     "digests.py",
     "executor.py",
+    "observer_runtime.py",
+    "observation_store.py",
     "pinned_snapshot.py",
     "repository_process.py",
     "sandbox.py",
@@ -31,9 +33,41 @@ VERIFIER_CONTEXT_MODULES = (
     "verifier_process.py",
     "verifier_container_entrypoint.py",
 )
+VERIFIER_CONTEXT_SCHEMA_FILES = (
+    "checkpoint.schema.json",
+    "observation-event.schema.json",
+)
 
 PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS = 30
 PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS = 60
+_NUMERIC_FIELDS = ("level", "correct", "wrong", "total", "time_ms")
+_INVALID_CASES = (
+    ("malformed", "bool"),
+    ("malformed", "fractional"),
+    ("malformed", "numeric-string"),
+    ("sqlite-range", "above"),
+    ("sqlite-range", "below"),
+)
+PINNED_HTTP_DB_FAILURE_CATEGORIES = frozenset(
+    f"{category}-{phase}-{field}-{case}"
+    for category, case in _INVALID_CASES
+    for field in _NUMERIC_FIELDS
+    for phase in ("status", "no-write")
+)
+PINNED_HTTP_DB_FIXED_FAILURE_CODES = frozenset(
+    {
+        "readiness-exit",
+        "readiness-timeout",
+        "overflow-status",
+        "overflow-no-write",
+        "valid-status",
+        "valid-body",
+        "valid-row",
+    }
+)
+PINNED_HTTP_DB_FAILURE_CODES = frozenset(
+    PINNED_HTTP_DB_FAILURE_CATEGORIES | PINNED_HTTP_DB_FIXED_FAILURE_CODES
+)
 
 PINNED_HTTP_DB_VERIFIER_PROBE = r'''import json
 import os
@@ -96,15 +130,30 @@ try:
                 fail("readiness-timeout")
             time.sleep(0.05)
 
-    fields = {"level": "x", "correct": "x", "wrong": "x", "total": "x", "time_ms": "x"}
+    valid = {"telegram_id": "synthetic-probe", "level": 2, "correct": 1, "wrong": 0, "total": 1, "time_ms": 250}
+
+    def reset_rows():
+        with sqlite3.connect("brainbooster.db", timeout=2) as connection:
+            connection.execute("DELETE FROM sessions")
+
+    invalid_values = (
+        ("malformed", "bool", True),
+        ("malformed", "fractional", 1.5),
+        ("malformed", "numeric-string", "2"),
+        ("sqlite-range", "above", 9223372036854775808),
+        ("sqlite-range", "below", -9223372036854775809),
+    )
+    fields = ("level", "correct", "wrong", "total", "time_ms")
     for field in fields:
-        payload = {"telegram_id": "synthetic-probe", "level": 2, "correct": 1, "wrong": 0, "total": 1, "time_ms": 250}
-        payload[field] = fields[field]
-        status, _body = post(json.dumps(payload, separators=(",", ":")).encode())
-        if status != 422:
-            fail("malformed-status")
-        if row_count() != 0:
-            fail("malformed-no-write")
+        for category, case, value in invalid_values:
+            reset_rows()
+            payload = dict(valid)
+            payload[field] = value
+            status, _body = post(json.dumps(payload, separators=(",", ":")).encode())
+            if status != 422:
+                fail(category + "-status-" + field + "-" + case)
+            if row_count() != 0:
+                fail(category + "-no-write-" + field + "-" + case)
 
     overflow = b'{"telegram_id":"synthetic-probe","level":1e309,"correct":1,"wrong":0,"total":1,"time_ms":250}'
     status, _body = post(overflow)
@@ -113,20 +162,6 @@ try:
     if row_count() != 0:
         fail("overflow-no-write")
 
-    # SQLite INTEGER bindings are signed 64-bit. Python can parse larger JSON
-    # integer literals, so exercise both out-of-range boundaries for every
-    # numeric field before any approval can be considered.
-    for field in ("level", "correct", "wrong", "total", "time_ms"):
-        for value in (9223372036854775808, -9223372036854775809):
-            payload = {"telegram_id": "synthetic-probe", "level": 2, "correct": 1, "wrong": 0, "total": 1, "time_ms": 250}
-            payload[field] = value
-            status, _body = post(json.dumps(payload, separators=(",", ":")).encode())
-            if status != 422:
-                fail("sqlite-range-status")
-            if row_count() != 0:
-                fail("sqlite-range-no-write")
-
-    valid = {"telegram_id": "synthetic-probe", "level": 2, "correct": 1, "wrong": 0, "total": 1, "time_ms": 250}
     status, body = post(json.dumps(valid, separators=(",", ":")).encode())
     if status != 200:
         fail("valid-status")
@@ -138,7 +173,7 @@ try:
         ).fetchall()
     if rows != [("synthetic-probe", 2, 1, 0, 1, 250)]:
         fail("valid-row")
-    print("http_db_probe=PASS malformed=5 overflow=1 sqlite_range=10 valid=1")
+    print("http_db_probe=PASS invalid=25 overflow=1 valid=1")
 finally:
     server.terminate()
     try:

@@ -24,6 +24,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app_contracts.credential_source import CredentialSource
+from app_contracts.credential_source import (
+    ProcessEnvironmentCredentialSource,
+    SystemdCredentialSource,
+)
 from app_contracts.digests import sha256_bytes, sha256_digest
 from app_contracts.executor import (
     VerifierInput,
@@ -34,6 +38,7 @@ from app_contracts.executor import (
 from app_contracts.signed_verifier_http_service import (
     SignedVerifierHTTPService,
     create_loopback_http_server,
+    create_loopback_https_server,
 )
 from app_contracts.signed_verifier_client import (
     SignedVerifierClient,
@@ -47,7 +52,10 @@ from app_contracts.verifier_process import (
     VerifierProcessRequest,
     serialize_verifier_request,
 )
-from serve_signed_verifier_http import main as server_main
+from serve_signed_verifier_http import (
+    _create_signing_seed_credential_source,
+    main as server_main,
+)
 
 
 KEY_ID = "synthetic-http-service-key-v1"
@@ -147,6 +155,27 @@ class CountingSeedSource(CredentialSource):
 
 
 class SignedVerifierHTTPServiceTests(unittest.TestCase):
+    def test_operator_factory_selects_explicit_credential_source_without_reading(self):
+        systemd_source = _create_signing_seed_credential_source(
+            "systemd-credential",
+            {"CREDENTIALS_DIRECTORY": "/run/credentials/agent00x.service"},
+        )
+        self.assertIsInstance(systemd_source, SystemdCredentialSource)
+        self.assertEqual(
+            repr(systemd_source), "SystemdCredentialSource(value='opaque')"
+        )
+
+        environment_source = _create_signing_seed_credential_source(
+            "process-environment", {"AGENT_VERIFIER_SIGNING_SEED": "synthetic"}
+        )
+        self.assertIsInstance(
+            environment_source, ProcessEnvironmentCredentialSource
+        )
+        with self.assertRaisesRegex(
+            ValueError, "^unsupported credential source$"
+        ):
+            _create_signing_seed_credential_source("unknown", {})
+
     def make_service(self, *, signing_key=None):
         selected_profile = profile()
         verifier = AcceptingVerifier(selected_profile)
@@ -343,6 +372,72 @@ class SignedVerifierHTTPServiceTests(unittest.TestCase):
             thread.join(1)
         self.assertFalse(thread.is_alive())
 
+    def test_systemd_credential_file_signs_one_real_loopback_exchange(self):
+        seed = bytes(reversed(range(32)))
+        with tempfile.TemporaryDirectory() as credential_directory:
+            credential_path = Path(credential_directory) / "AGENT_VERIFIER_SIGNING_SEED"
+            credential_path.write_text(seed.hex(), encoding="ascii")
+            credential_path.chmod(0o600)
+            source = SystemdCredentialSource(
+                {"CREDENTIALS_DIRECTORY": credential_directory}
+            )
+            signing_key = Ed25519SeedCredentialSource(source)
+            selected_profile = profile()
+            verifier = AcceptingVerifier(selected_profile)
+            service = SignedVerifierHTTPService(
+                selected_profile,
+                verifier,
+                signing_key,
+                now_factory=lambda: datetime.now(timezone.utc),
+            )
+            server = create_loopback_http_server(
+                service, 0, request_timeout_seconds=2
+            )
+            self.assertEqual(server.server_address[0], "127.0.0.1")
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=2
+            )
+            body = invocation_bytes()
+            try:
+                connection.request(
+                    "POST",
+                    "/v1/verify",
+                    body=body,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "User-Agent": USER_AGENT,
+                    },
+                )
+                response = connection.getresponse()
+                response_body = response.read(65_536)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(server.last_response_status, 200)
+                public_key = Ed25519PrivateKey.from_private_bytes(
+                    seed
+                ).public_key().public_bytes(
+                    serialization.Encoding.Raw, serialization.PublicFormat.Raw
+                )
+                attestation = verify_signed_verifier_response(
+                    response_body,
+                    prepared_input(),
+                    expected_invocation_nonce="a" * 64,
+                    expected_verifier_profile_digest=selected_profile.profile_digest,
+                    trusted_public_keys={KEY_ID: public_key},
+                    now=datetime.now(timezone.utc),
+                )
+                self.assertTrue(attestation.signature_valid)
+                self.assertEqual(attestation.verifier_result.verdict, VerifierVerdict.PASS)
+                self.assertEqual(len(verifier.calls), 1)
+                self.assertNotIn(seed.hex().encode("ascii"), response_body)
+            finally:
+                connection.close()
+                server.server_close()
+                thread.join(1)
+            self.assertFalse(thread.is_alive())
+
     def test_signed_verifier_exchange_crosses_a_local_child_process_boundary(self):
         selected_profile = profile()
         profile_payload = {
@@ -524,14 +619,17 @@ finally:
                 timeout=15,
             )
             service, verifier, signing_key = self.make_service()
-            server = create_loopback_http_server(
-                service, 0, request_timeout_seconds=2
-            )
             server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server_context.minimum_version = ssl.TLSVersion.TLSv1_2
             server_context.load_cert_chain(certificate, private_key_path)
-            server.socket = server_context.wrap_socket(
-                server.socket, server_side=True
+            server = create_loopback_https_server(
+                service,
+                0,
+                server_context,
+                request_timeout_seconds=2,
             )
+            self.assertEqual(server.server_address[0], "127.0.0.1")
+            self.assertTrue(server.tls_enabled)
             thread = threading.Thread(target=server.handle_request, daemon=True)
             thread.start()
 
@@ -590,6 +688,24 @@ finally:
                 server.server_close()
                 thread.join(1)
             self.assertFalse(thread.is_alive())
+
+    def test_https_listener_rejects_non_server_and_weak_tls_contexts(self):
+        service, _verifier, _signing_key = self.make_service()
+        client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        with self.assertRaisesRegex(
+            ValueError,
+            "^signed verifier HTTPS service: TLS configuration rejected$",
+        ):
+            create_loopback_https_server(service, 0, client_context)
+
+        weak_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        with self.assertWarns(DeprecationWarning):
+            weak_context.minimum_version = ssl.TLSVersion.TLSv1
+        with self.assertRaisesRegex(
+            ValueError,
+            "^signed verifier HTTPS service: TLS configuration rejected$",
+        ):
+            create_loopback_https_server(service, 0, weak_context)
 
     def test_cli_rejects_privileged_or_invalid_port_before_service_creation(self):
         service_calls = []

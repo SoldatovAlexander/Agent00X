@@ -31,7 +31,7 @@ from app_contracts.durable_stage import (  # noqa: E402
 )
 from app_contracts.brainbooster_target_profile import (  # noqa: E402
     PINNED_COMMIT,
-    PINNED_CONTENT_DIGEST,
+    PINNED_SNAPSHOT_TREE_DIGEST,
     PINNED_FILE_COUNT,
     PINNED_HTTP_DB_TEST_COMMAND,
     PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
@@ -40,6 +40,8 @@ from app_contracts.brainbooster_target_profile import (  # noqa: E402
     PINNED_TREE,
     PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
     TARGET_RUNTIME_IMAGE_ID,
+)
+from app_contracts.verifier_image_pin import (  # noqa: E402
     VERIFIER_RUNTIME_CODE_DIGEST,
     VERIFIER_RUNTIME_IMAGE_ID,
 )
@@ -74,7 +76,7 @@ REMOTE_REPOSITORY_OWNER = PINNED_OWNER
 REMOTE_REPOSITORY_NAME = PINNED_REPOSITORY
 REMOTE_REPOSITORY_COMMIT = PINNED_COMMIT
 REMOTE_REPOSITORY_TREE = PINNED_TREE
-REMOTE_REPOSITORY_CONTENT_DIGEST = PINNED_CONTENT_DIGEST
+REMOTE_REPOSITORY_CONTENT_DIGEST = PINNED_SNAPSHOT_TREE_DIGEST
 REMOTE_REPOSITORY_FILE_COUNT = PINNED_FILE_COUNT
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _TASK_INSTRUCTION = (
@@ -383,6 +385,8 @@ def replay_staged_candidate(
             **digests,
             "verifier_identity_digest": "sha256:"
             + hashlib.sha256(verifier_id.encode("utf-8")).hexdigest(),
+            "source_stage_verifier_result": "not_carried_forward",
+            "current_verification_status": "fresh_pass",
             "artifact_digest": committed.artifact_digest,
             "output_database": str(output_path),
             "approval": "not_created",
@@ -435,7 +439,6 @@ def _load_source_candidate(path: Path, digest: str) -> tuple[StagedArtifact, str
             or seed["staged_change_digest"] != digest
             or seed["snapshot_origin"] != "github_rest_api_claim"
             or seed["verdict"] != "pass"
-            or result["verifier_id"] != _VERIFIER_ID
             or result["verdict"] != "pass"
             or payload["declared_change_paths"] != [ALLOWED_CHANGE_PATH]
             or type(changes) is not list
@@ -444,6 +447,8 @@ def _load_source_candidate(path: Path, digest: str) -> tuple[StagedArtifact, str
             or type(changes[0]["content"]) is not str
         ):
             raise ValueError
+        # Historical verifier identity is not carried forward as trust: this
+        # candidate is re-run through the current pinned target and verifier.
         StagedArtifact(
             staged_change_digest=artifact.staged_change_digest,
             verified_contents_digest=artifact.verified_contents_digest,

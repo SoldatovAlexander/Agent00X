@@ -69,6 +69,61 @@ def checkpoint(*, completeness="complete") -> dict:
 
 
 class ObserverHistoryReportTests(unittest.TestCase):
+    def test_report_projects_only_allowlisted_target_failure_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "sandbox-failure-code.sqlite3"
+            terminal = event(
+                "event-sandbox-failure-code",
+                0,
+                "tool_failed",
+                decision_or_tool="SandboxSession.run.target-tests",
+                invocation_id="invocation-sandbox-failure-code",
+                status="failed",
+                error_code="sandbox-command-nonzero",
+                safe_parameters={
+                    "sandbox_return_code": 1,
+                    "sandbox_failure_code": "valid-row",
+                    "raw_output": "SYNTHETIC-RAW-OUTPUT-CANARY",
+                },
+            )
+            # The store schema rejects the raw key, so persist only the allowed
+            # shape and ensure report projection never exposes safe_parameters.
+            terminal["safe_parameters"].pop("raw_output")
+            with SQLiteObservationStore(database) as store:
+                store.append(terminal)
+
+            report = report_from_sqlite(database)
+            rendered = json.dumps(report, sort_keys=True)
+            self.assertEqual(report["facts"][0]["sandbox_return_code"], 1)
+            self.assertEqual(report["facts"][0]["sandbox_failure_code"], "valid-row")
+            self.assertNotIn("safe_parameters", report["facts"][0])
+            self.assertNotIn("SYNTHETIC-RAW-OUTPUT-CANARY", rendered)
+
+    def test_report_projects_only_bounded_sandbox_return_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "sandbox-return-code.sqlite3"
+            terminal = event(
+                "event-sandbox-return-code",
+                0,
+                "tool_failed",
+                decision_or_tool="SandboxSession.run.target-tests",
+                invocation_id="invocation-sandbox-return-code",
+                status="failed",
+                error_code="sandbox-command-nonzero",
+                safe_parameters={
+                    "sandbox_return_code": 7,
+                    "worker_outcome": "blocked",
+                },
+            )
+            with SQLiteObservationStore(database) as store:
+                store.append(terminal)
+
+            report = report_from_sqlite(database)
+            rendered = json.dumps(report, sort_keys=True)
+            self.assertEqual(report["facts"][0]["sandbox_return_code"], 7)
+            self.assertNotIn("worker_outcome", report["facts"][0])
+            self.assertNotIn("safe_parameters", report["facts"][0])
+
     def test_empty_journal_is_read_only_and_never_claims_complete_coverage(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "empty.sqlite3"
@@ -359,6 +414,190 @@ class ObserverHistoryReportTests(unittest.TestCase):
                 report_from_sqlite(database, as_of_cursor=99)
             with self.assertRaisesRegex(HistoryReportError, "cursor is invalid"):
                 report_from_sqlite(database, as_of_cursor=True)
+
+    def test_recorded_time_view_excludes_later_rows_and_discloses_temporal_gaps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "history.sqlite3"
+            artifact_database = Path(temporary) / "artifacts.sqlite3"
+            with SQLiteObserverArtifactStore(artifact_database) as store:
+                artifact_ref = store.put_json(
+                    canonical_json({"content": "synthetic future artifact"}),
+                    classification="internal",
+                    redaction_status="complete",
+                ).artifact_ref
+            first = event("event-recorded-time-first", 0)
+            second = event(
+                "event-recorded-time-second",
+                1,
+                "tool_completed",
+                recorded_at="2026-10-08T12:00:05Z",
+            )
+            first_checkpoint = checkpoint()
+            first_checkpoint["checkpoint_id"] = "checkpoint-recorded-time-first"
+            first_checkpoint["trigger_event_id"] = first["event_id"]
+            first_checkpoint["state_ref"] = artifact_ref
+            second_checkpoint = checkpoint()
+            second_checkpoint.update(
+                checkpoint_id="checkpoint-recorded-time-second",
+                trigger_event_id=second["event_id"],
+                event_cursor=1,
+                created_at="2026-10-08T12:00:06Z",
+            )
+            with SQLiteObservationStore(database) as store:
+                store.append(first)
+                store.append(second)
+                store.record_checkpoint(first_checkpoint)
+                store.record_checkpoint(second_checkpoint)
+
+            report = report_from_sqlite(
+                database,
+                as_of_recorded_at="2026-10-08T15:00:03+03:00",
+                artifact_database=artifact_database,
+            )
+
+            self.assertEqual(
+                report["snapshot"]["as_of_recorded_at"],
+                "2026-10-08T12:00:03Z",
+            )
+            self.assertIsNone(report["snapshot"]["as_of_cursor"])
+            self.assertEqual(
+                [fact["event_id"] for fact in report["facts"]],
+                [first["event_id"]],
+            )
+            self.assertEqual(
+                [item["checkpoint_id"] for item in report["checkpoints"]],
+                [first_checkpoint["checkpoint_id"]],
+            )
+            self.assertEqual(report["resolved_artifacts"], [])
+            gap_codes = {gap["code"] for gap in report["gaps"]}
+            self.assertIn("recorded_timestamps_unattested", gap_codes)
+            self.assertIn("artifact_availability_at_time_unverified", gap_codes)
+
+            cli_output = io.StringIO()
+            self.assertEqual(
+                report_cli.main(
+                    [
+                        str(database),
+                        "--as-of-recorded-at",
+                        "2026-10-08T12:00:03Z",
+                    ],
+                    stdout=cli_output,
+                ),
+                0,
+            )
+            self.assertEqual(
+                json.loads(cli_output.getvalue())["snapshot"]["as_of_recorded_at"],
+                "2026-10-08T12:00:03Z",
+            )
+
+            with self.assertRaisesRegex(
+                HistoryReportError, "timestamp is invalid"
+            ):
+                report_from_sqlite(database, as_of_recorded_at="2026-10-08T12:00:03")
+            with self.assertRaisesRegex(
+                HistoryReportError, "temporal selector is invalid"
+            ):
+                report_from_sqlite(
+                    database,
+                    as_of_cursor=0,
+                    as_of_recorded_at="2026-10-08T12:00:03Z",
+                )
+
+    def test_about_time_view_includes_late_recorded_events_and_labels_gaps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "history.sqlite3"
+            artifact_database = Path(temporary) / "artifacts.sqlite3"
+            with SQLiteObserverArtifactStore(artifact_database) as store:
+                artifact_ref = store.put_json(
+                    canonical_json({"content": "currently available artifact"}),
+                    classification="internal",
+                    redaction_status="complete",
+                ).artifact_ref
+
+            first = event("event-about-time-first", 0)
+            late = event(
+                "event-about-time-late",
+                1,
+                "tool_completed",
+                occurred_at="2026-10-08T12:00:02Z",
+                recorded_at="2026-10-08T12:00:05Z",
+            )
+            future = event(
+                "event-about-time-future",
+                2,
+                "tool_completed",
+                occurred_at="2026-10-08T12:00:06Z",
+                recorded_at="2026-10-08T12:00:07Z",
+            )
+            first_checkpoint = checkpoint()
+            first_checkpoint.update(
+                checkpoint_id="checkpoint-about-time-first",
+                trigger_event_id=first["event_id"],
+                state_ref=artifact_ref,
+            )
+            late_checkpoint = checkpoint()
+            late_checkpoint.update(
+                checkpoint_id="checkpoint-about-time-late",
+                trigger_event_id=late["event_id"],
+                event_cursor=1,
+                created_at="2026-10-08T12:00:02Z",
+            )
+            future_checkpoint = checkpoint()
+            future_checkpoint.update(
+                checkpoint_id="checkpoint-about-time-future",
+                trigger_event_id=future["event_id"],
+                event_cursor=2,
+                created_at="2026-10-08T12:00:06Z",
+            )
+            with SQLiteObservationStore(database) as store:
+                store.append(first)
+                store.append(late)
+                store.append(future)
+                store.record_checkpoint(first_checkpoint)
+                store.record_checkpoint(late_checkpoint)
+                store.record_checkpoint(future_checkpoint)
+
+            cutoff = "2026-10-08T15:00:03+03:00"
+            report = report_from_sqlite(
+                database,
+                about_occurred_at=cutoff,
+                artifact_database=artifact_database,
+            )
+
+            self.assertEqual(
+                report["snapshot"]["about_occurred_at"],
+                "2026-10-08T12:00:03Z",
+            )
+            self.assertEqual(
+                [fact["event_id"] for fact in report["facts"]],
+                [first["event_id"], late["event_id"]],
+            )
+            self.assertEqual(
+                [fact["recorded_after_about_time"] for fact in report["facts"]],
+                [False, True],
+            )
+            self.assertEqual(
+                [item["checkpoint_id"] for item in report["checkpoints"]],
+                [first_checkpoint["checkpoint_id"], late_checkpoint["checkpoint_id"]],
+            )
+            self.assertEqual(len(report["resolved_artifacts"]), 1)
+            gap_codes = {gap["code"] for gap in report["gaps"]}
+            self.assertIn("occurred_timestamps_unattested", gap_codes)
+            self.assertIn("checkpoint_availability_at_time_unverified", gap_codes)
+            self.assertIn("artifact_availability_at_time_unverified", gap_codes)
+
+            cli_output = io.StringIO()
+            self.assertEqual(
+                report_cli.main(
+                    [str(database), "--about-occurred-at", cutoff],
+                    stdout=cli_output,
+                ),
+                0,
+            )
+            self.assertEqual(
+                json.loads(cli_output.getvalue())["snapshot"]["about_occurred_at"],
+                "2026-10-08T12:00:03Z",
+            )
 
     def test_report_flags_causal_references_to_self_or_later_events(self):
         with tempfile.TemporaryDirectory() as temporary:

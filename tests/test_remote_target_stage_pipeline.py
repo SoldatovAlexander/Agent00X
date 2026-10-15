@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -31,15 +32,20 @@ from app_contracts.brainbooster_target_profile import (
     PINNED_FILE_COUNT,
     PINNED_HTTP_DB_TEST_COMMAND,
     PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
+    PINNED_HTTP_DB_FAILURE_CATEGORIES,
     PINNED_HTTP_DB_VERIFIER_PROBE,
     PINNED_OWNER,
     PINNED_REPOSITORY,
+    PINNED_SNAPSHOT_TREE_DIGEST,
     PINNED_TREE,
     TARGET_RUNTIME_IMAGE_ID,
     VERIFIER_CONTEXT_MODULES,
+    VERIFIER_CONTEXT_SCHEMA_FILES,
+    PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
+)
+from app_contracts.verifier_image_pin import (
     VERIFIER_RUNTIME_CODE_DIGEST,
     VERIFIER_RUNTIME_IMAGE_ID,
-    PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
 )
 from app_contracts.container_proposal_worker import ContainerProposalWorker
 from app_contracts.durable_stage import SQLiteStagedArtifactStore
@@ -60,6 +66,7 @@ from app_contracts.github_snapshot import (
     GitHubSnapshotRequest,
     read_github_snapshot_contents,
 )
+from app_contracts.pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
 from app_contracts.sandbox import DockerSandboxBackend
 from app_contracts.stage_approval import run_local_mock_publication
 from app_contracts.stage_copy import copy_staged_evidence
@@ -306,7 +313,7 @@ class PinnedTargetEvidenceFormattingTests(unittest.TestCase):
             "snapshot_evidence_origin": "github_codeload_archive",
             "commit_oid": PINNED_COMMIT,
             "tree_oid": PINNED_TREE,
-            "snapshot_content_digest": PINNED_CONTENT_DIGEST,
+            "snapshot_content_digest": PINNED_SNAPSHOT_TREE_DIGEST,
             "file_count": 23,
             "candidate_digest": EXPECTED_CANDIDATE_DIGEST,
             "execution_status": "verified",
@@ -367,6 +374,8 @@ class _FixedProposalChannel:
 
 
 def _build_verifier_runtime() -> tuple[str, str, str]:
+    if os.environ.get("RUN_DOCKER_SANDBOX_TESTS") != "1":
+        raise RuntimeError("Docker verifier build is opt-in")
     docker = shutil.which("docker")
     if not docker or not Path(docker).is_absolute():
         raise RuntimeError("Docker executable unavailable")
@@ -377,6 +386,8 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
         context = Path(build_root)
         package_dir = context / "src" / "app_contracts"
         package_dir.mkdir(parents=True)
+        schema_dir = context / "schemas"
+        schema_dir.mkdir()
         shutil.copyfile(ROOT / "containers" / "verifier" / "Dockerfile", context / "Dockerfile")
         shutil.copyfile(
             ROOT / "containers" / "target-runtime" / "requirements.lock",
@@ -384,20 +395,12 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
         )
         for module in VERIFIER_CONTEXT_MODULES:
             shutil.copyfile(source_root / module, package_dir / module)
+        for schema_file in VERIFIER_CONTEXT_SCHEMA_FILES:
+            shutil.copyfile(ROOT / "schemas" / schema_file, schema_dir / schema_file)
 
         env = dict(os.environ)
         env["DOCKER_CONFIG"] = docker_config
         env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
-        image_inspect = subprocess.run(
-            [docker, "--host=unix:///var/run/docker.sock", "image", "inspect", "--format", "{{.Id}}", TARGET_RUNTIME_IMAGE_ID],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-            env=env,
-        )
-        if image_inspect.returncode != 0 or image_inspect.stdout.strip() != TARGET_RUNTIME_IMAGE_ID:
-            raise RuntimeError("pinned target dependency image unavailable")
         source_container = subprocess.run(
             [docker, "--host=unix:///var/run/docker.sock", "create", TARGET_RUNTIME_IMAGE_ID],
             capture_output=True,
@@ -434,12 +437,14 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
         code_hash = hashlib.sha256()
         identity_files = [context / "Dockerfile", context / "requirements.lock"]
         identity_files.extend(sorted(package_dir.iterdir(), key=lambda path: path.name))
+        identity_files.extend(sorted(schema_dir.iterdir(), key=lambda path: path.name))
         for path in identity_files:
             relative = path.relative_to(context).as_posix()
             code_hash.update(relative.encode("utf-8") + b"\0")
             code_hash.update(hashlib.sha256(path.read_bytes()).digest())
         code_digest = "sha256:" + code_hash.hexdigest()
         tag = "agent00x-verifier-exp466:" + uuid.uuid4().hex
+        image_id_file = context / "image-id"
         build = subprocess.run(
             [
                 docker,
@@ -451,6 +456,8 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
                 "SOURCE_DATE_EPOCH=0",
                 "--tag",
                 tag,
+                "--iidfile",
+                str(image_id_file),
                 str(context),
             ],
             capture_output=True,
@@ -461,25 +468,155 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
         )
         if build.returncode != 0:
             raise RuntimeError("offline verifier image build failed")
-        inspect = subprocess.run(
-            [docker, "--host=unix:///var/run/docker.sock", "image", "inspect", "--format", "{{.Id}}", tag],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-            env=env,
-        )
-        image_id = inspect.stdout.strip()
-        if inspect.returncode != 0 or not image_id.startswith("sha256:"):
+        image_id = image_id_file.read_text(encoding="ascii").strip()
+        if (
+            len(image_id) != len("sha256:") + 64
+            or not image_id.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in image_id[7:])
+        ):
             raise RuntimeError("verifier image identity unavailable")
     return docker, image_id, code_digest
 
 
 class PinnedTargetCommandContractTests(unittest.TestCase):
+    def test_observer_profile_import_is_present_in_verifier_image_context(self):
+        observer_source = (ROOT / "src/app_contracts/observer_runtime.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("from .brainbooster_target_profile import", observer_source)
+        self.assertIn("brainbooster_target_profile.py", VERIFIER_CONTEXT_MODULES)
+        dockerfile = (ROOT / "containers/verifier/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "src/app_contracts/brainbooster_target_profile.py \\",
+            dockerfile,
+        )
+
+    def test_verifier_context_contains_unconditional_relative_imports(self):
+        source_root = ROOT / "src/app_contracts"
+        included = {module.removesuffix(".py") for module in VERIFIER_CONTEXT_MODULES}
+        for module in VERIFIER_CONTEXT_MODULES:
+            tree = ast.parse((source_root / module).read_text(encoding="utf-8"))
+            for statement in tree.body:
+                if not isinstance(statement, ast.ImportFrom) or statement.level != 1:
+                    continue
+                dependencies = (
+                    [statement.module]
+                    if statement.module
+                    else [
+                        alias.name
+                        for alias in statement.names
+                        if (source_root / f"{alias.name}.py").is_file()
+                    ]
+                )
+                for dependency in dependencies:
+                    if dependency and (source_root / f"{dependency}.py").is_file():
+                        self.assertIn(
+                            dependency,
+                            included,
+                            f"{module} imports absent verifier module {dependency}",
+                        )
+
+    def test_verifier_entrypoint_imports_from_exact_packaged_context(self):
+        with tempfile.TemporaryDirectory(prefix="agent00x-verifier-context-test-") as temporary:
+            context = Path(temporary)
+            package_root = context / "src/app_contracts"
+            package_root.mkdir(parents=True)
+            schema_root = context / "schemas"
+            schema_root.mkdir()
+            for module in VERIFIER_CONTEXT_MODULES:
+                shutil.copyfile(ROOT / "src/app_contracts" / module, package_root / module)
+            for schema in VERIFIER_CONTEXT_SCHEMA_FILES:
+                shutil.copyfile(ROOT / "schemas" / schema, schema_root / schema)
+            environment = {
+                "PYTHONPATH": str(context / "src"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import app_contracts.verifier_container_entrypoint",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 0, "packaged verifier import failed")
+
+    def test_snapshot_pin_name_matches_tree_canonicalization_and_legacy_alias(self):
+        self.assertEqual(
+            SNAPSHOT_DIGEST_CANONICALIZATION,
+            "app-process-snapshot-tree/v1",
+        )
+        self.assertEqual(PINNED_CONTENT_DIGEST, PINNED_SNAPSHOT_TREE_DIGEST)
+
+    def test_verifier_context_import_closure_and_code_digest_are_pinned(self):
+        self.assertIn("observer_runtime.py", VERIFIER_CONTEXT_MODULES)
+        self.assertIn("brainbooster_target_profile.py", VERIFIER_CONTEXT_MODULES)
+        self.assertIn("observation_store.py", VERIFIER_CONTEXT_MODULES)
+        self.assertEqual(
+            set(VERIFIER_CONTEXT_SCHEMA_FILES),
+            {"checkpoint.schema.json", "observation-event.schema.json"},
+        )
+        dockerfile = (ROOT / "containers/verifier/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        for module in (
+            "observer_runtime.py",
+            "brainbooster_target_profile.py",
+            "observation_store.py",
+        ):
+            self.assertIn(f"src/app_contracts/{module}", dockerfile)
+        for schema_file in VERIFIER_CONTEXT_SCHEMA_FILES:
+            self.assertIn(f"schemas/{schema_file}", dockerfile)
+
+        source_root = ROOT / "src/app_contracts"
+        files = [
+            ("Dockerfile", ROOT / "containers/verifier/Dockerfile"),
+            ("requirements.lock", ROOT / "containers/target-runtime/requirements.lock"),
+            *(
+                (f"src/app_contracts/{module}", source_root / module)
+                for module in sorted(VERIFIER_CONTEXT_MODULES)
+            ),
+            *(
+                (f"schemas/{schema_file}", ROOT / "schemas" / schema_file)
+                for schema_file in sorted(VERIFIER_CONTEXT_SCHEMA_FILES)
+            ),
+        ]
+        code_hash = hashlib.sha256()
+        for relative, path in files:
+            code_hash.update(relative.encode("utf-8") + b"\0")
+            code_hash.update(hashlib.sha256(path.read_bytes()).digest())
+        self.assertEqual(
+            VERIFIER_RUNTIME_CODE_DIGEST,
+            "sha256:" + code_hash.hexdigest(),
+        )
+
+    def test_verifier_pin_metadata_is_outside_hashed_image_context(self):
+        pin_source = (ROOT / "src/app_contracts/verifier_image_pin.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("VERIFIER_RUNTIME_IMAGE_ID", pin_source)
+        self.assertIn("VERIFIER_RUNTIME_CODE_DIGEST", pin_source)
+        profile_source = (ROOT / "src/app_contracts/brainbooster_target_profile.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("VERIFIER_RUNTIME_IMAGE_ID", profile_source)
+        self.assertNotIn("VERIFIER_RUNTIME_CODE_DIGEST", profile_source)
+        self.assertNotIn("verifier_image_pin.py", VERIFIER_CONTEXT_MODULES)
+        dockerfile = (ROOT / "containers/verifier/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("src/app_contracts/verifier_image_pin.py", dockerfile)
+
     def test_target_sandbox_uses_prepared_runtime_image(self):
         self.assertEqual(
             _target_sandbox_backend().image,
-            "sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812",
+            TARGET_RUNTIME_IMAGE_ID,
         )
 
     def test_http_db_verifier_command_and_timeouts_are_fixed(self):
@@ -492,13 +629,53 @@ class PinnedTargetCommandContractTests(unittest.TestCase):
         self.assertIn("uvicorn", PINNED_HTTP_DB_VERIFIER_PROBE)
         self.assertIn("SELECT COUNT(*) FROM sessions", PINNED_HTTP_DB_VERIFIER_PROBE)
         self.assertIn(
-            "malformed=5 overflow=1 sqlite_range=10 valid=1",
+            "http_db_probe=PASS invalid=25 overflow=1 valid=1",
             PINNED_HTTP_DB_VERIFIER_PROBE,
         )
+        self.assertIn(
+            'fields = ("level", "correct", "wrong", "total", "time_ms")',
+            PINNED_HTTP_DB_VERIFIER_PROBE,
+        )
+        self.assertIn('("malformed", "bool", True)', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('("malformed", "fractional", 1.5)', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('("malformed", "numeric-string", "2")', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('connection.execute("DELETE FROM sessions")', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn("for category, case, value in invalid_values:", PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn("payload[field] = value", PINNED_HTTP_DB_VERIFIER_PROBE)
         self.assertIn("9223372036854775808", PINNED_HTTP_DB_VERIFIER_PROBE)
         self.assertIn("-9223372036854775809", PINNED_HTTP_DB_VERIFIER_PROBE)
-        self.assertIn('fail("sqlite-range-status")', PINNED_HTTP_DB_VERIFIER_PROBE)
-        self.assertIn('fail("sqlite-range-no-write")', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('fail(category + "-status-" + field + "-" + case)', PINNED_HTTP_DB_VERIFIER_PROBE)
+        self.assertIn('fail(category + "-no-write-" + field + "-" + case)', PINNED_HTTP_DB_VERIFIER_PROBE)
+
+        probe_tree = ast.parse(PINNED_HTTP_DB_VERIFIER_PROBE)
+        literal_assignments = {
+            target.id: ast.literal_eval(node.value)
+            for node in ast.walk(probe_tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance((target := node.targets[0]), ast.Name)
+            and target.id in {"fields", "invalid_values"}
+        }
+        self.assertEqual(
+            literal_assignments["fields"],
+            ("level", "correct", "wrong", "total", "time_ms"),
+        )
+        self.assertEqual(
+            literal_assignments["invalid_values"],
+            (
+                ("malformed", "bool", True),
+                ("malformed", "fractional", 1.5),
+                ("malformed", "numeric-string", "2"),
+                ("sqlite-range", "above", 9223372036854775808),
+                ("sqlite-range", "below", -9223372036854775809),
+            ),
+        )
+        self.assertEqual(
+            len(literal_assignments["fields"])
+            * len(literal_assignments["invalid_values"]),
+            25,
+        )
+        self.assertEqual(len(PINNED_HTTP_DB_FAILURE_CATEGORIES), 50)
 
     def test_route_probe_command_is_trimmed_before_execution_request(self):
         request_fields = {
@@ -633,7 +810,7 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
                 repository=PINNED_REPOSITORY,
                 commit_oid=PINNED_COMMIT,
                 tree_oid=PINNED_TREE,
-                content_digest=PINNED_CONTENT_DIGEST,
+                content_digest=PINNED_SNAPSHOT_TREE_DIGEST,
                 file_count=PINNED_FILE_COUNT,
             )
             snapshot = read_github_archive_snapshot_contents(
@@ -648,7 +825,7 @@ class PinnedTargetStagePipelineTests(unittest.TestCase):
         self.assertEqual(snapshot.claim.tree_oid, PINNED_TREE)
         self.assertTrue(snapshot.claim.full_snapshot)
         self.assertEqual(len(snapshot.files), PINNED_FILE_COUNT)
-        self.assertEqual(snapshot.claim.content_digest, PINNED_CONTENT_DIGEST)
+        self.assertEqual(snapshot.claim.content_digest, PINNED_SNAPSHOT_TREE_DIGEST)
         self.assertEqual(
             snapshot.claim.evidence_origin,
             "github_codeload_archive" if source == "codeload" else "github_rest_api_claim",

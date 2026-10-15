@@ -36,7 +36,40 @@
         "max_bytes": {"type": "integer", "minimum": 0},
         "limit": {"type": "integer", "minimum": 0},
         "offset": {"type": "integer", "minimum": 0},
-        "artifact_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256}
+        "artifact_ref": {"type": "string", "pattern": "^artifact://[A-Za-z0-9_./-]+$", "minLength": 12, "maxLength": 256},
+        "worker_outcome": {"enum": ["clarification_required", "blocked", "denied"]},
+        "sandbox_return_code": {"type": "integer", "minimum": -255, "maximum": 255},
+        "sandbox_failure_code": {
+          "enum": [
+            "readiness-exit", "readiness-timeout", "overflow-status", "overflow-no-write",
+            "valid-status", "valid-body", "valid-row",
+            "malformed-status-level-bool", "malformed-no-write-level-bool",
+            "malformed-status-level-fractional", "malformed-no-write-level-fractional",
+            "malformed-status-level-numeric-string", "malformed-no-write-level-numeric-string",
+            "sqlite-range-status-level-above", "sqlite-range-no-write-level-above",
+            "sqlite-range-status-level-below", "sqlite-range-no-write-level-below",
+            "malformed-status-correct-bool", "malformed-no-write-correct-bool",
+            "malformed-status-correct-fractional", "malformed-no-write-correct-fractional",
+            "malformed-status-correct-numeric-string", "malformed-no-write-correct-numeric-string",
+            "sqlite-range-status-correct-above", "sqlite-range-no-write-correct-above",
+            "sqlite-range-status-correct-below", "sqlite-range-no-write-correct-below",
+            "malformed-status-wrong-bool", "malformed-no-write-wrong-bool",
+            "malformed-status-wrong-fractional", "malformed-no-write-wrong-fractional",
+            "malformed-status-wrong-numeric-string", "malformed-no-write-wrong-numeric-string",
+            "sqlite-range-status-wrong-above", "sqlite-range-no-write-wrong-above",
+            "sqlite-range-status-wrong-below", "sqlite-range-no-write-wrong-below",
+            "malformed-status-total-bool", "malformed-no-write-total-bool",
+            "malformed-status-total-fractional", "malformed-no-write-total-fractional",
+            "malformed-status-total-numeric-string", "malformed-no-write-total-numeric-string",
+            "sqlite-range-status-total-above", "sqlite-range-no-write-total-above",
+            "sqlite-range-status-total-below", "sqlite-range-no-write-total-below",
+            "malformed-status-time_ms-bool", "malformed-no-write-time_ms-bool",
+            "malformed-status-time_ms-fractional", "malformed-no-write-time_ms-fractional",
+            "malformed-status-time_ms-numeric-string", "malformed-no-write-time_ms-numeric-string",
+            "sqlite-range-status-time_ms-above", "sqlite-range-no-write-time_ms-above",
+            "sqlite-range-status-time_ms-below", "sqlite-range-no-write-time_ms-below"
+          ]
+        }
       }
     },
     "rationale": {"type": "string", "minLength": 1},

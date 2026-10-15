@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 import sqlite3
 from threading import Lock
@@ -42,6 +43,23 @@ class PreDispatchError(RuntimeError):
 
 class ObservationStoreError(RuntimeError):
     """The local observation journal could not be opened safely."""
+
+
+def _create_private_database_file(path: str) -> None:
+    """Create a missing on-disk SQLite file without exposing a broad mode."""
+
+    if path == ":memory:":
+        return
+    flags = os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileExistsError:
+        return
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
 
 
 def run_gated_dispatch(
@@ -267,11 +285,12 @@ class SQLiteObservationStore:
         if not path_text:
             raise ObservationStoreError("observation journal: database path is invalid")
         try:
+            _create_private_database_file(path_text)
             self._connection = sqlite3.connect(path_text)
             self._connection.row_factory = sqlite3.Row
             self._initialize_schema()
             self._validate_persisted_rows()
-        except (sqlite3.Error, ObservationStoreError) as exc:
+        except (OSError, sqlite3.Error, ObservationStoreError) as exc:
             connection = getattr(self, "_connection", None)
             if connection is not None:
                 connection.close()

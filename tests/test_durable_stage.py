@@ -4,8 +4,10 @@ import ast
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
+import stat
 import sys
 import tempfile
 import unittest
@@ -425,6 +427,26 @@ class DurableStageTests(unittest.TestCase):
                 self.assertEqual(loaded, artifact)
                 self.assertEqual(loaded.payload_copy(), artifact.payload_copy())
             self.assertTrue(path.exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file-mode assertion")
+    def test_new_stage_database_is_private_and_existing_mode_is_preserved(self):
+        request, prepared, result, _ = get_verified_artifact()
+        artifact = build_staged_artifact(request, prepared, result)
+        with tempfile.TemporaryDirectory(prefix="durable-stage-mode-") as temporary:
+            path = Path(temporary) / "private-stages.sqlite3"
+            with SQLiteStagedArtifactStore(path) as store:
+                store.save(artifact)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(str(path) + suffix)
+                    if sidecar.exists():
+                        self.assertEqual(stat.S_IMODE(sidecar.stat().st_mode) & 0o077, 0)
+
+            preexisting = Path(temporary) / "existing-stages.sqlite3"
+            preexisting.touch()
+            preexisting.chmod(0o644)
+            with SQLiteStagedArtifactStore(preexisting):
+                self.assertEqual(stat.S_IMODE(preexisting.stat().st_mode), 0o644)
 
     def test_executor_persists_and_reads_back_exact_verified_stage_before_success(self):
         events = []

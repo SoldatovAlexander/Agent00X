@@ -29,13 +29,15 @@ from .executor import (
 from .verifier_attestation import build_signed_verifier_response
 from .brainbooster_target_profile import (
     PINNED_COMMIT,
-    PINNED_CONTENT_DIGEST,
+    PINNED_SNAPSHOT_TREE_DIGEST,
     PINNED_FILE_COUNT,
     PINNED_OWNER,
     PINNED_REPOSITORY,
     PINNED_HTTP_DB_TEST_COMMAND,
     PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
     PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
+)
+from .verifier_image_pin import (
     VERIFIER_RUNTIME_CODE_DIGEST,
     VERIFIER_RUNTIME_IMAGE_ID,
 )
@@ -167,7 +169,7 @@ class VerifierProfile:
 BRAINBOOSTER_VERIFIER_PROFILE = VerifierProfile(
     repository_id=f"{PINNED_OWNER}/{PINNED_REPOSITORY}",
     base_commit=PINNED_COMMIT,
-    snapshot_tree_digest=PINNED_CONTENT_DIGEST,
+    snapshot_tree_digest=PINNED_SNAPSHOT_TREE_DIGEST,
     snapshot_file_count=PINNED_FILE_COUNT,
     allowed_change_paths=("backend/routes.py",),
     test_command=PINNED_HTTP_DB_TEST_COMMAND,

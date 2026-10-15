@@ -57,6 +57,12 @@ def _requires_verified_verifier_provenance(snapshot_origin: str) -> bool:
     return snapshot_origin in _VERIFIER_PROVENANCE_REQUIRED_ORIGINS
 
 
+def _has_stage_wal_sidecars(path: Path) -> bool:
+    return any(
+        path.with_name(path.name + suffix).exists() for suffix in ("-wal", "-shm")
+    )
+
+
 def _validate_clock(value: datetime) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise ApprovalRequestError("approval request: clock is invalid")
@@ -258,15 +264,26 @@ def load_approval_request(
         staged_change_digest
     ) is None:
         raise ApprovalRequestError("approval request: stage digest is invalid")
+    path: Path | None = None
     try:
         path = Path(database_path)
         if path.is_symlink() or not path.is_file():
             raise ApprovalRequestError("approval request: stage database is unavailable")
+        if _has_stage_wal_sidecars(path):
+            raise ApprovalRequestError(
+                "approval request: stage database is not quiescent"
+            )
         with SQLiteStagedArtifactStore(path, read_only=True) as store:
             artifact = store.load(staged_change_digest)
         return build_approval_request(artifact, binding, **request_fields)
     except ApprovalRequestError:
         raise
+    except DurableStageStoreError:
+        if path is not None and _has_stage_wal_sidecars(path):
+            raise ApprovalRequestError(
+                "approval request: stage database is not quiescent"
+            ) from None
+        raise ApprovalRequestError("approval request: stage database is unavailable") from None
     except Exception:
         raise ApprovalRequestError("approval request: stage database is unavailable") from None
 

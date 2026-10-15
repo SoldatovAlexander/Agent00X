@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import math
 import re
+import socket
 import ssl
 import threading
 import time
@@ -13,9 +14,34 @@ import certifi
 from urllib.parse import parse_qsl, urlsplit
 from typing import Callable
 
+GITHUB_READINESS_FAILURE_CODES = frozenset(
+    {
+        "request-failed",
+        "tls-trust-config-invalid",
+        "readiness-already-used",
+        "response-invalid",
+        "timeout",
+        "tls-failed",
+        "dns-failed",
+        "connection-failed",
+        "http-protocol-failed",
+        "system-network-failed",
+    }
+)
+
 
 class GitHubHTTPTransportError(ValueError):
     """A fixed-host GitHub read request could not be completed safely."""
+
+    _FAILURE_CODES = GITHUB_READINESS_FAILURE_CODES
+
+    def __init__(self, message: str, *, failure_code: str = "request-failed") -> None:
+        super().__init__(message)
+        self.failure_code = (
+            failure_code
+            if type(failure_code) is str and failure_code in self._FAILURE_CODES
+            else "request-failed"
+        )
 
 
 @dataclass(frozen=True)
@@ -29,22 +55,34 @@ class GitHubRateLimitEvidence:
 
     def __post_init__(self) -> None:
         if type(self.status) is not int or not 100 <= self.status <= 599:
-            raise GitHubHTTPTransportError("github http transport: response is invalid")
+            raise GitHubHTTPTransportError(
+                "github http transport: response is invalid",
+                failure_code="response-invalid",
+            )
         if self.remaining is not None and (
             type(self.remaining) is not int or not 0 <= self.remaining <= 1_000_000
         ):
-            raise GitHubHTTPTransportError("github http transport: response is invalid")
+            raise GitHubHTTPTransportError(
+                "github http transport: response is invalid",
+                failure_code="response-invalid",
+            )
         if self.reset_unix is not None and (
             type(self.reset_unix) is not int or not 0 <= self.reset_unix <= 9_999_999_999_999
         ):
-            raise GitHubHTTPTransportError("github http transport: response is invalid")
+            raise GitHubHTTPTransportError(
+                "github http transport: response is invalid",
+                failure_code="response-invalid",
+            )
         if (
             isinstance(self.observed_monotonic, bool)
             or not isinstance(self.observed_monotonic, (int, float))
             or not math.isfinite(float(self.observed_monotonic))
             or self.observed_monotonic < 0
         ):
-            raise GitHubHTTPTransportError("github http transport: response is invalid")
+            raise GitHubHTTPTransportError(
+                "github http transport: response is invalid",
+                failure_code="response-invalid",
+            )
 
 
 _API_HOST = "api.github.com"
@@ -80,7 +118,8 @@ def _create_verified_ssl_context() -> ssl.SSLContext:
         return context
     except Exception:
         raise GitHubHTTPTransportError(
-            "github http transport: tls trust configuration is invalid"
+            "github http transport: tls trust configuration is invalid",
+            failure_code="tls-trust-config-invalid",
         ) from None
 
 
@@ -125,7 +164,8 @@ class GitHubAnonymousSnapshotTransport:
         with self._readiness_lock:
             if self._readiness_attempt_started:
                 raise GitHubHTTPTransportError(
-                    "github http transport: readiness attempt already used"
+                    "github http transport: readiness attempt already used",
+                    failure_code="readiness-already-used",
                 )
             self._readiness_attempt_started = True
 
@@ -152,7 +192,8 @@ class GitHubAnonymousSnapshotTransport:
             status = getattr(response, "status", None)
             if type(status) is not int or not 100 <= status <= 599:
                 raise GitHubHTTPTransportError(
-                    "github http transport: response is invalid"
+                    "github http transport: response is invalid",
+                    failure_code="response-invalid",
                 )
             remaining = _numeric_header(response, "X-RateLimit-Remaining", 1_000_000)
             reset_unix = _numeric_header(
@@ -166,6 +207,32 @@ class GitHubAnonymousSnapshotTransport:
             )
         except GitHubHTTPTransportError:
             raise
+        except TimeoutError:
+            raise GitHubHTTPTransportError(
+                "github http transport: request failed", failure_code="timeout"
+            ) from None
+        except ssl.SSLError:
+            raise GitHubHTTPTransportError(
+                "github http transport: request failed", failure_code="tls-failed"
+            ) from None
+        except socket.gaierror:
+            raise GitHubHTTPTransportError(
+                "github http transport: request failed", failure_code="dns-failed"
+            ) from None
+        except ConnectionError:
+            raise GitHubHTTPTransportError(
+                "github http transport: request failed", failure_code="connection-failed"
+            ) from None
+        except http.client.HTTPException:
+            raise GitHubHTTPTransportError(
+                "github http transport: request failed",
+                failure_code="http-protocol-failed",
+            ) from None
+        except OSError:
+            raise GitHubHTTPTransportError(
+                "github http transport: request failed",
+                failure_code="system-network-failed",
+            ) from None
         except Exception:
             raise GitHubHTTPTransportError(
                 "github http transport: request failed"

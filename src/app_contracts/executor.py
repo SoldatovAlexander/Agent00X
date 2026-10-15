@@ -14,13 +14,19 @@ import re
 import stat
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
-from .repository_process import prepare_change
+from .repository_process import (
+    AllowlistedTestFailureError,
+    SAFE_TARGET_TEST_FAILURE_CODES,
+    prepare_change,
+)
 from .observer_runtime import (
     JournaledVerifier,
     JournaledProposalWorker,
     SandboxCallFailedError,
     SandboxJournalError,
     SandboxOutcomeUnknownError,
+    JournaledStepGateError,
+    JournaledStepOutcomeUnknownError,
     StageCallFailedError,
     StageJournalError,
     StageOutcomeUnknownError,
@@ -117,6 +123,8 @@ class ExecutionResult:
     ] = "unverified_local_test"
     verifier_result: VerifierResult | None = None
     failure_code: str | None = None
+    worker_terminal_outcome: str | None = None
+    worker_terminal_reason_code: str | None = None
     evidence_origin: Literal["local_test"] = "local_test"
     limitations: tuple[str, ...] = (
         "injected_worker",
@@ -180,6 +188,29 @@ class WorkerProposal:
 
 
 @dataclass(frozen=True)
+class WorkerTerminalOutcome:
+    """Bounded no-patch result; it carries no authority or capability."""
+
+    outcome: Literal["clarification_required", "blocked", "denied"]
+    reason_code: Literal[
+        "conflicting_requirements",
+        "target_test_outcome_unknown",
+        "publication_not_authorized",
+    ]
+
+    def __post_init__(self) -> None:
+        if type(self.outcome) is not str or type(self.reason_code) is not str:
+            raise ExecutionError("execution worker: result is invalid")
+        expected = {
+            "clarification_required": "conflicting_requirements",
+            "blocked": "target_test_outcome_unknown",
+            "denied": "publication_not_authorized",
+        }
+        if expected.get(self.outcome) != self.reason_code:
+            raise ExecutionError("execution worker: result is invalid")
+
+
+@dataclass(frozen=True)
 class VerifierInput:
     process_id: str
     repository_id: str
@@ -223,7 +254,9 @@ class VerifierResult:
 
 @runtime_checkable
 class ProposalWorker(Protocol):
-    def propose(self, task: WorkerInput) -> WorkerProposal: ...
+    def propose(
+        self, task: WorkerInput
+    ) -> WorkerProposal | WorkerTerminalOutcome: ...
 
 
 @runtime_checkable
@@ -431,38 +464,72 @@ def run_local_execution(
             or not callable(getattr(sandbox, "close", None))
         ):
             raise ExecutionError("execution sandbox: session is invalid")
-        if request.pinned_snapshot is not None:
+        def validate_sandbox_snapshot_binding() -> None:
+            if request.pinned_snapshot is not None:
+                try:
+                    source_tree_digest = compute_snapshot_tree_digest(
+                        request.snapshot_path
+                    )
+                    source_content_digest = compute_snapshot_tree_digest(
+                        request.snapshot_path, include_mode=False
+                    )
+                    copied_content_digest = compute_snapshot_tree_digest(
+                        sandbox.snapshot, include_mode=False
+                    )
+                except Exception:
+                    raise ExecutionError(
+                        "execution snapshot: digest check failed"
+                    ) from None
+                if source_tree_digest != request.pinned_snapshot.tree_digest:
+                    raise ExecutionError("execution snapshot: digest mismatch")
+                if copied_content_digest != source_content_digest:
+                    raise ExecutionError("execution snapshot: digest mismatch")
+            if request.remote_snapshot is not None:
+                try:
+                    claim = request.remote_snapshot.claim
+                    remote_files = _read_pinned_snapshot_files(
+                        request.snapshot_path, claim.content_digest
+                    )
+                    claimed_files = tuple(
+                        (blob.path, blob.mode, blob.content)
+                        for blob in request.remote_snapshot.files
+                    )
+                    sandbox_files = _read_pinned_snapshot_files(
+                        sandbox.snapshot, claim.content_digest
+                    )
+                except Exception:
+                    raise ExecutionError(
+                        "execution snapshot: claim mismatch"
+                    ) from None
+                if remote_files != claimed_files or sandbox_files != claimed_files:
+                    raise ExecutionError("execution snapshot: claim mismatch")
+
+        if request.pinned_snapshot is not None or request.remote_snapshot is not None:
             try:
-                source_tree_digest = compute_snapshot_tree_digest(request.snapshot_path)
-                source_content_digest = compute_snapshot_tree_digest(
-                    request.snapshot_path, include_mode=False
+                if type(active_worker) is JournaledProposalWorker:
+                    active_worker.run_controlled_step(
+                        "SandboxSnapshot.validate-binding",
+                        validate_sandbox_snapshot_binding,
+                        process_id=request.process_id,
+                    )
+                else:
+                    validate_sandbox_snapshot_binding()
+            except JournaledStepOutcomeUnknownError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="snapshot-binding-outcome-unknown",
                 )
-                copied_content_digest = compute_snapshot_tree_digest(
-                    sandbox.snapshot, include_mode=False
+            except JournaledStepGateError:
+                return ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                    snapshot_origin=_request_snapshot_origin(request),
+                    snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                    failure_code="snapshot-binding-observation-gate-failed",
                 )
-            except Exception:
-                raise ExecutionError("execution snapshot: digest check failed") from None
-            if source_tree_digest != request.pinned_snapshot.tree_digest:
-                raise ExecutionError("execution snapshot: digest mismatch")
-            if copied_content_digest != source_content_digest:
-                raise ExecutionError("execution snapshot: digest mismatch")
-        if request.remote_snapshot is not None:
-            try:
-                claim = request.remote_snapshot.claim
-                remote_files = _read_pinned_snapshot_files(
-                    request.snapshot_path, claim.content_digest
-                )
-                claimed_files = tuple(
-                    (blob.path, blob.mode, blob.content)
-                    for blob in request.remote_snapshot.files
-                )
-                sandbox_files = _read_pinned_snapshot_files(
-                    sandbox.snapshot, claim.content_digest
-                )
-            except Exception:
-                raise ExecutionError("execution snapshot: claim mismatch") from None
-            if remote_files != claimed_files or sandbox_files != claimed_files:
-                raise ExecutionError("execution snapshot: claim mismatch")
         worker_input = WorkerInput(
             process_id=request.process_id,
             task_id=request.task_id,
@@ -509,7 +576,40 @@ def run_local_execution(
                 snapshot_claim_digest=_request_snapshot_claim_digest(request),
                 failure_code="worker-failed",
             )
-        proposal = validate_worker_proposal(raw_proposal, request)
+        if type(raw_proposal) is WorkerTerminalOutcome:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                worker_terminal_outcome=raw_proposal.outcome,
+                worker_terminal_reason_code=raw_proposal.reason_code,
+            )
+        try:
+            if type(active_worker) is JournaledProposalWorker:
+                proposal = active_worker.run_controlled_step(
+                    "WorkerProposal.validate",
+                    lambda: validate_worker_proposal(raw_proposal, request),
+                    process_id=request.process_id,
+                )
+            else:
+                proposal = validate_worker_proposal(raw_proposal, request)
+        except JournaledStepOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="proposal-validation-outcome-unknown",
+            )
+        except JournaledStepGateError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="proposal-validation-observation-gate-failed",
+            )
         preparation_sandbox = sandbox
         if type(active_worker) is JournaledProposalWorker:
             try:
@@ -524,15 +624,53 @@ def run_local_execution(
                     snapshot_claim_digest=_request_snapshot_claim_digest(request),
                     failure_code="sandbox-observation-gate-failed",
                 )
+        prepare_change_kwargs = {
+            "process_id": request.process_id,
+            "task_id": request.task_id,
+            "repository_id": request.repository_id,
+            "base_commit": request.base_commit,
+            "changes": dict(proposal.changes),
+            "test_command": request.test_command,
+        }
+        if type(active_worker) is JournaledProposalWorker:
+            prepare_change_kwargs["workspace_apply"] = lambda dispatch: (
+                active_worker.run_controlled_step(
+                    "PreparedChange.apply-proposal",
+                    dispatch,
+                    process_id=request.process_id,
+                )
+            )
         try:
             prepared = prepare_change(
                 preparation_sandbox,
-                process_id=request.process_id,
-                task_id=request.task_id,
-                repository_id=request.repository_id,
-                base_commit=request.base_commit,
-                changes=dict(proposal.changes),
-                test_command=request.test_command,
+                **prepare_change_kwargs,
+            )
+        except AllowlistedTestFailureError as exc:
+            failure_code = f"target-test-{exc.category}"
+            if failure_code not in SAFE_TARGET_TEST_FAILURE_CODES:
+                failure_code = "target-test-allowlisted-tests-failed"
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code=failure_code,
+            )
+        except JournaledStepOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="proposal-application-outcome-unknown",
+            )
+        except JournaledStepGateError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="proposal-application-observation-gate-failed",
             )
         except SandboxOutcomeUnknownError:
             return ExecutionResult(
@@ -558,24 +696,54 @@ def run_local_execution(
                 snapshot_claim_digest=_request_snapshot_claim_digest(request),
                 failure_code="sandbox-command-failed",
             )
-        staged = getattr(prepared, "staged_change", None)
-        if (
-            not isinstance(staged, dict)
-            or staged.get("process_id") != request.process_id
-            or staged.get("repository_id") != request.repository_id
-            or staged.get("base_commit") != request.base_commit
-        ):
-            raise ExecutionError("execution preparation: binding mismatch")
-        verified_contents = getattr(prepared, "verified_contents", None)
-        if not isinstance(verified_contents, tuple) or not verified_contents:
-            raise ExecutionError("execution preparation: verified contents are missing")
-        if request.pinned_snapshot is not None:
-            _validate_prepared_snapshot_binding(
-                prepared,
-                request,
-                staged,
-                proposal,
-                verified_contents,
+        def validate_prepared_change_binding():
+            candidate_staged = getattr(prepared, "staged_change", None)
+            if (
+                not isinstance(candidate_staged, dict)
+                or candidate_staged.get("process_id") != request.process_id
+                or candidate_staged.get("repository_id") != request.repository_id
+                or candidate_staged.get("base_commit") != request.base_commit
+            ):
+                raise ExecutionError("execution preparation: binding mismatch")
+            candidate_contents = getattr(prepared, "verified_contents", None)
+            if not isinstance(candidate_contents, tuple) or not candidate_contents:
+                raise ExecutionError(
+                    "execution preparation: verified contents are missing"
+                )
+            if request.pinned_snapshot is not None:
+                _validate_prepared_snapshot_binding(
+                    prepared,
+                    request,
+                    candidate_staged,
+                    proposal,
+                    candidate_contents,
+                )
+            return candidate_staged, candidate_contents
+
+        try:
+            if type(active_worker) is JournaledProposalWorker:
+                staged, verified_contents = active_worker.run_controlled_step(
+                    "PreparedChange.validate-binding",
+                    validate_prepared_change_binding,
+                    process_id=request.process_id,
+                )
+            else:
+                staged, verified_contents = validate_prepared_change_binding()
+        except JournaledStepOutcomeUnknownError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="prepared-binding-outcome-unknown",
+            )
+        except JournaledStepGateError:
+            return ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                snapshot_tree_digest=_request_snapshot_tree_digest(request),
+                snapshot_origin=_request_snapshot_origin(request),
+                snapshot_claim_digest=_request_snapshot_claim_digest(request),
+                failure_code="prepared-binding-observation-gate-failed",
             )
         verified_contents_digest = sha256_digest(verified_contents)
         replay_result_digest = None

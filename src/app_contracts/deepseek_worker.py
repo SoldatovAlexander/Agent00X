@@ -9,7 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from .executor import ExecutionError, WorkerInput, WorkerProposal
+from .executor import (
+    ExecutionError,
+    WorkerInput,
+    WorkerProposal,
+    WorkerTerminalOutcome,
+)
 from .openai_worker import (
     CHANNEL_TIMEOUT_SECONDS,
     MAX_MODEL_OUTPUT_BYTES,
@@ -21,11 +26,17 @@ from .openai_worker import (
 MODEL_NAME = "deepseek-flash"
 REASONING_EFFORT = "low"
 MAX_OUTPUT_TOKENS = 4096
+CHANNEL_TIMEOUT_SECONDS = 30.0
+MAX_LOCAL_MODEL_TIMEOUT_SECONDS = 180.0
 
 _SYSTEM_INSTRUCTION = (
-    "Return only valid JSON matching this exact shape: "
-    '{"changes":[{"path":"relative/path","content":"complete file text"}]}. '
-    "Include at least one change. Do not use markdown fences or extra keys."
+    "Return only one JSON object with exactly these keys: schema, outcome, changes, reason_code. "
+    'schema must be "agent00x-worker-result/v2". For a patch use outcome "changes", '
+    'a non-empty changes array of {"path":"relative/path","content":"complete file text"}, '
+    "and reason_code null. For no-patch outcomes set changes null and use exactly one pair: "
+    '"clarification_required" / "conflicting_requirements", "blocked" / '
+    '"target_test_outcome_unknown", or "denied" / "publication_not_authorized". '
+    "Do not use markdown fences, extra keys, free-form explanations, or tool calls."
 )
 
 
@@ -65,8 +76,9 @@ class DeepSeekProposalWorker:
     """Map bounded caller input to a single JSON-mode Chat Completions call."""
 
     channel: object
+    timeout_seconds: float = CHANNEL_TIMEOUT_SECONDS
 
-    def propose(self, task: WorkerInput) -> WorkerProposal:
+    def propose(self, task: WorkerInput) -> WorkerProposal | WorkerTerminalOutcome:
         if not isinstance(task, WorkerInput):
             raise ExecutionError("execution worker: model input is invalid")
         create = getattr(self.channel, "create_chat_completion", None)
@@ -84,7 +96,13 @@ class DeepSeekProposalWorker:
         if rendered_bytes > MAX_RENDERED_USER_BYTES:
             raise ExecutionError("execution worker: model input is invalid")
         try:
-            result = create(payload, timeout_seconds=CHANNEL_TIMEOUT_SECONDS)
+            if (
+                isinstance(self.timeout_seconds, bool)
+                or not isinstance(self.timeout_seconds, (int, float))
+                or not 0 < self.timeout_seconds <= MAX_LOCAL_MODEL_TIMEOUT_SECONDS
+            ):
+                raise ValueError
+            result = create(payload, timeout_seconds=self.timeout_seconds)
         except Exception:
             raise ExecutionError("execution worker: provider request failed") from None
         output = _extract_content(result)

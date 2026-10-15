@@ -19,7 +19,7 @@ from app_contracts.verifier_host_trust_decision import (
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 AUTHORITY_KEY_ID = "synthetic-authority-1"
 ENROLLMENT_DIGEST = "sha256:" + "1" * 64
-ENDPOINT = "https://verifier.example.test/v1/verify"
+ENDPOINT = "https://testdev.local/v1/verify"
 VERIFIER_ID = "synthetic-verifier"
 PROFILE_DIGEST = "sha256:" + "2" * 64
 VERIFIER_KEY_ID = "synthetic-verifier-key"

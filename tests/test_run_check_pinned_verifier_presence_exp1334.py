@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import io
+import unittest
+from unittest import mock
+
+from scripts import run_check_pinned_verifier_presence_exp1334 as gated_check
+
+
+class Exp1334FreshGateTests(unittest.TestCase):
+    def test_stale_or_inexact_gates_never_dispatch(self):
+        for supplied in (
+            "RUN EXP-1320 ONCE",
+            "RUN EXP-1332 ONCE",
+            "RUN EXP-1334 ONCE extra",
+            "",
+        ):
+            with self.subTest(supplied=supplied):
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                check = mock.Mock(return_value=0)
+
+                result = gated_check.main(
+                    check=check,
+                    stdin=io.StringIO(supplied + "\n"),
+                    stdout=stdout,
+                    stderr=stderr,
+                )
+
+                self.assertEqual(result, 19)
+                self.assertEqual(stdout.getvalue(), "RUN_NOT_CONFIRMED\n")
+                self.assertEqual(
+                    stderr.getvalue(), "Type RUN EXP-1334 ONCE to continue: "
+                )
+                check.assert_not_called()
+
+    def test_exact_fresh_gate_dispatches_presence_check_once(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        check = mock.Mock(return_value=10)
+
+        result = gated_check.main(
+            check=check,
+            stdin=io.StringIO("RUN EXP-1334 ONCE\n"),
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(result, 10)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "Type RUN EXP-1334 ONCE to continue: ")
+        check.assert_called_once_with()
+
+
+if __name__ == "__main__":
+    unittest.main()

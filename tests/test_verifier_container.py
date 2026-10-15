@@ -855,6 +855,8 @@ class VerifierContainerImageTests(unittest.TestCase):
         self.assertNotIn("ARG ", source)
         self.assertNotIn("ENV TOKEN", source)
         self.assertNotIn("openai_worker.py", source)
+        self.assertIn("schemas/checkpoint.schema.json", source)
+        self.assertIn("schemas/observation-event.schema.json", source)
         self.assertFalse(Path(str(dockerfile) + ".json").exists())
 
     def test_verifier_image_includes_target_dependency_payload_without_target_code(self):

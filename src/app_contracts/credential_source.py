@@ -9,26 +9,16 @@ credential so a consumer does not receive a general-purpose vault capability.
 from __future__ import annotations
 
 import importlib
+import os
 import re
+import stat
 import sys
 from collections.abc import Mapping
-from typing import Protocol, runtime_checkable
+
+from .credential_protocol import CredentialSource, CredentialSourceError
 
 
 _ENVIRONMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
-
-
-class CredentialSourceError(ValueError):
-    """A process-injected credential is unavailable or malformed."""
-
-
-@runtime_checkable
-class CredentialSource(Protocol):
-    """Callable that supplies one credential only when its consumer needs it."""
-
-    def __call__(self) -> str:
-        """Return the credential value without logging or persisting it."""
-        ...
 
 
 class ProcessEnvironmentCredentialSource:
@@ -63,6 +53,77 @@ class ProcessEnvironmentCredentialSource:
         except Exception:
             raise CredentialSourceError("credential source: value is unavailable") from None
         if type(value) is not str or not value or value != value.strip():
+            raise CredentialSourceError("credential source: value is invalid")
+        return value
+
+
+class SystemdCredentialSource:
+    """Lazily read one systemd-provided runtime credential.
+
+    The trusted service manager supplies ``CREDENTIALS_DIRECTORY`` and mounts
+    the named credential for the unit lifetime. This adapter reads only the
+    fixed verifier-signing credential, refuses symlinks/non-regular files and
+    never accepts a caller-selected filename or arbitrary file path.
+    """
+
+    __slots__ = ("_environment",)
+
+    DIRECTORY_ENV_NAME = "CREDENTIALS_DIRECTORY"
+    CREDENTIAL_NAME = "AGENT_VERIFIER_SIGNING_SEED"
+    MAX_CREDENTIAL_BYTES = 4096
+
+    def __init__(self, environment: Mapping[str, str]) -> None:
+        if not isinstance(environment, Mapping):
+            raise CredentialSourceError("credential source: configuration is invalid")
+        self._environment = environment
+
+    def __repr__(self) -> str:
+        return "SystemdCredentialSource(value='opaque')"
+
+    __str__ = __repr__
+
+    def __call__(self) -> str:
+        try:
+            directory = self._environment[self.DIRECTORY_ENV_NAME]
+            if (
+                type(directory) is not str
+                or not directory
+                or len(directory) > 4096
+                or not os.path.isabs(directory)
+            ):
+                raise ValueError
+            no_follow = getattr(os, "O_NOFOLLOW", None)
+            no_block = getattr(os, "O_NONBLOCK", None)
+            if (
+                type(no_follow) is not int
+                or no_follow <= 0
+                or type(no_block) is not int
+                or no_block <= 0
+            ):
+                raise ValueError
+            credential_path = os.path.join(directory, self.CREDENTIAL_NAME)
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= no_follow | no_block
+            descriptor = os.open(credential_path, flags)
+            try:
+                metadata = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_size <= 0
+                    or metadata.st_size > self.MAX_CREDENTIAL_BYTES
+                ):
+                    raise ValueError
+                raw_value = os.read(descriptor, self.MAX_CREDENTIAL_BYTES + 1)
+            finally:
+                os.close(descriptor)
+            if not raw_value or len(raw_value) > self.MAX_CREDENTIAL_BYTES:
+                raise ValueError
+            value = raw_value.decode("ascii")
+        except Exception:
+            raise CredentialSourceError(
+                "credential source: systemd credential unavailable or invalid"
+            ) from None
+        if not value or value != value.strip():
             raise CredentialSourceError("credential source: value is invalid")
         return value
 

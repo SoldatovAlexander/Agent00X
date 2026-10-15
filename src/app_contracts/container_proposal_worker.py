@@ -17,13 +17,19 @@ import uuid
 
 from .brainbooster_target_profile import TARGET_RUNTIME_IMAGE_ID
 from .deepseek_worker import build_chat_completions_payload
-from .executor import ExecutionError, WorkerInput, WorkerProposal
+from .executor import (
+    ExecutionError,
+    WorkerInput,
+    WorkerProposal,
+    WorkerTerminalOutcome,
+)
 from .openai_worker import ResponsesModelResult, parse_model_result
 from .worker_model_ipc import _decode_json, _encode_result
 from .worker_model_protocol import (
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
     MAX_TIMEOUT_SECONDS,
+    MAX_LOCAL_MODEL_TIMEOUT_SECONDS,
     encode_chat_completions_request,
 )
 
@@ -172,7 +178,7 @@ except Exception:
     raise SystemExit(40)
 status("dependency-5-imported")
 try:
-    from app_contracts.executor import WorkerInput
+    from app_contracts.executor import WorkerInput, WorkerTerminalOutcome
 except Exception:
     status("worker-input-import-failed")
     raise SystemExit(40)
@@ -185,6 +191,7 @@ except Exception:
 status("deepseek-worker-imported")
 try:
     from app_contracts.worker_model_ipc import StdioChatCompletionsChannel
+    from app_contracts.worker_model_protocol import MAX_LOCAL_MODEL_TIMEOUT_SECONDS
 except Exception:
     status("stdio-ipc-import-failed")
     raise SystemExit(40)
@@ -218,8 +225,16 @@ try:
     if type(task_envelope) is not dict or set(task_envelope) != {
         "schema", "process_id", "task_id", "repository_id", "base_commit",
         "declared_change_paths", "snapshot_tree_digest", "snapshot_origin",
-        "task_instruction", "context_files", "snapshot_claim_digest"
+        "task_instruction", "context_files", "snapshot_claim_digest",
+        "model_timeout_seconds"
     } or task_envelope.get("schema") != "agent00x-worker-input/v2":
+        raise ValueError
+    model_timeout_seconds = task_envelope["model_timeout_seconds"]
+    if (
+        isinstance(model_timeout_seconds, bool)
+        or not isinstance(model_timeout_seconds, (int, float))
+        or not 0 < model_timeout_seconds <= MAX_LOCAL_MODEL_TIMEOUT_SECONDS
+    ):
         raise ValueError
     task = WorkerInput(
         process_id=task_envelope["process_id"],
@@ -242,14 +257,28 @@ if network_status != "network-probes-blocked":
     status(network_status)
     raise SystemExit(42)
 status("network-probes-blocked")
-channel = StdioChatCompletionsChannel(sys.stdin.buffer, sys.stdout.buffer)
-worker = DeepSeekProposalWorker(channel=channel)
+channel = StdioChatCompletionsChannel(
+    sys.stdin.buffer,
+    sys.stdout.buffer,
+    maximum_timeout_seconds=model_timeout_seconds,
+)
+worker = DeepSeekProposalWorker(
+    channel=channel, timeout_seconds=model_timeout_seconds
+)
 status("ready")
 try:
     proposal = worker.propose(task)
 except Exception:
     status("worker-runtime-failed")
     raise SystemExit(43)
+if type(proposal) is WorkerTerminalOutcome:
+    write_frame(sys.stdout.buffer, {
+        "schema": "agent00x-worker-result/v2",
+        "outcome": proposal.outcome,
+        "changes": None,
+        "reason_code": proposal.reason_code,
+    }, 65536)
+    raise SystemExit(0)
 write_frame(sys.stdout.buffer, {
     "schema": "agent00x-worker-proposal/v1",
     "changes": proposal.changes,
@@ -354,7 +383,9 @@ def _stage_worker_schemas(source_directory: Path, staging_directory: Path) -> No
         raise ValueError("schema staging mismatch")
 
 
-def _worker_input_frame(task: WorkerInput) -> dict[str, object]:
+def _worker_input_frame(
+    task: WorkerInput, *, model_timeout_seconds: float = MAX_TIMEOUT_SECONDS
+) -> dict[str, object]:
     return {
         "schema": WORKER_INPUT_SCHEMA,
         "process_id": task.process_id,
@@ -370,6 +401,7 @@ def _worker_input_frame(task: WorkerInput) -> dict[str, object]:
             for path, content in task.context_files
         ],
         "snapshot_claim_digest": task.snapshot_claim_digest,
+        "model_timeout_seconds": model_timeout_seconds,
     }
 
 
@@ -388,7 +420,13 @@ class ContainerProposalWorker:
     container. The adapter is one-shot and suppresses all child diagnostics.
     """
 
-    def __init__(self, channel: object, *, docker_executable: str | None = None) -> None:
+    def __init__(
+        self,
+        channel: object,
+        *,
+        docker_executable: str | None = None,
+        model_timeout_seconds: float = MAX_TIMEOUT_SECONDS,
+    ) -> None:
         if not callable(getattr(channel, "create_chat_completion", None)):
             raise ExecutionError("execution worker: isolated worker unavailable")
         docker = docker_executable or shutil.which("docker")
@@ -396,10 +434,14 @@ class ContainerProposalWorker:
             type(docker) is not str
             or not Path(docker).is_absolute()
             or os.getuid() == 0
+            or isinstance(model_timeout_seconds, bool)
+            or not isinstance(model_timeout_seconds, (int, float))
+            or not 0 < model_timeout_seconds <= MAX_LOCAL_MODEL_TIMEOUT_SECONDS
         ):
             raise ExecutionError("execution worker: isolated worker unavailable")
         self._channel = channel
         self._docker = docker
+        self._model_timeout_seconds = float(model_timeout_seconds)
         self._used = False
         self._used_lock = threading.Lock()
 
@@ -472,14 +514,20 @@ class ContainerProposalWorker:
                 raise ExecutionError("execution worker: isolated worker unavailable") from None
             if process.stdin is None or process.stdout is None:
                 raise ExecutionError("execution worker: isolated worker unavailable")
-            _write_frame(process.stdin, _worker_input_frame(task), maximum=MAX_REQUEST_BYTES)
+            _write_frame(
+                process.stdin,
+                _worker_input_frame(
+                    task, model_timeout_seconds=self._model_timeout_seconds
+                ),
+                maximum=MAX_REQUEST_BYTES,
+            )
             for expected in WORKER_STARTUP_STATUSES:
                 self._expect_status(process, expected)
 
             request = _read_frame(
                 process.stdout,
                 maximum=MAX_REQUEST_BYTES,
-                deadline=time.monotonic() + MAX_TIMEOUT_SECONDS,
+                deadline=time.monotonic() + self._model_timeout_seconds,
             )
             payload = build_chat_completions_payload(task)
             if (
@@ -487,7 +535,7 @@ class ContainerProposalWorker:
                 or set(request) != {"schema", "timeout_seconds", "payload"}
                 or request.get("schema") != REQUEST_SCHEMA
                 or type(request.get("timeout_seconds")) not in (int, float)
-                or not 0 < request["timeout_seconds"] <= MAX_TIMEOUT_SECONDS
+                or not 0 < request["timeout_seconds"] <= self._model_timeout_seconds
                 or request.get("payload") != payload
             ):
                 raise ExecutionError("execution worker: isolated worker request invalid")
@@ -508,7 +556,7 @@ class ContainerProposalWorker:
             proposal_frame = _read_frame(
                 process.stdout,
                 maximum=MAX_RESPONSE_BYTES,
-                deadline=time.monotonic() + MAX_TIMEOUT_SECONDS,
+                deadline=time.monotonic() + self._model_timeout_seconds,
             )
             proposal = self._validated_proposal(proposal_frame, task)
             try:
@@ -661,7 +709,30 @@ class ContainerProposalWorker:
         except Exception:
             raise ExecutionError("execution worker: isolation contract failed") from None
 
-    def _validated_proposal(self, frame: object, task: WorkerInput) -> WorkerProposal:
+    def _validated_proposal(
+        self, frame: object, task: WorkerInput
+    ) -> WorkerProposal | WorkerTerminalOutcome:
+        if (
+            type(frame) is dict
+            and set(frame) == {"schema", "outcome", "changes", "reason_code"}
+            and frame.get("schema") == "agent00x-worker-result/v2"
+        ):
+            try:
+                output = json.dumps(
+                    frame,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                )
+                result = parse_model_result(
+                    ResponsesModelResult(status="completed", output_text=output),
+                    task.declared_change_paths,
+                )
+                if type(result) is not WorkerTerminalOutcome:
+                    raise ValueError
+                return result
+            except Exception:
+                raise ExecutionError("execution worker: proposal is invalid") from None
         if (
             type(frame) is not dict
             or set(frame) != {"schema", "changes"}

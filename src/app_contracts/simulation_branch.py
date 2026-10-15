@@ -24,13 +24,16 @@ from .validator import ContractValidationError, validate
 
 _RUN_ID = re.compile(r"^run-[a-z0-9-]{8,64}$")
 _BRANCH_ID = re.compile(r"^branch-[a-z0-9-]{8,64}$")
+_STEP_ID = re.compile(r"^step-[a-z0-9-]{8,64}$")
 _WORKSPACE_MANIFEST_REF = re.compile(r"artifact://sha256/([0-9a-f]{64})\Z")
 _WORKSPACE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _WORKSPACE_PATH_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _WORKSPACE_MANIFEST_BYTES = 256 * 1024
 _WORKSPACE_FILE_BYTES = 96 * 1024
+_WORKSPACE_FILE_BASE64_BYTES = 4 * ((_WORKSPACE_FILE_BYTES + 2) // 3)
 _WORKSPACE_TOTAL_BYTES = 128 * 1024
 _WORKSPACE_FILE_COUNT = 64
+_SIMULATION_PATCH_BYTES = 2 * 1024 * 1024
 _SENSITIVE_PATH_COMPONENT = re.compile(
     r"(?i)(?:^|[._-])(credentials?|secrets?|tokens?|private[-_]?key)(?:$|[._-])"
 )
@@ -100,6 +103,261 @@ class MaterializedSimulationWorkspace:
             ],
             "external_effects_replayed": False,
         }
+
+
+@dataclass(frozen=True)
+class SimulationStepResult:
+    """Content-addressed in-memory result of one declarative branch step."""
+
+    step_id: str
+    correction_id: str
+    correction_version: int
+    correction_digest: str
+    checkpoint_id: str
+    source_manifest_digest: str
+    step_digest: str
+    result_digest: str
+    changed_paths: tuple[str, ...]
+    files: tuple[tuple[str, bytes], ...]
+
+    def __repr__(self) -> str:
+        return (
+            "SimulationStepResult("
+            f"step_id={self.step_id!r}, "
+            f"correction_id={self.correction_id!r}, "
+            f"checkpoint_id={self.checkpoint_id!r}, "
+            f"result_digest={self.result_digest!r}, "
+            f"changed_paths={self.changed_paths!r}, contents='opaque')"
+        )
+
+    def evidence(self) -> dict[str, object]:
+        """Return bounded structural evidence without restored file contents."""
+
+        return {
+            "step_id": self.step_id,
+            "correction_id": self.correction_id,
+            "correction_version": self.correction_version,
+            "correction_digest": self.correction_digest,
+            "checkpoint_id": self.checkpoint_id,
+            "source_manifest_digest": self.source_manifest_digest,
+            "step_digest": self.step_digest,
+            "result_digest": self.result_digest,
+            "changed_paths": list(self.changed_paths),
+            "file_count": len(self.files),
+            "code_executed": False,
+            "external_effects_replayed": False,
+        }
+
+
+def _workspace_path_is_safe(path: object) -> bool:
+    path_parts = path.split("/") if type(path) is str else []
+    return bool(
+        path_parts
+        and len(path) <= 1024
+        and all(
+            _WORKSPACE_PATH_PART.fullmatch(part) is not None
+            and not part.endswith(".")
+            and _SENSITIVE_PATH_COMPONENT.search(part) is None
+            and part.casefold() not in _SENSITIVE_FILENAMES
+            and part.split(".", 1)[0].casefold()
+            not in _WINDOWS_RESERVED_BASENAMES
+            for part in path_parts
+        )
+    )
+
+
+def apply_simulation_step(
+    workspace: MaterializedSimulationWorkspace, correction: object, patch: object
+) -> SimulationStepResult:
+    """Apply one exact file replacement to a separate in-memory simulation.
+
+    This accepts only a versioned declarative record. It cannot execute code,
+    invoke a Worker/tool, access a filesystem, or dispatch an external effect.
+    """
+
+    if type(workspace) is not MaterializedSimulationWorkspace:
+        raise SimulationBranchError("simulation step workspace is invalid")
+    manifest_match = (
+        _WORKSPACE_MANIFEST_REF.fullmatch(workspace.manifest_ref)
+        if type(workspace.manifest_ref) is str
+        else None
+    )
+    if (
+        type(workspace.checkpoint_id) is not str
+        or re.fullmatch(r"checkpoint-[a-z0-9-]{8,64}", workspace.checkpoint_id)
+        is None
+        or manifest_match is None
+        or type(workspace.manifest_digest) is not str
+        or _WORKSPACE_DIGEST.fullmatch(workspace.manifest_digest) is None
+        or f"sha256:{manifest_match.group(1)}" != workspace.manifest_digest
+        or type(workspace.files) is not tuple
+        or not 1 <= len(workspace.files) <= _WORKSPACE_FILE_COUNT
+    ):
+        raise SimulationBranchError("simulation step workspace is invalid")
+
+    source_files: dict[str, bytes] = {}
+    seen_paths: set[str] = set()
+    total_source_bytes = 0
+    for entry in workspace.files:
+        if (
+            type(entry) is not tuple
+            or len(entry) != 2
+            or not _workspace_path_is_safe(entry[0])
+            or type(entry[1]) is not bytes
+            or len(entry[1]) > _WORKSPACE_FILE_BYTES
+            or entry[0].casefold() in seen_paths
+        ):
+            raise SimulationBranchError("simulation step workspace is invalid")
+        seen_paths.add(entry[0].casefold())
+        source_files[entry[0]] = entry[1]
+        total_source_bytes += len(entry[1])
+        if total_source_bytes > _WORKSPACE_TOTAL_BYTES:
+            raise SimulationBranchError("simulation step workspace is invalid")
+    if tuple(sorted(source_files.items(), key=lambda item: item[0])) != workspace.files:
+        raise SimulationBranchError("simulation step workspace is invalid")
+    try:
+        assert_no_credential_pattern_content(workspace.files)
+    except Exception:
+        raise SimulationBranchError("simulation step workspace is invalid") from None
+
+    try:
+        validate(correction, LEARNING_CORRECTION_SCHEMA)
+        if (
+            type(correction) is not dict
+            or correction["checkpoint_id"] != workspace.checkpoint_id
+            or correction["review_status"] == "rejected"
+        ):
+            raise ValueError
+        correction_digest = sha256_bytes(canonical_json(correction))
+    except Exception:
+        raise SimulationBranchError("simulation step correction is invalid") from None
+
+    if (
+        type(patch) is not dict
+        or set(patch)
+        != {
+            "schema",
+            "step_id",
+            "correction_id",
+            "correction_version",
+            "correction_digest",
+            "source_manifest_digest",
+            "operations",
+        }
+        or patch.get("schema") != "simulation-step-patch/v1"
+        or type(patch.get("step_id")) is not str
+        or _STEP_ID.fullmatch(patch["step_id"]) is None
+        or patch.get("correction_id") != correction["correction_id"]
+        or type(patch.get("correction_version")) is not int
+        or patch["correction_version"] != correction["version"]
+        or type(patch.get("correction_digest")) is not str
+        or patch["correction_digest"] != correction_digest
+        or patch.get("source_manifest_digest") != workspace.manifest_digest
+        or type(patch.get("operations")) is not list
+        or not 1 <= len(patch["operations"]) <= len(source_files)
+    ):
+        raise SimulationBranchError("simulation step patch is invalid")
+
+    try:
+        patch_bytes = canonical_json(patch)
+        if len(patch_bytes) > _SIMULATION_PATCH_BYTES:
+            raise ValueError
+        step_digest = sha256_bytes(patch_bytes)
+    except Exception:
+        raise SimulationBranchError("simulation step patch is invalid") from None
+
+    replacements: dict[str, bytes] = {}
+    seen_operations: set[str] = set()
+    operation_paths: list[str] = []
+    for operation in patch["operations"]:
+        if (
+            type(operation) is not dict
+            or set(operation)
+            != {
+                "path",
+                "expected_content_digest",
+                "replacement_base64",
+                "replacement_digest",
+            }
+        ):
+            raise SimulationBranchError("simulation step patch is invalid")
+        path = operation["path"]
+        if (
+            not _workspace_path_is_safe(path)
+            or path not in source_files
+            or path.casefold() in seen_operations
+            or type(operation["expected_content_digest"]) is not str
+            or _WORKSPACE_DIGEST.fullmatch(operation["expected_content_digest"])
+            is None
+            or type(operation["replacement_digest"]) is not str
+            or _WORKSPACE_DIGEST.fullmatch(operation["replacement_digest"]) is None
+            or type(operation["replacement_base64"]) is not str
+            or not operation["replacement_base64"].isascii()
+            or len(operation["replacement_base64"]) > _WORKSPACE_FILE_BASE64_BYTES
+        ):
+            raise SimulationBranchError("simulation step patch is invalid")
+        encoded = operation["replacement_base64"]
+        try:
+            replacement = base64.b64decode(encoded.encode("ascii"), validate=True)
+        except Exception:
+            raise SimulationBranchError("simulation step patch is invalid") from None
+        old_content = source_files[path]
+        if (
+            base64.b64encode(replacement).decode("ascii") != encoded
+            or len(replacement) > _WORKSPACE_FILE_BYTES
+            or sha256_bytes(old_content) != operation["expected_content_digest"]
+            or sha256_bytes(replacement) != operation["replacement_digest"]
+            or replacement == old_content
+        ):
+            raise SimulationBranchError("simulation step preimage or replacement is invalid")
+        replacements[path] = replacement
+        seen_operations.add(path.casefold())
+        operation_paths.append(path)
+
+    if operation_paths != sorted(operation_paths):
+        raise SimulationBranchError("simulation step patch is invalid")
+    result_files = tuple(
+        (path, replacements.get(path, content)) for path, content in workspace.files
+    )
+    if sum(len(content) for _, content in result_files) > _WORKSPACE_TOTAL_BYTES:
+        raise SimulationBranchError("simulation step replacement exceeds size limit")
+    try:
+        assert_no_credential_pattern_content(
+            tuple((path, replacements[path]) for path in operation_paths)
+        )
+    except Exception:
+        raise SimulationBranchError("simulation step replacement is invalid") from None
+
+    result_record = {
+        "schema": "simulation-workspace-result/v1",
+        "checkpoint_id": workspace.checkpoint_id,
+        "correction_id": correction["correction_id"],
+        "correction_version": correction["version"],
+        "correction_digest": correction_digest,
+        "source_manifest_digest": workspace.manifest_digest,
+        "step_digest": step_digest,
+        "files": [
+            {
+                "path": path,
+                "content_digest": sha256_bytes(content),
+                "content_bytes": len(content),
+            }
+            for path, content in result_files
+        ],
+    }
+    result_digest = sha256_bytes(canonical_json(result_record))
+    return SimulationStepResult(
+        step_id=patch["step_id"],
+        correction_id=correction["correction_id"],
+        correction_version=correction["version"],
+        correction_digest=correction_digest,
+        checkpoint_id=workspace.checkpoint_id,
+        source_manifest_digest=workspace.manifest_digest,
+        step_digest=step_digest,
+        result_digest=result_digest,
+        changed_paths=tuple(operation_paths),
+        files=result_files,
+    )
 
 
 def materialize_simulation_workspace(

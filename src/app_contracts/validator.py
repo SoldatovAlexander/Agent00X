@@ -20,7 +20,7 @@ _ANNOTATIONS = {"$schema", "$id", "title", "description"}
 _SUPPORTED_TYPES = {"object", "array", "string", "integer", "boolean"}
 _SUPPORTED = _ANNOTATIONS | {
     "type", "additionalProperties", "required", "properties", "const", "enum",
-    "pattern", "format", "minLength", "maxLength", "minimum", "minItems", "items",
+    "pattern", "format", "minLength", "maxLength", "minimum", "maximum", "minItems", "items",
     "minProperties", "maxProperties", "propertyNames",
 }
 
@@ -76,7 +76,7 @@ def validate_schema(schema: Any, path: str = "$") -> None:
             f"invalid schema declaration at {path}: unsupported type {schema['type']!r}"
         )
     for keyword in (
-        "minimum", "minLength", "maxLength", "minItems",
+        "minimum", "maximum", "minLength", "maxLength", "minItems",
         "minProperties", "maxProperties",
     ):
         if keyword in schema:
@@ -98,6 +98,14 @@ def validate_schema(schema: Any, path: str = "$") -> None:
     ):
         raise RuntimeError(
             f"invalid schema declaration at {path}: property bounds are inconsistent"
+        )
+    if (
+        "minimum" in schema
+        and "maximum" in schema
+        and schema["minimum"] > schema["maximum"]
+    ):
+        raise RuntimeError(
+            f"invalid schema declaration at {path}: numeric bounds are inconsistent"
         )
     if "items" in schema:
         validate_schema(schema["items"], f"{path}[]")
@@ -187,5 +195,10 @@ def _validate(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
     if "minimum" in schema:
         if isinstance(instance, bool):
             raise ContractValidationError(f"{path}: expected number")
-        if isinstance(instance, int) and instance < schema["minimum"]:
+        if isinstance(instance, (int, float)) and instance < schema["minimum"]:
             raise ContractValidationError(f"{path}: below minimum")
+    if "maximum" in schema:
+        if isinstance(instance, bool):
+            raise ContractValidationError(f"{path}: expected number")
+        if isinstance(instance, (int, float)) and instance > schema["maximum"]:
+            raise ContractValidationError(f"{path}: above maximum")

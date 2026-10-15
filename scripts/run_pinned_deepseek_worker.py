@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Run the one fixed pinned BrainBooster Worker-to-stage experiment.
+"""Run one explicitly authorized pinned BrainBooster Worker-to-stage profile.
 
-This operator entrypoint is intentionally not invoked by tests or setup. A
-successful live run requires a separate fresh user authorization for EXP-634,
-its exact prompt confirmation, and one temporary credential supplied through
-hidden terminal input, process environment, or the explicitly selected native
-credential manager. The native adapter does not provision or migrate credentials.
+DeepSeek profiles require their own fresh confirmation and temporary
+credential. EXP-842 selects one credential-free local Ollama call instead.
+This operator entrypoint is intentionally not invoked by tests or setup.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -30,11 +31,17 @@ from app_contracts.brainbooster_target_profile import (  # noqa: E402
     PINNED_OWNER,
     PINNED_REPOSITORY,
     TARGET_RUNTIME_IMAGE_ID,
-    VERIFIER_RUNTIME_CODE_DIGEST,
-    VERIFIER_RUNTIME_IMAGE_ID,
     PINNED_COMMIT,
     PINNED_TREE,
-    PINNED_CONTENT_DIGEST,
+    PINNED_SNAPSHOT_TREE_DIGEST,
+)
+from app_contracts.verifier_image_pin import (  # noqa: E402
+    VERIFIER_RUNTIME_CODE_DIGEST,
+    VERIFIER_RUNTIME_IMAGE_ID,
+)
+from app_contracts.container_proposal_worker import ContainerProposalWorker  # noqa: E402
+from app_contracts.authority_key_set import (  # noqa: E402
+    load_control_plane_authority_key_set,
 )
 from app_contracts.credential_source import (  # noqa: E402
     NativeKeyringCredentialSource,
@@ -42,18 +49,48 @@ from app_contracts.credential_source import (  # noqa: E402
     TerminalPromptCredentialSource,
 )
 from app_contracts.deepseek_http_channel import DeepSeekHTTPChannel  # noqa: E402
-from app_contracts.deepseek_worker import DeepSeekProposalWorker  # noqa: E402
+from app_contracts.deepseek_worker import (  # noqa: E402
+    MAX_LOCAL_MODEL_TIMEOUT_SECONDS,
+    DeepSeekProposalWorker,
+)
+from app_contracts.local_ollama_channel import (  # noqa: E402
+    LOCAL_OLLAMA_HOST,
+    LOCAL_OLLAMA_MODEL,
+    LOCAL_OLLAMA_PATH,
+    LOCAL_OLLAMA_PORT,
+    LocalOllamaChatCompletionsChannel,
+)
 from app_contracts.github_http_transport import (  # noqa: E402
+    GITHUB_READINESS_FAILURE_CODES,
     GitHubAnonymousSnapshotTransport,
+    GitHubHTTPTransportError,
 )
 from app_contracts.observation_store import SQLiteObservationStore  # noqa: E402
-from app_contracts.observer_runtime import JournaledProposalWorker  # noqa: E402
+from app_contracts.observer_runtime import (  # noqa: E402
+    JournaledModelChannel,
+    JournaledProposalWorker,
+)
 from app_contracts.verifier_container import (  # noqa: E402
     VerifierContainerConfig,
 )
 from app_contracts.worker_cli import (  # noqa: E402
+    PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+    RemoteExecutionPermitError,
     issue_remote_execution_permit,
     run_remote_snapshot_with_runtime,
+)
+from app_contracts.signed_verifier_client import (  # noqa: E402
+    SignedVerifierClient,
+    SignedVerifierHTTPSTransport,
+)
+from app_contracts.signed_verifier_service import (  # noqa: E402
+    BRAINBOOSTER_VERIFIER_PROFILE,
+)
+from app_contracts.verifier_host_trust_decision import (  # noqa: E402
+    MAX_DECISION_BYTES,
+)
+from app_contracts.verifier_trust_enrollment import (  # noqa: E402
+    MAX_ENROLLMENT_BYTES,
 )
 
 CONFIRMATION_PHRASE = "RUN EXP-634 ONCE"
@@ -66,21 +103,235 @@ AUTHORIZATION_PROFILES = {
         "process-exp-726-live-001",
         "task-exp-726-live-001",
     ),
+    "EXP-842": (
+        "RUN EXP-842 ONCE",
+        "process-exp-842-local-001",
+        "task-exp-842-local-001",
+    ),
+    "EXP-843": (
+        "RUN EXP-843 ONCE",
+        "process-exp-843-local-001",
+        "task-exp-843-local-001",
+    ),
+    "EXP-844": (
+        "RUN EXP-844 ONCE",
+        "process-exp-844-local-001",
+        "task-exp-844-local-001",
+    ),
+    "EXP-846": (
+        "RUN EXP-846 ONCE",
+        "process-exp-846-local-001",
+        "task-exp-846-local-001",
+    ),
+    "EXP-848": (
+        "RUN EXP-848 ONCE",
+        "process-exp-848-local-001",
+        "task-exp-848-local-001",
+    ),
+    "EXP-849": (
+        "RUN EXP-849 ONCE",
+        "process-exp-849-local-001",
+        "task-exp-849-local-001",
+    ),
+    "EXP-851": (
+        "RUN EXP-851 ONCE",
+        "process-exp-851-local-001",
+        "task-exp-851-local-001",
+    ),
+    "EXP-964": (
+        "RUN EXP-964 ONCE",
+        "process-exp-964-local-001",
+        "task-exp-964-local-001",
+    ),
+    "EXP-1200": (
+        "RUN EXP-1200 ONCE",
+        "process-exp-1200-local-001",
+        "task-exp-1200-local-001",
+    ),
+    "EXP-1209": (
+        "RUN EXP-1209 ONCE",
+        "process-exp-1209-local-001",
+        "task-exp-1209-local-001",
+    ),
+    "EXP-1218": (
+        "RUN EXP-1218 ONCE",
+        "process-exp-1218-local-001",
+        "task-exp-1218-local-001",
+    ),
+    "EXP-1230": (
+        "RUN EXP-1230 ONCE",
+        "process-exp-1230-local-001",
+        "task-exp-1230-local-001",
+    ),
+    "EXP-1233": (
+        "RUN EXP-1233 ONCE",
+        "process-exp-1233-local-001",
+        "task-exp-1233-local-001",
+    ),
+    "EXP-1238": (
+        "RUN EXP-1238 ONCE",
+        "process-exp-1238-local-001",
+        "task-exp-1238-local-001",
+    ),
+    "EXP-1246": (
+        "RUN EXP-1246 ONCE",
+        "process-exp-1246-local-001",
+        "task-exp-1246-local-001",
+    ),
+    "EXP-1250": (
+        "RUN EXP-1250 ONCE",
+        "process-exp-1250-local-001",
+        "task-exp-1250-local-001",
+    ),
+    "EXP-1253": (
+        "RUN EXP-1253 ONCE",
+        "process-exp-1253-local-001",
+        "task-exp-1253-local-001",
+    ),
+    "EXP-1255": (
+        "RUN EXP-1255 ONCE",
+        "process-exp-1255-local-001",
+        "task-exp-1255-local-001",
+    ),
+    "EXP-1257": (
+        "RUN EXP-1257 ONCE",
+        "process-exp-1257-local-001",
+        "task-exp-1257-local-001",
+    ),
+    "EXP-1266": (
+        "RUN EXP-1266 ONCE",
+        "process-exp-1266-local-001",
+        "task-exp-1266-local-001",
+    ),
+    "EXP-1268": (
+        "RUN EXP-1268 ONCE",
+        "process-exp-1268-local-001",
+        "task-exp-1268-local-001",
+    ),
+    "EXP-1289": (
+        "RUN EXP-1289 ONCE",
+        "process-exp-1289-local-001",
+        "task-exp-1289-local-001",
+    ),
+    "EXP-1293": (
+        "RUN EXP-1293 ONCE",
+        "process-exp-1293-local-001",
+        "task-exp-1293-local-001",
+    ),
+    "EXP-1299": (
+        "RUN EXP-1299 ONCE",
+        "process-exp-1299-local-001",
+        "task-exp-1299-local-001",
+    ),
+    "EXP-1303": (
+        "RUN EXP-1303 ONCE",
+        "process-exp-1303-local-001",
+        "task-exp-1303-local-001",
+    ),
+    "EXP-1310": (
+        "RUN EXP-1310 ONCE",
+        "process-exp-1310-local-001",
+        "task-exp-1310-local-001",
+    ),
+    "EXP-1312": (
+        "RUN EXP-1312 ONCE",
+        "process-exp-1312-local-001",
+        "task-exp-1312-local-001",
+    ),
 }
 AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-634": "github_rest_api_claim",
     "EXP-726": "github_rest_api_claim",
+    "EXP-842": "github_rest_api_claim",
+    "EXP-843": "github_rest_api_claim",
+    "EXP-844": "github_rest_api_claim",
+    "EXP-846": "github_rest_api_claim",
+    "EXP-848": "github_rest_api_claim",
+    "EXP-849": "github_rest_api_claim",
+    "EXP-851": "github_rest_api_claim",
+    "EXP-964": "github_rest_api_claim",
+    "EXP-1200": "github_rest_api_claim",
+    "EXP-1209": "github_rest_api_claim",
+    "EXP-1218": "github_rest_api_claim",
+    "EXP-1230": "github_rest_api_claim",
+    "EXP-1233": "github_rest_api_claim",
+    "EXP-1238": "github_rest_api_claim",
+    "EXP-1246": "github_rest_api_claim",
+    "EXP-1250": "github_rest_api_claim",
+    "EXP-1253": "github_rest_api_claim",
+    "EXP-1255": "github_rest_api_claim",
+    "EXP-1257": "github_rest_api_claim",
+    "EXP-1266": "github_rest_api_claim",
+    "EXP-1268": "github_rest_api_claim",
+    "EXP-1289": "github_rest_api_claim",
+    "EXP-1293": "github_rest_api_claim",
+    "EXP-1299": "github_rest_api_claim",
+    "EXP-1303": "github_rest_api_claim",
+    "EXP-1310": "github_rest_api_claim",
+    "EXP-1312": "github_rest_api_claim",
+}
+AUTHORIZATION_MODEL_BACKENDS = {
+    "EXP-634": "deepseek",
+    "EXP-726": "deepseek",
+    "EXP-842": "local-ollama",
+    "EXP-843": "local-ollama",
+    "EXP-844": "local-ollama",
+    "EXP-846": "local-ollama",
+    "EXP-848": "local-ollama",
+    "EXP-849": "local-ollama",
+    "EXP-851": "local-ollama",
+    "EXP-964": "local-ollama",
+    "EXP-1200": "local-ollama",
+    "EXP-1209": "local-ollama",
+    "EXP-1218": "local-ollama",
+    "EXP-1230": "local-ollama",
+    "EXP-1233": "local-ollama",
+    "EXP-1238": "local-ollama",
+    "EXP-1246": "local-ollama",
+    "EXP-1250": "local-ollama",
+    "EXP-1253": "local-ollama",
+    "EXP-1255": "local-ollama",
+    "EXP-1257": "local-ollama",
+    "EXP-1266": "local-ollama",
+    "EXP-1268": "local-ollama",
+    "EXP-1289": "local-ollama",
+    "EXP-1293": "local-ollama",
+    "EXP-1299": "local-ollama",
+    "EXP-1303": "local-ollama",
+    "EXP-1310": "local-ollama",
+    "EXP-1312": "local-ollama",
 }
 TASK_INSTRUCTION = (
-    "In backend/routes.py, for /save-session validate each of level, correct, "
-    "wrong, total, and time_ms before any database write. Reject booleans, "
-    "malformed, non-finite, fractional, and integer values outside the signed "
-    "64-bit range [-2^63, 2^63-1] with HTTP 422 and zero rows written. Preserve "
-    "valid behavior (HTTP 200 and exactly one expected row). Change only this "
-    "route file; do not add unrelated changes."
+    "In backend/routes.py change only /save-session. Preserve its existing "
+    "defaults and valid insert/commit behavior. Before any database/cursor "
+    "access, validate level, correct, wrong, total, and time_ms. Implement and "
+    "use this helper in exactly this order: if type(value) is not int, raise "
+    "HTTPException(status_code=422); if value < -(2**63) or value > 2**63 - 1, "
+    "raise HTTPException(status_code=422); otherwise return value unchanged. "
+    "Collect all five validated values before the first database call. Never "
+    "coerce with int(), use isinstance(value, int), or insert/commit early. "
+    "Acceptance oracle: every boolean, float (including non-finite), string, "
+    "malformed value, and signed-64 overflow case for each field returns HTTP "
+    "422 and writes zero rows; the valid fixture returns HTTP 200 and exactly "
+    "one expected row. Latest diagnostic: target-test-malformed-status-level-bool; "
+    "JSON true for level must return HTTP 422. Use FastAPI HTTPException. "
+    "Do not change other routes, files, or acceptance criteria."
 )
 DECLARED_CHANGE_PATHS = ("backend/routes.py",)
 ALLOWED_COMMANDS = frozenset({"python3"})
+_SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_VERIFIER_TRUST_ARTIFACT_ARGS = (
+    "verifier_authority_key_set",
+    "verifier_authority_key_set_sha256",
+    "verifier_enrollment",
+    "verifier_enrollment_sha256",
+    "verifier_host_decision",
+    "verifier_host_decision_sha256",
+    "verifier_ca_bundle",
+    "verifier_ca_bundle_sha256",
+    "expected_worker_host_id",
+    "expected_verifier_host_id",
+)
 
 
 def _validate_new_stage_path(value: str | Path) -> Path:
@@ -127,19 +378,129 @@ def _preflight_docker_images(
     *,
     run: Callable[..., object] = subprocess.run,
 ) -> None:
-    for image in (TARGET_RUNTIME_IMAGE_ID, VERIFIER_RUNTIME_IMAGE_ID):
-        try:
-            result = run(
-                [docker_executable, "image", "inspect", "--format={{.Id}}", image],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if getattr(result, "stdout", "").strip() != image:
-                raise ValueError
-        except Exception:
-            raise ValueError("pinned Worker CLI: pinned Docker image unavailable") from None
+    _preflight_target_docker_image(docker_executable, run=run)
+    _preflight_pinned_docker_image(
+        docker_executable, VERIFIER_RUNTIME_IMAGE_ID, run=run
+    )
+
+
+def _preflight_target_docker_image(
+    docker_executable: str,
+    *,
+    run: Callable[..., object] = subprocess.run,
+) -> None:
+    _preflight_pinned_docker_image(docker_executable, TARGET_RUNTIME_IMAGE_ID, run=run)
+
+
+def _preflight_pinned_docker_image(
+    docker_executable: str,
+    image: str,
+    *,
+    run: Callable[..., object],
+) -> None:
+    try:
+        result = run(
+            [docker_executable, "image", "inspect", "--format={{.Id}}", image],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if getattr(result, "stdout", "").strip() != image:
+            raise ValueError
+    except Exception:
+        raise ValueError("pinned Worker CLI: pinned Docker image unavailable") from None
+
+
+def _read_pinned_public_record(
+    path_value: object,
+    expected_digest: object,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, str]:
+    try:
+        if (
+            type(path_value) is not str
+            or not Path(path_value).is_absolute()
+            or type(expected_digest) is not str
+            or _SHA256_DIGEST.fullmatch(expected_digest) is None
+        ):
+            raise ValueError
+        path = Path(path_value)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError
+        with path.open("rb") as stream:
+            raw = stream.read(max_bytes + 1)
+        if not raw or len(raw) > max_bytes:
+            raise ValueError
+        actual_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        if not hmac.compare_digest(actual_digest, expected_digest):
+            raise ValueError
+        return raw, actual_digest
+    except Exception:
+        raise ValueError("pinned Worker CLI: verifier trust material unavailable") from None
+
+
+def _has_any_verifier_trust_artifact_args(args: argparse.Namespace) -> bool:
+    return any(getattr(args, name, None) is not None for name in _VERIFIER_TRUST_ARTIFACT_ARGS)
+
+
+def _load_signed_verifier_client(args: argparse.Namespace):
+    """Load only explicitly pinned public trust artifacts; never read a secret."""
+
+    try:
+        if any(getattr(args, name, None) is None for name in _VERIFIER_TRUST_ARTIFACT_ARGS):
+            raise ValueError
+        authority_path = Path(args.verifier_authority_key_set)
+        if not authority_path.is_absolute() or authority_path.is_symlink():
+            raise ValueError
+        authority_keys, authority_digest = load_control_plane_authority_key_set(
+            authority_path,
+            expected_digest=args.verifier_authority_key_set_sha256,
+        )
+        enrollment_bytes, enrollment_digest = _read_pinned_public_record(
+            args.verifier_enrollment,
+            args.verifier_enrollment_sha256,
+            max_bytes=MAX_ENROLLMENT_BYTES,
+        )
+        decision_bytes, decision_digest = _read_pinned_public_record(
+            args.verifier_host_decision,
+            args.verifier_host_decision_sha256,
+            max_bytes=MAX_DECISION_BYTES,
+        )
+        _ca_bytes, ca_digest = _read_pinned_public_record(
+            args.verifier_ca_bundle,
+            args.verifier_ca_bundle_sha256,
+            max_bytes=SignedVerifierHTTPSTransport.MAX_CUSTOM_CA_BUNDLE_BYTES,
+        )
+        transport = SignedVerifierHTTPSTransport(
+            PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+            custom_ca_bundle_path=args.verifier_ca_bundle,
+            custom_ca_bundle_sha256=ca_digest.removeprefix("sha256:"),
+            connect_address=getattr(args, "verifier_connect_address", None),
+            connect_port=getattr(args, "verifier_connect_port", None),
+        )
+        transport.validate_configuration()
+        client = SignedVerifierClient.from_trust_enrollment(
+            BRAINBOOSTER_VERIFIER_PROFILE,
+            transport,
+            enrollment_bytes,
+            trusted_authority_keys=authority_keys,
+            expected_endpoint_url=PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+            expected_worker_host_id=args.expected_worker_host_id,
+            expected_verifier_host_id=args.expected_verifier_host_id,
+            host_trust_decision_bytes=decision_bytes,
+        )
+        if client.has_current_independent_host_trust() is not True:
+            raise ValueError
+        return client, args.expected_worker_host_id, args.expected_verifier_host_id, {
+            "authority_key_set_sha256": authority_digest,
+            "enrollment_sha256": enrollment_digest,
+            "host_decision_sha256": decision_digest,
+            "ca_bundle_sha256": ca_digest,
+        }
+    except Exception:
+        raise ValueError("pinned Worker CLI: verifier trust material unavailable") from None
 
 
 def main(
@@ -174,6 +535,25 @@ def main(
         else native_keyring_source_factory
     )
 
+    def readiness_failure_code(
+        exc: Exception, *, observer_cursor_delta: int | None = None
+    ) -> str:
+        if observer_cursor_delta == 0:
+            return "observer-readiness-pre-dispatch-failed"
+        if observer_cursor_delta == 1:
+            return "observer-readiness-outcome-unknown"
+        try:
+            candidate = exc.failure_code
+        except Exception:
+            candidate = None
+        if (
+            isinstance(exc, GitHubHTTPTransportError)
+            and type(candidate) is str
+            and candidate in GITHUB_READINESS_FAILURE_CODES
+        ):
+            return f"github-readiness-{candidate}"
+        return "github-readiness-fetch-failed"
+
     parser = argparse.ArgumentParser(
         description=(
             "Run the fixed pinned BrainBooster Worker pipeline once and persist "
@@ -187,11 +567,16 @@ def main(
     )
     parser.add_argument(
         "--credential-source",
-        choices=("hidden-terminal", "process-environment", "native-keyring"),
+        choices=(
+            "hidden-terminal",
+            "process-environment",
+            "native-keyring",
+            "not-applicable",
+        ),
         default="hidden-terminal",
         help=(
-            "use hidden input, an injected AI_PROCESS_API variable, or the "
-            "current OS native credential manager"
+            "use hidden input, an injected AI_PROCESS_API variable, the current "
+            "OS native credential manager, or not-applicable for local Ollama"
         ),
     )
     parser.add_argument(
@@ -200,6 +585,52 @@ def main(
         default="EXP-634",
         help="select one fixed, predeclared task identity and confirmation phrase",
     )
+    parser.add_argument(
+        "--model-backend",
+        choices=("deepseek", "local-ollama"),
+        default="deepseek",
+        help="use the authorized DeepSeek API or the fixed credential-free local Ollama model",
+    )
+    parser.add_argument(
+        "--verifier-backend",
+        choices=("pinned-docker", "trusted-https"),
+        default="pinned-docker",
+        help="use the pinned local Docker verifier or a caller-trusted HTTPS verifier",
+    )
+    parser.add_argument(
+        "--worker-backend",
+        choices=("restricted-container", "host-process"),
+        default="restricted-container",
+        help=(
+            "run the proposal Worker in the pinned network-none container (default) "
+            "or explicitly select the legacy host-process path"
+        ),
+    )
+    parser.add_argument("--verifier-authority-key-set")
+    parser.add_argument("--verifier-authority-key-set-sha256")
+    parser.add_argument("--verifier-enrollment")
+    parser.add_argument("--verifier-enrollment-sha256")
+    parser.add_argument("--verifier-host-decision")
+    parser.add_argument("--verifier-host-decision-sha256")
+    parser.add_argument("--verifier-ca-bundle")
+    parser.add_argument("--verifier-ca-bundle-sha256")
+    parser.add_argument(
+        "--verifier-connect-address",
+        help=(
+            "optional IP-literal TCP destination for trusted HTTPS; TLS still "
+            "authenticates the pinned verifier hostname"
+        ),
+    )
+    parser.add_argument(
+        "--verifier-connect-port",
+        type=int,
+        help=(
+            "optional unprivileged TCP destination port for trusted HTTPS; "
+            "requires --verifier-connect-address and does not change TLS identity"
+        ),
+    )
+    parser.add_argument("--expected-worker-host-id")
+    parser.add_argument("--expected-verifier-host-id")
     parser.add_argument(
         "--observation-database",
         help="optional new absolute SQLite journal for bounded Worker-call evidence",
@@ -210,6 +641,60 @@ def main(
         help="report only whether AI_PROCESS_API is present; do not run the worker",
     )
     args = parser.parse_args(argv)
+    local_model = args.model_backend == "local-ollama"
+    model_timeout_seconds = (
+        MAX_LOCAL_MODEL_TIMEOUT_SECONDS if local_model else 30.0
+    )
+    authorization_card_id = args.authorization_card_id
+    if (
+        args.model_backend != AUTHORIZATION_MODEL_BACKENDS[authorization_card_id]
+        or (
+            local_model
+            and (
+                args.worker_backend != "restricted-container"
+                or args.credential_source != "not-applicable"
+            )
+        )
+        or (not local_model and args.credential_source == "not-applicable")
+    ):
+        print(
+            '{"status":"stopped","reason":"model-authorization-mismatch",'
+            '"external_model_attempts":0}',
+            file=output,
+        )
+        return 2
+    if local_model and args.check_credential_source:
+        print(
+            '{"status":"unavailable","credential_source":"not-applicable",'
+            '"value_read":false,"external_model_attempts":0}',
+            file=output,
+        )
+        return 2
+    verifier_client = None
+    expected_worker_host_id = None
+    expected_verifier_host_id = None
+    verifier_trust_digests = None
+    try:
+        if args.verifier_backend == "trusted-https":
+            (
+                verifier_client,
+                expected_worker_host_id,
+                expected_verifier_host_id,
+                verifier_trust_digests,
+            ) = _load_signed_verifier_client(args)
+        elif (
+            _has_any_verifier_trust_artifact_args(args)
+            or args.verifier_connect_address is not None
+            or args.verifier_connect_port is not None
+        ):
+            raise ValueError
+    except Exception:
+        print(
+            '{"status":"stopped","reason":"verifier-trust-material-unavailable",'
+            '"provider_attempts":0}',
+            file=output,
+        )
+        return 2
     authorization_card_id = args.authorization_card_id
     try:
         snapshot_evidence_origin = AUTHORIZATION_SNAPSHOT_ORIGINS[
@@ -292,30 +777,104 @@ def main(
         docker_executable = find_docker("docker")
         if type(docker_executable) is not str or not docker_executable:
             raise ValueError("pinned Worker CLI: Docker is unavailable")
-        inspect_images(docker_executable)
+        if args.verifier_backend == "pinned-docker":
+            inspect_images(docker_executable)
+        else:
+            _preflight_target_docker_image(docker_executable)
     except ValueError as exc:
         print(str(exc), file=error_output)
+        return 2
+
+    native_keyring_source = None
+    journaled_model_channel = None
+    if local_model:
+        credential_source = None
+        model_channel = LocalOllamaChatCompletionsChannel()
+    else:
+        if args.credential_source == "hidden-terminal":
+            credential_source = TerminalPromptCredentialSource()
+        elif args.credential_source == "process-environment":
+            credential_source = ProcessEnvironmentCredentialSource(
+                credential_environment, "AI_PROCESS_API"
+            )
+        else:
+            native_keyring_source = keyring_source_factory()
+            credential_source = native_keyring_source
+        model_channel = DeepSeekHTTPChannel(credential_source)
+    if observation_path is not None:
+        journaled_model_channel = JournaledModelChannel(model_channel)
+        model_channel = journaled_model_channel
+    try:
+        if args.worker_backend == "restricted-container":
+            proposal_worker = (
+                ContainerProposalWorker(
+                    model_channel,
+                    docker_executable=docker_executable,
+                    model_timeout_seconds=model_timeout_seconds,
+                )
+                if local_model
+                else ContainerProposalWorker(
+                    model_channel, docker_executable=docker_executable
+                )
+            )
+        else:
+            proposal_worker = (
+                DeepSeekProposalWorker(
+                    channel=model_channel, timeout_seconds=model_timeout_seconds
+                )
+                if local_model
+                else DeepSeekProposalWorker(channel=model_channel)
+            )
+    except Exception:
+        print(
+            '{"status":"stopped","reason":"worker-runtime-unavailable",'
+            '"provider_attempts":0}',
+            file=output,
+        )
         return 2
 
     print(
         json.dumps(
             {
-                "operation": "one_deepseek_worker_call",
+                "operation": (
+                    "one_local_worker_call" if local_model else "one_deepseek_worker_call"
+                ),
                 "authorization_card_id": authorization_card_id,
                 "process_id": process_id,
                 "task_id": task_id,
                 "repository": f"{PINNED_OWNER}/{PINNED_REPOSITORY}",
                 "commit": PINNED_COMMIT,
                 "tree": PINNED_TREE,
-                "content_digest": PINNED_CONTENT_DIGEST,
+                "content_digest": PINNED_SNAPSHOT_TREE_DIGEST,
                 "snapshot_source": snapshot_evidence_origin,
+                "verifier_backend": args.verifier_backend,
+                "worker_backend": args.worker_backend,
+                **(
+                    {
+                        "verifier_endpoint": PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+                        "verifier_connect_address": verifier_client.connect_address,
+                        "verifier_connect_port": verifier_client.connect_port,
+                        "verifier_trust_digests": verifier_trust_digests,
+                    }
+                    if verifier_client is not None
+                    else {}
+                ),
                 "change_path": DECLARED_CHANGE_PATHS[0],
-                "model": "deepseek-flash",
-                "endpoint": "https://api.deepseek.com/chat/completions",
-                "max_provider_attempts": 1,
+                "model_backend": args.model_backend,
+                "model": LOCAL_OLLAMA_MODEL if local_model else "deepseek-flash",
+                "model_timeout_seconds": model_timeout_seconds,
+                "endpoint": (
+                    f"http://{LOCAL_OLLAMA_HOST}:{LOCAL_OLLAMA_PORT}{LOCAL_OLLAMA_PATH}"
+                    if local_model
+                    else "https://api.deepseek.com/chat/completions"
+                ),
+                "max_provider_attempts": 0 if local_model else 1,
+                "external_model_attempts": 0,
                 "account_level_spend_cap": False,
                 "credential_input": (
-                    {
+                    "none"
+                    if local_model
+                    else {
                         "hidden-terminal": "hidden_terminal_prompt",
                         "process-environment": "process_environment:AI_PROCESS_API",
                         "native-keyring": "native_keyring:Agent00X/AI_PROCESS_API",
@@ -358,10 +917,8 @@ def main(
             )
             return 2
 
-    native_keyring_source = None
-    if args.credential_source == "native-keyring":
+    if native_keyring_source is not None:
         try:
-            native_keyring_source = keyring_source_factory()
             manager_available = native_keyring_source.manager_available()
         except Exception:
             manager_available = False
@@ -373,26 +930,19 @@ def main(
             )
             return 2
 
-    if args.credential_source == "hidden-terminal":
-        credential_source = TerminalPromptCredentialSource()
-    elif args.credential_source == "process-environment":
-        credential_source = ProcessEnvironmentCredentialSource(
-            credential_environment, "AI_PROCESS_API"
-        )
-    else:
-        credential_source = native_keyring_source
-
     observation_store = None
     execution_worker = None
     if observation_path is not None:
         try:
             observation_store = SQLiteObservationStore(observation_path)
             execution_worker = JournaledProposalWorker(
-                DeepSeekProposalWorker(channel=DeepSeekHTTPChannel(credential_source)),
+                proposal_worker,
                 observation_store,
                 process_id=process_id,
                 task_id=task_id,
             )
+            if journaled_model_channel is not None:
+                journaled_model_channel.bind(execution_worker)
         except Exception:
             if observation_store is not None:
                 observation_store.close()
@@ -403,46 +953,109 @@ def main(
             )
             return 2
 
+    def report_readiness_failure(payload):
+        if execution_worker is not None:
+            try:
+                payload["observer"] = execution_worker.observer_reference()
+            except Exception:
+                pass
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")), file=error_output)
+
     try:
-        transport = transport_factory()
+        try:
+            transport = transport_factory()
+        except Exception as exc:
+            report_readiness_failure(
+                {
+                    "status": "failed",
+                    "failure_code": "github-readiness-transport-init-failed",
+                }
+            )
+            return 2
 
         def fetch_readiness():
             return transport.read_rate_limit()
 
-        if execution_worker is None:
-            readiness = fetch_readiness()
-            permit = issue_remote_execution_permit(
-                card_id=authorization_card_id,
-                process_id=process_id,
-                task_id=task_id,
-                readiness=readiness,
-                provider_call_approved=True,
-                snapshot_evidence_origin=snapshot_evidence_origin,
+        readiness_cursor_before = None
+        if execution_worker is not None:
+            try:
+                candidate_cursor = execution_worker.observer_reference().get(
+                    "as_of_cursor"
+                )
+                if type(candidate_cursor) is int and candidate_cursor >= 0:
+                    readiness_cursor_before = candidate_cursor
+            except Exception:
+                pass
+        try:
+            if execution_worker is None:
+                readiness = fetch_readiness()
+            else:
+                readiness = execution_worker.run_controlled_step(
+                    "GitHubReadiness.fetch",
+                    fetch_readiness,
+                    process_id=process_id,
+                )
+        except Exception as exc:
+            cursor_delta = None
+            if execution_worker is not None and readiness_cursor_before is not None:
+                try:
+                    candidate_cursor = execution_worker.observer_reference().get(
+                        "as_of_cursor"
+                    )
+                    if type(candidate_cursor) is int and candidate_cursor >= 0:
+                        cursor_delta = candidate_cursor - readiness_cursor_before
+                except Exception:
+                    pass
+            report_readiness_failure(
+                {
+                    "status": "failed",
+                    "failure_code": readiness_failure_code(
+                        exc, observer_cursor_delta=cursor_delta
+                    ),
+                }
             )
-        else:
-            readiness = execution_worker.run_controlled_step(
-                "GitHubReadiness.fetch",
-                fetch_readiness,
-                process_id=PROCESS_ID,
-            )
-            permit = execution_worker.run_controlled_step(
-                "RemoteExecutionPermit.issue",
-                lambda: issue_remote_execution_permit(
+            return 2
+
+        try:
+            if execution_worker is None:
+                permit = issue_remote_execution_permit(
                     card_id=authorization_card_id,
                     process_id=process_id,
                     task_id=task_id,
                     readiness=readiness,
                     provider_call_approved=True,
                     snapshot_evidence_origin=snapshot_evidence_origin,
-                ),
-                process_id=PROCESS_ID,
+                )
+            else:
+                permit = execution_worker.run_controlled_step(
+                    "RemoteExecutionPermit.issue",
+                    lambda: issue_remote_execution_permit(
+                        card_id=authorization_card_id,
+                        process_id=process_id,
+                        task_id=task_id,
+                        readiness=readiness,
+                        provider_call_approved=True,
+                        snapshot_evidence_origin=snapshot_evidence_origin,
+                    ),
+                    process_id=process_id,
+                )
+        except RemoteExecutionPermitError:
+            report_readiness_failure(
+                {
+                    "status": "stopped",
+                    "reason": "github-readiness-ineligible",
+                    "provider_attempts": 0,
+                }
             )
-        verifier_config = VerifierContainerConfig(
-            docker_executable=docker_executable,
-            runtime_image_id=VERIFIER_RUNTIME_IMAGE_ID,
-            verifier_code_digest=VERIFIER_RUNTIME_CODE_DIGEST,
-            timeout_seconds=120,
-        )
+            return 2
+        except Exception:
+            report_readiness_failure(
+                {
+                    "status": "failed",
+                    "failure_code": "github-readiness-gate-failed",
+                }
+            )
+            return 2
         runtime_options = dict(
             process_id=process_id,
             task_id=task_id,
@@ -452,14 +1065,25 @@ def main(
             test_command=PINNED_HTTP_DB_TEST_COMMAND,
             execution_image=TARGET_RUNTIME_IMAGE_ID,
             credential_source=credential_source,
-            verifier_config=verifier_config,
             stage_database_path=stage_path,
             execution_permit=permit,
             snapshot_evidence_origin=snapshot_evidence_origin,
             test_timeout_seconds=PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
             stdout=output,
             stderr=error_output,
+            proposal_worker=proposal_worker,
         )
+        if verifier_client is None:
+            runtime_options["verifier_config"] = VerifierContainerConfig(
+                docker_executable=docker_executable,
+                runtime_image_id=VERIFIER_RUNTIME_IMAGE_ID,
+                verifier_code_digest=VERIFIER_RUNTIME_CODE_DIGEST,
+                timeout_seconds=120,
+            )
+        else:
+            runtime_options["verifier_client"] = verifier_client
+            runtime_options["expected_worker_host_id"] = expected_worker_host_id
+            runtime_options["expected_verifier_host_id"] = expected_verifier_host_id
         if observation_store is not None:
             runtime_options["observation_store"] = observation_store
             runtime_options["execution_worker"] = execution_worker

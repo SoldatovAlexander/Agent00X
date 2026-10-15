@@ -8,6 +8,10 @@ cards compose these fixtures through the real component boundaries.
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
+import subprocess
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -154,6 +158,143 @@ def build_chain() -> dict[str, dict]:
 def load_schema(name: str) -> dict:
     with (ROOT / "schemas" / name).open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+class SQLiteDurableMockEndpoint:
+    """Test-only provider double whose calls and receipts survive process exit."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        with closing(sqlite3.connect(self.path)) as connection:
+            with connection:
+                connection.execute(
+                    """CREATE TABLE IF NOT EXISTS provider_calls (
+                        call_id INTEGER PRIMARY KEY,
+                        idempotency_key TEXT NOT NULL
+                    )"""
+                )
+                connection.execute(
+                    """CREATE TABLE IF NOT EXISTS provider_receipts (
+                        idempotency_key TEXT PRIMARY KEY,
+                        pull_request_id INTEGER NOT NULL,
+                        repository_id TEXT NOT NULL,
+                        branch TEXT NOT NULL,
+                        base_branch TEXT NOT NULL,
+                        staged_change_digest TEXT NOT NULL
+                    )"""
+                )
+
+    def publish_pull_request(self, request: dict):
+        from app_contracts.mock_github import MockPullRequest
+
+        with closing(sqlite3.connect(self.path)) as connection:
+            with connection:
+                connection.execute(
+                    "INSERT INTO provider_calls (idempotency_key) VALUES (?)",
+                    (request["idempotency_key"],),
+                )
+                row = connection.execute(
+                    "SELECT pull_request_id, repository_id, branch, base_branch, staged_change_digest "
+                    "FROM provider_receipts WHERE idempotency_key = ?",
+                    (request["idempotency_key"],),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        """INSERT INTO provider_receipts (
+                            idempotency_key, pull_request_id, repository_id, branch,
+                            base_branch, staged_change_digest
+                        ) VALUES (?, 1, ?, ?, ?, ?)""",
+                        (
+                            request["idempotency_key"], request["repository_id"],
+                            request["branch"], request["base_branch"],
+                            request["staged_change_digest"],
+                        ),
+                    )
+                    row = (
+                        1, request["repository_id"], request["branch"],
+                        request["base_branch"], request["staged_change_digest"],
+                    )
+        return MockPullRequest(
+            pull_request_id=row[0], repository_id=row[1], branch=row[2],
+            base_branch=row[3], staged_change_digest=row[4],
+            idempotency_key=request["idempotency_key"],
+        )
+
+    def find_by_idempotency_key(
+        self, idempotency_key: str, *, repository_id: str | None = None,
+        base_branch: str | None = None,
+    ):
+        from app_contracts.mock_github import MockPullRequest
+
+        with closing(sqlite3.connect(self.path)) as connection:
+            row = connection.execute(
+                "SELECT pull_request_id, repository_id, branch, base_branch, staged_change_digest "
+                "FROM provider_receipts WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        if row is None or (repository_id is not None and row[1] != repository_id):
+            return None
+        if base_branch is not None and row[3] != base_branch:
+            return None
+        return MockPullRequest(
+            pull_request_id=row[0], repository_id=row[1], branch=row[2],
+            base_branch=row[3], staged_change_digest=row[4],
+            idempotency_key=idempotency_key,
+        )
+
+
+def _child_process_publish_then_crash(journal_path: Path, provider_path: Path) -> None:
+    """Create one mock receipt and hard-exit before recording it in the journal."""
+
+    from app_contracts.publication import (
+        PublicationJournal, SimulatedCrash, execute_publication,
+    )
+
+    chain = build_chain()
+    request = {
+        "process_id": PROCESS_ID,
+        "operation": "publish_pull_request",
+        "repository_id": REPOSITORY_ID,
+        "branch": chain["intent"]["branch_namespace"],
+        "base_branch": chain["intent"]["base_branch"],
+        "staged_change_digest": chain["intent"]["staged_change_digest"],
+        "idempotency_key": chain["intent"]["idempotency_key"],
+        "request_digest": sha256_digest(chain["actuator_request"]),
+        "policy_effect": "allow",
+        "approval_valid": True,
+    }
+    try:
+        journal = PublicationJournal(Path(journal_path))
+        journal.prepare(
+            PROCESS_ID,
+            idempotency_key=request["idempotency_key"],
+            request_digest=request["request_digest"],
+            repository_id=REPOSITORY_ID,
+        )
+        execute_publication(
+            journal, SQLiteDurableMockEndpoint(Path(provider_path)), request,
+            crash_after_external_effect=True,
+        )
+    except SimulatedCrash:
+        os._exit(86)
+    os._exit(87)
+
+
+def _child_process_mark_attempting_then_exit(journal_path: Path) -> None:
+    """Persist attempt start, then die before making any provider call."""
+
+    from app_contracts.publication import PublicationJournal
+
+    chain = build_chain()
+    journal = PublicationJournal(Path(journal_path))
+    journal.prepare(
+        PROCESS_ID,
+        idempotency_key=chain["intent"]["idempotency_key"],
+        request_digest=sha256_digest(chain["actuator_request"]),
+        repository_id=REPOSITORY_ID,
+    )
+    journal.mark_attempting(PROCESS_ID)
+    os._exit(86)
 
 
 class ComposedFixtureTests(unittest.TestCase):
@@ -1043,6 +1184,119 @@ class ComposedRecoveryMatrixTests(unittest.TestCase):
         self.assertEqual((settled.status, settled.pull_request_id), ("completed", 1))
         self.assertEqual(len(endpoint_calls), 1)
         self.assertEqual(journal.get(PROCESS_ID).status, "completed")
+
+    def test_abrupt_child_exit_recovers_from_durable_mock_receipt_without_republish(self):
+        import tempfile
+
+        from app_contracts.publication import PublicationJournal, recover_publication
+
+        with tempfile.TemporaryDirectory(prefix="app-chain-process-crash-") as temporary:
+            directory = Path(temporary)
+            journal_path = directory / "publication.sqlite3"
+            provider_path = directory / "mock-provider.sqlite3"
+            code = (
+                "import sys; from pathlib import Path; "
+                "sys.path.insert(0, str(Path.cwd() / 'tests')); "
+                "sys.path.insert(0, str(Path.cwd() / 'src')); "
+                "from test_local_publication_chain import _child_process_publish_then_crash; "
+                "_child_process_publish_then_crash(Path(sys.argv[1]), Path(sys.argv[2]))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code, str(journal_path), str(provider_path)],
+                cwd=ROOT,
+                env={"PYTHONDONTWRITEBYTECODE": "1"},
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 86, (result.stdout, result.stderr))
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(result.stderr, "")
+
+            chain = build_chain()
+            endpoint = SQLiteDurableMockEndpoint(provider_path)
+            with closing(sqlite3.connect(provider_path)) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM provider_calls").fetchone()[0], 1
+                )
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM provider_receipts").fetchone()[0], 1
+                )
+
+            with PublicationJournal(journal_path, create_if_missing=False) as reopened:
+                attempting = reopened.get(PROCESS_ID)
+                self.assertEqual(attempting.status, "attempting")
+                self.assertEqual(attempting.idempotency_key, chain["intent"]["idempotency_key"])
+                self.assertEqual(attempting.repository_id, REPOSITORY_ID)
+                self.assertEqual(attempting.base_branch, chain["intent"]["base_branch"])
+
+                recovered = recover_publication(reopened, endpoint, PROCESS_ID)
+                self.assertEqual(recovered.status, "completed")
+                self.assertEqual(recovered.pull_request_id, 1)
+                self.assertEqual(recovered.idempotency_key, chain["intent"]["idempotency_key"])
+                self.assertEqual(recovered.repository_id, REPOSITORY_ID)
+                self.assertEqual(recovered.base_branch, chain["intent"]["base_branch"])
+                self.assertEqual(
+                    recover_publication(reopened, endpoint, PROCESS_ID), recovered
+                )
+
+            with closing(sqlite3.connect(provider_path)) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM provider_calls").fetchone()[0], 1
+                )
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM provider_receipts").fetchone()[0], 1
+                )
+
+    def test_abrupt_child_exit_before_provider_effect_stays_reconciliation_required(self):
+        import tempfile
+
+        from app_contracts.publication import (
+            PublicationJournal, PublicationRecoveryRequired, recover_publication,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="app-chain-before-effect-crash-") as temporary:
+            directory = Path(temporary)
+            journal_path = directory / "publication.sqlite3"
+            provider_path = directory / "mock-provider.sqlite3"
+            code = (
+                "import sys; from pathlib import Path; "
+                "sys.path.insert(0, str(Path.cwd() / 'tests')); "
+                "sys.path.insert(0, str(Path.cwd() / 'src')); "
+                "from test_local_publication_chain import _child_process_mark_attempting_then_exit; "
+                "_child_process_mark_attempting_then_exit(Path(sys.argv[1]))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code, str(journal_path)],
+                cwd=ROOT,
+                env={"PYTHONDONTWRITEBYTECODE": "1"},
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 86, (result.stdout, result.stderr))
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(result.stderr, "")
+
+            endpoint = SQLiteDurableMockEndpoint(provider_path)
+            with PublicationJournal(journal_path, create_if_missing=False) as reopened:
+                self.assertEqual(reopened.get(PROCESS_ID).status, "attempting")
+                for _ in range(2):
+                    with self.assertRaises(PublicationRecoveryRequired):
+                        recover_publication(reopened, endpoint, PROCESS_ID)
+                    self.assertEqual(
+                        reopened.get(PROCESS_ID).status, "reconciliation_required"
+                    )
+
+            with closing(sqlite3.connect(provider_path)) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM provider_calls").fetchone()[0], 0
+                )
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM provider_receipts").fetchone()[0], 0
+                )
 
     def test_absent_outcome_never_retries_automatically(self):
         from app_contracts.mock_github import MockGitHubEndpoint

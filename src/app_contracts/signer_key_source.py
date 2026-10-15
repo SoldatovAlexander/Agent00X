@@ -10,7 +10,7 @@ import re
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .credential_source import CredentialSource
+from .credential_protocol import CredentialSource
 
 
 _SEED_RE = re.compile(r"[0-9a-f]{64}\Z")

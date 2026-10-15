@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from contextlib import closing, contextmanager
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -18,6 +18,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,12 +50,29 @@ from app_contracts.observation_store import ObservationStore
 from app_contracts.observer_runtime import JournaledProposalWorker
 from app_contracts.observer_report import build_history_report
 from app_contracts.pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
+from app_contracts.brainbooster_target_profile import (
+    TARGET_RUNTIME_IMAGE_ID,
+)
+from app_contracts.verifier_image_pin import (
+    VERIFIER_RUNTIME_CODE_DIGEST,
+    VERIFIER_RUNTIME_IMAGE_ID,
+)
 from app_contracts.openai_worker import OpenAIProposalWorker
 from app_contracts.deepseek_worker import DeepSeekProposalWorker
 from app_contracts.deepseek_http_channel import DeepSeekHTTPChannel
 import app_contracts.worker_cli as cli
 import app_contracts.remote_snapshot_pipeline as snapshot_pipeline
 from app_contracts.stage_approval import StageApprovalError, run_local_mock_publication
+from app_contracts.signed_verifier_client import (
+    SignedVerifierClient,
+    SignedVerifierHTTPSTransport,
+)
+from app_contracts.verifier_trust_enrollment import (
+    build_signed_verifier_trust_enrollment,
+)
+from app_contracts.verifier_host_trust_decision import (
+    build_signed_verifier_host_trust_decision,
+)
 
 
 SENTINELS = (
@@ -545,6 +565,76 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             snapshot_evidence_origin=snapshot_evidence_origin,
         )
 
+    @staticmethod
+    def signed_verifier_client(
+        *, host_trust_decision=True, validated_days_ago=0
+    ):
+        profile = cli.BRAINBOOSTER_VERIFIER_PROFILE
+        endpoint = cli.PINNED_SIGNED_VERIFIER_ENDPOINT_URL
+        authority_key_id = "synthetic-authority-exp796"
+        worker_host_id = "synthetic-worker-host-exp796"
+        verifier_host_id = "synthetic-testdev-host-exp796"
+        authority_key = Ed25519PrivateKey.generate()
+        verifier_key = Ed25519PrivateKey.generate()
+        authority_public_key = authority_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        verifier_public_key = verifier_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        now = (
+            datetime.now(timezone.utc).replace(microsecond=0)
+            - timedelta(days=validated_days_ago)
+        )
+        enrollment = build_signed_verifier_trust_enrollment(
+            enrollment_id="synthetic-enrollment-exp796",
+            authority_key_id=authority_key_id,
+            endpoint_url=endpoint,
+            verifier_id=profile.expected_verifier_id,
+            verifier_profile_digest=profile.profile_digest,
+            verifier_key_id=profile.signer_key_id,
+            verifier_public_key=verifier_public_key,
+            worker_host_id=worker_host_id,
+            verifier_host_id=verifier_host_id,
+            host_separation_evidence_digest="sha256:" + "4" * 64,
+            signing_key=authority_key,
+            issued_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
+        decision = None
+        if host_trust_decision:
+            decision = build_signed_verifier_host_trust_decision(
+                decision_id="synthetic-host-decision-exp796",
+                authority_key_id=authority_key_id,
+                enrollment_digest=sha256_bytes(enrollment),
+                endpoint_url=endpoint,
+                verifier_id=profile.expected_verifier_id,
+                verifier_profile_digest=profile.profile_digest,
+                verifier_key_id=profile.signer_key_id,
+                worker_host_id=worker_host_id,
+                verifier_host_id=verifier_host_id,
+                host_separation_evidence_digest="sha256:" + "4" * 64,
+                signing_key=authority_key,
+                issued_at=now,
+                expires_at=now + timedelta(minutes=30),
+            )
+        transport = SignedVerifierHTTPSTransport(
+            endpoint,
+            connection_factory=lambda *_args, **_kwargs: None,
+        )
+        client = SignedVerifierClient.from_trust_enrollment(
+            profile,
+            transport,
+            enrollment,
+            trusted_authority_keys={authority_key_id: authority_public_key},
+            expected_endpoint_url=endpoint,
+            expected_worker_host_id=worker_host_id,
+            expected_verifier_host_id=verifier_host_id,
+            host_trust_decision_bytes=decision,
+            now=now,
+        )
+        return client, worker_host_id, verifier_host_id
+
     def test_deepseek_profile_factory_injects_bounded_worker_without_credential_lookup(self):
         calls: list[str] = []
         profile = cli.build_deepseek_remote_execution_profile(
@@ -584,6 +674,23 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             )
         self.assertEqual(calls, [])
 
+    def test_injected_worker_profile_does_not_require_a_credential_source(self):
+        worker = SimpleNamespace(propose=lambda _request: None)
+        profile = cli.build_deepseek_remote_execution_profile(
+            process_id="process-cli-local-model-001",
+            task_id="task-cli-local-model-001",
+            task_instruction="synthetic instruction",
+            declared_change_paths=("backend/routes.py",),
+            allowed_commands=frozenset({"python3"}),
+            test_command=("python3", "-m", "unittest"),
+            credential_source=None,
+            proposal_worker=worker,
+            verifier=SimpleNamespace(verify=lambda _prepared: None),
+            sandbox_backend=SimpleNamespace(create=lambda *_args: None),
+            stage_sink=self.DummyStageSink(),
+        )
+        self.assertIs(profile.worker, worker)
+
     def test_codeload_profile_does_not_require_a_raw_git_commit_source(self):
         profile = replace(
             self.profile(),
@@ -596,8 +703,9 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         calls: list[str] = []
         captured: dict = {}
         observer_store = ObservationStore()
+        proposal_worker = SimpleNamespace(propose=lambda _request: None)
         execution_worker = JournaledProposalWorker(
-            SimpleNamespace(propose=lambda _request: None),
+            proposal_worker,
             observer_store,
             process_id="process-cli-runtime-001",
             task_id="task-cli-runtime-001",
@@ -626,6 +734,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                     test_command=("python3", "-m", "unittest"),
                     execution_image="sha256:" + "c" * 64,
                     credential_source=lambda: calls.append("lookup") or "synthetic-key",
+                    proposal_worker=proposal_worker,
                     verifier_config=verifier_config,
                     stage_database_path=database,
                     execution_permit=self.permit(
@@ -642,13 +751,125 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             profile = captured["profile"]
             self.assertEqual(profile.stage_database_path, database)
             self.assertIs(profile.observation_store, observer_store)
+            self.assertIs(profile.worker, proposal_worker)
             self.assertIs(captured["execution_worker"], execution_worker)
-            self.assertIs(type(profile.worker), DeepSeekProposalWorker)
-            self.assertIs(type(profile.worker.channel), DeepSeekHTTPChannel)
             self.assertIs(type(profile.verifier), cli.DockerContainerVerifier)
             self.assertIs(type(profile.sandbox_backend), cli.DockerSandboxBackend)
             self.assertEqual(profile.sandbox_backend.image, "sha256:" + "c" * 64)
             self.assertIs(type(profile.stage_sink), cli.SQLiteStagedArtifactStore)
+            self.assertEqual(calls, [])
+
+    def test_explicit_runtime_accepts_only_trusted_pinned_signed_verifier(self):
+        client, worker_host_id, verifier_host_id = self.signed_verifier_client()
+        self.assertTrue(client.independent_host_trust_established)
+        self.assertEqual(
+            client.endpoint_url, cli.PINNED_SIGNED_VERIFIER_ENDPOINT_URL
+        )
+
+        captured: dict = {}
+
+        def fake_main(argv, **kwargs):
+            captured["profile"] = kwargs["remote_execution_profile"]
+            return 0
+
+        with tempfile.TemporaryDirectory(prefix="agent00x-signed-verifier-runtime-") as root:
+            database = Path(root) / "stage.sqlite3"
+            with patch.object(cli, "main", side_effect=fake_main):
+                code = cli.run_remote_snapshot_with_runtime(
+                    process_id="process-cli-signed-verifier-001",
+                    task_id="task-cli-signed-verifier-001",
+                    task_instruction="synthetic signed-verifier runtime test",
+                    declared_change_paths=("backend/routes.py",),
+                    allowed_commands=frozenset({"python3"}),
+                    test_command=("python3", "-m", "unittest"),
+                    execution_image="sha256:" + "c" * 64,
+                    credential_source=lambda: self.fail(
+                        "runtime construction must not resolve the Worker credential"
+                    ),
+                    stage_database_path=database,
+                    execution_permit=self.permit(
+                        "process-cli-signed-verifier-001",
+                        "task-cli-signed-verifier-001",
+                    ),
+                    verifier_client=client,
+                    expected_worker_host_id=worker_host_id,
+                    expected_verifier_host_id=verifier_host_id,
+                )
+            self.assertEqual(code, 0)
+            self.assertTrue(database.is_file())
+            self.assertIs(captured["profile"].verifier, client)
+
+    def test_explicit_runtime_rejects_audit_only_signed_verifier_before_side_effects(self):
+        client, worker_host_id, verifier_host_id = self.signed_verifier_client(
+            host_trust_decision=False
+        )
+        self.assertFalse(client.independent_host_trust_established)
+        calls: list[str] = []
+
+        with tempfile.TemporaryDirectory(prefix="agent00x-audit-only-verifier-") as root:
+            database = Path(root) / "must-not-exist.sqlite3"
+            with patch.object(cli, "main") as main:
+                with self.assertRaisesRegex(
+                    ValueError, "^remote CLI runtime is unavailable$"
+                ):
+                    cli.run_remote_snapshot_with_runtime(
+                        process_id="process-cli-audit-verifier-001",
+                        task_id="task-cli-audit-verifier-001",
+                        task_instruction="synthetic audit-only verifier test",
+                        declared_change_paths=("backend/routes.py",),
+                        allowed_commands=frozenset({"python3"}),
+                        test_command=("python3", "-m", "unittest"),
+                        execution_image="sha256:" + "c" * 64,
+                        credential_source=lambda: calls.append("lookup")
+                        or "synthetic-key",
+                        stage_database_path=database,
+                        execution_permit=self.permit(
+                            "process-cli-audit-verifier-001",
+                            "task-cli-audit-verifier-001",
+                        ),
+                        verifier_client=client,
+                        expected_worker_host_id=worker_host_id,
+                        expected_verifier_host_id=verifier_host_id,
+                    )
+            self.assertFalse(database.exists())
+            main.assert_not_called()
+            self.assertEqual(calls, [])
+
+    def test_explicit_runtime_rejects_expired_signed_trust_before_side_effects(self):
+        client, worker_host_id, verifier_host_id = self.signed_verifier_client(
+            validated_days_ago=2
+        )
+        self.assertTrue(client.independent_host_trust_established)
+        self.assertFalse(client.has_current_independent_host_trust())
+        calls: list[str] = []
+
+        with tempfile.TemporaryDirectory(prefix="agent00x-expired-verifier-trust-") as root:
+            database = Path(root) / "must-not-exist.sqlite3"
+            with patch.object(cli, "main") as main:
+                with self.assertRaisesRegex(
+                    ValueError, "^remote CLI runtime is unavailable$"
+                ):
+                    cli.run_remote_snapshot_with_runtime(
+                        process_id="process-cli-expired-verifier-001",
+                        task_id="task-cli-expired-verifier-001",
+                        task_instruction="synthetic expired verifier trust test",
+                        declared_change_paths=("backend/routes.py",),
+                        allowed_commands=frozenset({"python3"}),
+                        test_command=("python3", "-m", "unittest"),
+                        execution_image="sha256:" + "c" * 64,
+                        credential_source=lambda: calls.append("lookup")
+                        or "synthetic-key",
+                        stage_database_path=database,
+                        execution_permit=self.permit(
+                            "process-cli-expired-verifier-001",
+                            "task-cli-expired-verifier-001",
+                        ),
+                        verifier_client=client,
+                        expected_worker_host_id=worker_host_id,
+                        expected_verifier_host_id=verifier_host_id,
+                    )
+            self.assertFalse(database.exists())
+            main.assert_not_called()
             self.assertEqual(calls, [])
 
     def test_explicit_runtime_rejects_invalid_scope_before_database_or_reader(self):
@@ -797,6 +1018,61 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             verifier_result=SimpleNamespace(verifier_id="synthetic-verifier"),
         )
 
+    def test_worker_terminal_outcomes_have_fixed_cli_projection(self):
+        cases = (
+            ("clarification_required", "conflicting_requirements", "needs_input"),
+            ("blocked", "target_test_outcome_unknown", "blocked"),
+            ("denied", "publication_not_authorized", "denied"),
+        )
+        for outcome, reason_code, expected_status in cases:
+            with self.subTest(outcome=outcome):
+                result = ExecutionResult(
+                    status=ExecutionStatus.FAILED,
+                    worker_terminal_outcome=outcome,
+                    worker_terminal_reason_code=reason_code,
+                )
+                payload = cli._remote_execution_evidence(result)
+                self.assertEqual(payload["status"], expected_status)
+                self.assertEqual(payload["reason_code"], reason_code)
+                self.assertIs(payload["external_write"], False)
+                self.assertEqual(payload["approval"], "not_created")
+                self.assertEqual(payload["publication"], "not_attempted")
+
+        malformed = ExecutionResult(
+            status=ExecutionStatus.FAILED,
+            worker_terminal_outcome="denied",
+            worker_terminal_reason_code="conflicting_requirements",
+        )
+        payload = cli._remote_execution_evidence(malformed)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(
+            payload["failure_code"], "remote-snapshot-execution-failed"
+        )
+
+    def test_local_cli_returns_terminal_worker_status(self):
+        class Worker:
+            def propose(self, _task):
+                from app_contracts.executor import WorkerTerminalOutcome
+
+                return WorkerTerminalOutcome(
+                    "blocked", "target_test_outcome_unknown"
+                )
+
+        class Verifier:
+            def verify(self, _prepared):
+                raise AssertionError("verifier must not run")
+
+        out, err = io.StringIO(), io.StringIO()
+        code = cli.main(
+            [], stdout=out, stderr=err, worker=Worker(), verifier=Verifier()
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(
+            json.loads(out.getvalue()),
+            {"status": "blocked", "reason_code": "target_test_outcome_unknown"},
+        )
+
     def test_missing_or_invalid_runtime_fails_before_snapshot_read(self):
         for profile in (None, object()):
             with self.subTest(profile=type(profile).__name__):
@@ -845,7 +1121,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
     def test_permit_rejects_insufficient_or_unapproved_readiness(self):
         for status, remaining, approved in (
             (403, 60, True),
-            (200, 24, True),
+            (200, 35, True),
             (200, 60, False),
         ):
             with self.subTest(status=status, remaining=remaining, approved=approved):
@@ -855,6 +1131,11 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                         remaining=remaining,
                         provider_call_approved=approved,
                     )
+
+    def test_permit_accepts_exact_readiness_threshold(self):
+        permit = self.permit(remaining=36)
+
+        self.assertIs(type(permit), cli.RemoteExecutionPermit)
 
     def test_permit_is_bound_fresh_and_single_use_under_concurrency(self):
         permit = self.permit()
@@ -1300,9 +1581,9 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         worker = FixedWorker(
             lambda: credential_calls.append("lookup") or "synthetic-key"
         )
-        target_image_id = "sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812"
-        verifier_image_id = "sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a"
-        verifier_code_digest = "sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5"
+        target_image_id = TARGET_RUNTIME_IMAGE_ID
+        verifier_image_id = VERIFIER_RUNTIME_IMAGE_ID
+        verifier_code_digest = VERIFIER_RUNTIME_CODE_DIGEST
         verifier_identity = (
             f"docker-image:{verifier_image_id}/code:{verifier_code_digest}"
         )
@@ -1471,9 +1752,9 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         worker = cli.DeepSeekProposalWorker(channel)
         docker = shutil.which("docker")
         self.assertTrue(docker and Path(docker).is_absolute())
-        target_image_id = "sha256:96cbcaf0332b6b117703aef38b77de89921778861c9c9fcb94e1df0eaa484812"
-        verifier_image_id = "sha256:f343041a8b7353341bc933f9bcff48a5415f585e8e642b4d22c1d0d35e22705a"
-        verifier_code_digest = "sha256:b1336165e906e8bd2801ff61bcc6a3740c683639416f80caea40e3e8d22825a5"
+        target_image_id = TARGET_RUNTIME_IMAGE_ID
+        verifier_image_id = VERIFIER_RUNTIME_IMAGE_ID
+        verifier_code_digest = VERIFIER_RUNTIME_CODE_DIGEST
         verifier_identity = (
             f"docker-image:{verifier_image_id}/code:{verifier_code_digest}"
         )
@@ -1632,7 +1913,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(
             json.loads(out.getvalue()),
-            {"status": "failed", "failure_code": "remote-snapshot-execution-failed"},
+            {"status": "failed", "failure_code": "remote-execution-pipeline-failed"},
         )
         self.assertEqual(err.getvalue(), "")
         self.assertNotIn("SECRET-CANARY", out.getvalue() + err.getvalue())
@@ -1659,7 +1940,7 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             json.loads(out.getvalue()),
             {
                 "status": "failed",
-                "failure_code": "remote-snapshot-execution-failed",
+                "failure_code": "remote-snapshot-preparation-failed",
                 "observer": {
                     "run_id": observer_store.events()[0]["run_id"],
                     "as_of_cursor": len(observer_store.events()) - 1,
@@ -1693,10 +1974,69 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(
             json.loads(out.getvalue()),
-            {"status": "failed", "failure_code": "remote-snapshot-execution-failed"},
+            {"status": "failed", "failure_code": "remote-snapshot-preparation-failed"},
         )
         self.assertEqual(err.getvalue(), "")
         execute.assert_not_called()
+
+    def test_unexpected_snapshot_error_has_only_preparation_marker(self):
+        canary = "SYNTHETIC-EXCEPTION-CANARY"
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+            patch.object(
+                cli, "read_github_snapshot_contents", side_effect=RuntimeError(canary)
+            ),
+        ):
+            code = cli.main(
+                ["--remote-snapshot-execute"],
+                stdout=out,
+                stderr=err,
+                remote_execution_profile=self.profile(),
+                execution_permit=self.permit(),
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            json.loads(out.getvalue()),
+            {
+                "status": "failed",
+                "failure_code": "remote-snapshot-preparation-failed",
+            },
+        )
+        self.assertNotIn(canary, out.getvalue() + err.getvalue())
+
+    def test_unexpected_execution_error_has_only_pipeline_marker(self):
+        canary = "SYNTHETIC-EXCEPTION-CANARY"
+        snapshot = self.make_full_snapshot()
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            patch.object(cli, "GitHubAnonymousSnapshotTransport"),
+            patch.object(cli, "read_github_snapshot_contents", return_value=snapshot),
+            patch.object(
+                cli,
+                "REMOTE_REPOSITORY_CONTENT_DIGEST",
+                snapshot.claim.content_digest,
+            ),
+            patch.object(
+                cli, "run_remote_snapshot_execution", side_effect=RuntimeError(canary)
+            ),
+        ):
+            code = cli.main(
+                ["--remote-snapshot-execute"],
+                stdout=out,
+                stderr=err,
+                remote_execution_profile=self.profile(),
+                execution_permit=self.permit(),
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            json.loads(out.getvalue()),
+            {
+                "status": "failed",
+                "failure_code": "remote-execution-pipeline-failed",
+            },
+        )
+        self.assertNotIn(canary, out.getvalue() + err.getvalue())
 
     def test_unrecognized_execution_failure_code_is_not_echoed(self):
         payload = cli._remote_execution_evidence(
@@ -1709,6 +2049,17 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertEqual(payload["failure_code"], "remote-snapshot-execution-failed")
         self.assertNotIn("secret-token-canary", json.dumps(payload))
         self.assertNotIn("stage_database_path", payload)
+
+    def test_fixed_target_test_failure_fallback_is_projected(self):
+        payload = cli._remote_execution_evidence(
+            ExecutionResult(
+                status=ExecutionStatus.FAILED,
+                failure_code="target-test-allowlisted-tests-failed",
+            )
+        )
+        self.assertEqual(payload["failure_code"], "target-test-allowlisted-tests-failed")
+        self.assertNotIn("stdout", payload)
+        self.assertNotIn("stderr", payload)
 
     def test_signed_verifier_failure_evidence_is_bounded_and_audit_only(self):
         payload = cli._remote_execution_evidence(

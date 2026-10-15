@@ -296,7 +296,7 @@ def _valid_endpoint(value: str) -> bool:
             or parsed.port not in {None, 443}
             or host != host.lower()
             or host == "localhost"
-            or host.endswith((".localhost", ".local"))
+            or host.endswith(".localhost")
             or _DNS_HOST.fullmatch(host) is None
             or value not in {f"https://{host}/v1/verify", f"https://{host}:443/v1/verify"}
         ):

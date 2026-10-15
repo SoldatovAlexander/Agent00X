@@ -32,6 +32,14 @@ def main(argv: list[str] | None = None, *, stdout=None) -> int:
     parser.add_argument("--run-id")
     parser.add_argument("--branch-id")
     parser.add_argument("--as-of-cursor", type=int)
+    parser.add_argument(
+        "--as-of-recorded-at",
+        help="timezone-aware RFC3339 cutoff for what the journal recorded by that time",
+    )
+    parser.add_argument(
+        "--about-occurred-at",
+        help="show events that occurred by this time, including later-recorded evidence",
+    )
     try:
         args = parser.parse_args(argv)
         result = report_from_sqlite(
@@ -40,6 +48,8 @@ def main(argv: list[str] | None = None, *, stdout=None) -> int:
             run_id=args.run_id,
             branch_id=args.branch_id,
             as_of_cursor=args.as_of_cursor,
+            as_of_recorded_at=args.as_of_recorded_at,
+            about_occurred_at=args.about_occurred_at,
             artifact_database=args.artifact_database,
         )
         encoded = json.dumps(

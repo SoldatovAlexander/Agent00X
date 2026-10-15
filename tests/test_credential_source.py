@@ -2,19 +2,34 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Mapping
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from app_contracts.credential_source import (
+    CredentialSource,
     CredentialSourceError,
     NativeKeyringCredentialSource,
     ProcessEnvironmentCredentialSource,
+    SystemdCredentialSource,
     TerminalPromptCredentialSource,
 )
+from app_contracts.credential_protocol import (
+    CredentialSource as NarrowCredentialSource,
+    CredentialSourceError as NarrowCredentialSourceError,
+)
+
+
+class CredentialProtocolIdentityTests(unittest.TestCase):
+    def test_legacy_module_reexports_the_narrow_contract_types(self):
+        self.assertIs(CredentialSource, NarrowCredentialSource)
+        self.assertIs(CredentialSourceError, NarrowCredentialSourceError)
 
 
 SECRET = "synthetic-token-do-not-leak"
@@ -99,6 +114,130 @@ class ProcessEnvironmentCredentialSourceTests(unittest.TestCase):
                     "^credential source: configuration is invalid$",
                 ):
                     ProcessEnvironmentCredentialSource(environment, name)
+
+
+class SystemdCredentialSourceTests(unittest.TestCase):
+    def test_reads_only_the_fixed_runtime_credential_lazily(self):
+        with tempfile.TemporaryDirectory(prefix="systemd-credential-source-") as root:
+            directory = Path(root)
+            credential_path = directory / SystemdCredentialSource.CREDENTIAL_NAME
+            other_path = directory / "OTHER_TOKEN"
+            environment = RecordingMapping(
+                {
+                    "CREDENTIALS_DIRECTORY": str(directory),
+                    "OTHER_TOKEN": "unrelated-secret",
+                }
+            )
+            credential_path.write_text(SECRET, encoding="ascii")
+            other_path.write_text("unrelated-secret", encoding="ascii")
+
+            source = SystemdCredentialSource(environment)
+            self.assertEqual(environment.lookups, [])
+            self.assertEqual(source(), SECRET)
+            self.assertEqual(environment.lookups, ["CREDENTIALS_DIRECTORY"])
+            diagnostic = repr(source) + str(source)
+            self.assertNotIn(SECRET, diagnostic)
+            self.assertNotIn(str(directory), diagnostic)
+
+    def test_missing_invalid_and_oversized_credentials_fail_without_leakage(self):
+        with tempfile.TemporaryDirectory(prefix="systemd-credential-source-") as root:
+            directory = Path(root)
+            source = SystemdCredentialSource({"CREDENTIALS_DIRECTORY": str(directory)})
+            with self.assertRaisesRegex(
+                CredentialSourceError,
+                "^credential source: systemd credential unavailable or invalid$",
+            ) as raised:
+                source()
+            self.assertNotIn(SECRET, str(raised.exception))
+
+            credential_path = directory / SystemdCredentialSource.CREDENTIAL_NAME
+            for value in ("", " " + SECRET, SECRET + "\n"):
+                with self.subTest(value=repr(value)):
+                    credential_path.write_text(value, encoding="ascii")
+                    with self.assertRaises(CredentialSourceError) as raised:
+                        source()
+                    self.assertNotIn(SECRET, str(raised.exception))
+
+            credential_path.write_bytes(
+                b"x" * (SystemdCredentialSource.MAX_CREDENTIAL_BYTES + 1)
+            )
+            with self.assertRaises(CredentialSourceError) as raised:
+                source()
+            self.assertNotIn(SECRET, str(raised.exception))
+
+    def test_credential_symlinks_are_rejected(self):
+        if not hasattr(os, "O_NOFOLLOW"):
+            self.skipTest("O_NOFOLLOW is unavailable")
+        with tempfile.TemporaryDirectory(prefix="systemd-credential-source-") as root:
+            directory = Path(root)
+            target = directory / "target"
+            target.write_text(SECRET, encoding="ascii")
+            (directory / SystemdCredentialSource.CREDENTIAL_NAME).symlink_to(target)
+            source = SystemdCredentialSource({"CREDENTIALS_DIRECTORY": str(directory)})
+            with self.assertRaisesRegex(
+                CredentialSourceError,
+                "^credential source: systemd credential unavailable or invalid$",
+            ) as raised:
+                source()
+            self.assertNotIn(SECRET, str(raised.exception))
+
+    def test_fifo_credential_is_rejected_without_blocking(self):
+        if not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"):
+            self.skipTest("FIFO or nonblocking open is unavailable")
+        with tempfile.TemporaryDirectory(prefix="systemd-credential-fifo-") as root:
+            directory = Path(root)
+            os.mkfifo(directory / SystemdCredentialSource.CREDENTIAL_NAME)
+            child = "\n".join(
+                (
+                    "import sys",
+                    "sys.path.insert(0, sys.argv[1])",
+                    "from app_contracts.credential_source import CredentialSourceError, SystemdCredentialSource",
+                    "source = SystemdCredentialSource({'CREDENTIALS_DIRECTORY': sys.argv[2]})",
+                    "try:",
+                    "    source()",
+                    "except CredentialSourceError:",
+                    "    print('rejected')",
+                    "else:",
+                    "    raise SystemExit(1)",
+                )
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", child, str(ROOT / "src"), str(directory)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "rejected\n")
+            self.assertEqual(result.stderr, "")
+
+    def test_missing_nonblocking_open_flag_fails_before_open(self):
+        with tempfile.TemporaryDirectory(prefix="systemd-credential-flags-") as root:
+            source = SystemdCredentialSource({"CREDENTIALS_DIRECTORY": root})
+            with (
+                mock.patch.object(os, "O_NONBLOCK", None),
+                mock.patch("app_contracts.credential_source.os.open") as open_file,
+            ):
+                with self.assertRaisesRegex(
+                    CredentialSourceError,
+                    "^credential source: systemd credential unavailable or invalid$",
+                ):
+                    source()
+            open_file.assert_not_called()
+
+    def test_invalid_runtime_directory_is_rejected(self):
+        for environment in (
+            {},
+            {"CREDENTIALS_DIRECTORY": "relative/path"},
+            {"CREDENTIALS_DIRECTORY": ""},
+            {"CREDENTIALS_DIRECTORY": 42},
+        ):
+            with self.subTest(environment=environment):
+                source = SystemdCredentialSource(environment)
+                with self.assertRaises(CredentialSourceError) as raised:
+                    source()
+                self.assertNotIn(SECRET, str(raised.exception))
 
 
 class TerminalPromptCredentialSourceTests(unittest.TestCase):

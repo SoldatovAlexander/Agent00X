@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import http.client
 import ipaddress
 import math
@@ -204,6 +206,7 @@ class SignedVerifierHTTPSTransport:
     """
 
     MAX_TIMEOUT_SECONDS = 30.0
+    MAX_CUSTOM_CA_BUNDLE_BYTES = 1024 * 1024
     _PATH = "/v1/verify"
     _MEDIA_TYPE = "application/json"
     _USER_AGENT = "Agent00X-SignedVerifier/1"
@@ -217,6 +220,10 @@ class SignedVerifierHTTPSTransport:
         endpoint_url: object,
         *,
         timeout_seconds: float = 10.0,
+        custom_ca_bundle_path: object = None,
+        custom_ca_bundle_sha256: object = None,
+        connect_address: object = None,
+        connect_port: object = None,
         connection_factory: object = None,
     ) -> None:
         try:
@@ -229,15 +236,35 @@ class SignedVerifierHTTPSTransport:
         except (OverflowError, TypeError, ValueError):
             timeout_valid = False
         endpoint = self._parse_endpoint(endpoint_url)
+        parsed_connect_address = self._parse_connect_address(connect_address)
+        parsed_connect_port = self._parse_connect_port(
+            connect_port, parsed_connect_address
+        )
+        custom_ca_configuration_valid = (
+            custom_ca_bundle_path is None
+            and custom_ca_bundle_sha256 is None
+        ) or (
+            type(custom_ca_bundle_path) is str
+            and os.path.isabs(custom_ca_bundle_path)
+            and len(custom_ca_bundle_path) <= 4096
+            and type(custom_ca_bundle_sha256) is str
+            and re.fullmatch(r"[0-9a-f]{64}", custom_ca_bundle_sha256) is not None
+        )
         if not timeout_valid or (
             connection_factory is not None and not callable(connection_factory)
-        ):
+        ) or (
+            parsed_connect_address is not None and connection_factory is not None
+        ) or not custom_ca_configuration_valid:
             raise SignedVerifierHTTPSTransportError(
                 "signed verifier HTTPS transport: configuration rejected"
             )
         self._host, self._port = endpoint
         self._endpoint_url = endpoint_url
         self._timeout_seconds = float(timeout_seconds)
+        self._custom_ca_bundle_path = custom_ca_bundle_path
+        self._custom_ca_bundle_sha256 = custom_ca_bundle_sha256
+        self._connect_address = parsed_connect_address
+        self._connect_port = parsed_connect_port
         self._connection_factory = connection_factory
         self._attempt_lock = threading.Lock()
         self._attempt_started = False
@@ -247,6 +274,26 @@ class SignedVerifierHTTPSTransport:
         """Return the exact URL validated and bound to this transport."""
 
         return self._endpoint_url
+
+    @property
+    def connect_address(self) -> str | None:
+        """Optional IP dial destination; it never replaces the TLS hostname."""
+
+        return self._connect_address
+
+    @property
+    def connect_port(self) -> int | None:
+        """Optional TCP port override; it never changes endpoint authority."""
+
+        return self._connect_port
+
+    def validate_configuration(self) -> None:
+        """Validate CA material and TLS settings without resolving or connecting."""
+
+        self._create_verified_ssl_context(
+            self._custom_ca_bundle_path,
+            self._custom_ca_bundle_sha256,
+        )
 
     @classmethod
     def _parse_endpoint(cls, endpoint_url: object) -> tuple[str, int]:
@@ -270,7 +317,6 @@ class SignedVerifierHTTPSTransport:
                 or not cls._DNS_NAME.fullmatch(host)
                 or host == "localhost"
                 or host.endswith(".localhost")
-                or host.endswith(".local")
             ):
                 raise ValueError
             try:
@@ -284,6 +330,56 @@ class SignedVerifierHTTPSTransport:
             raise SignedVerifierHTTPSTransportError(
                 "signed verifier HTTPS transport: configuration rejected"
             ) from None
+
+    @staticmethod
+    def _parse_connect_address(value: object) -> str | None:
+        if value is None:
+            return None
+        try:
+            if type(value) is not str or not value or len(value) > 64 or "%" in value:
+                raise ValueError
+            address = ipaddress.ip_address(value)
+            if address.version == 4:
+                local_networks = (
+                    ipaddress.ip_network("10.0.0.0/8"),
+                    ipaddress.ip_network("172.16.0.0/12"),
+                    ipaddress.ip_network("192.168.0.0/16"),
+                    ipaddress.ip_network("127.0.0.0/8"),
+                    ipaddress.ip_network("169.254.0.0/16"),
+                )
+                local_address = any(address in network for network in local_networks)
+            else:
+                local_address = (
+                    address in ipaddress.ip_network("fc00::/7")
+                    or address.is_loopback
+                )
+            if (
+                not local_address
+                or address.is_unspecified
+                or address.is_multicast
+                or address.is_reserved
+                or (address.version == 6 and address.is_link_local)
+            ):
+                raise ValueError
+            return str(address)
+        except Exception:
+            raise SignedVerifierHTTPSTransportError(
+                "signed verifier HTTPS transport: configuration rejected"
+            ) from None
+
+    @staticmethod
+    def _parse_connect_port(value: object, connect_address: str | None) -> int | None:
+        if value is None:
+            return None
+        if (
+            type(value) is not int
+            or not 1024 <= value <= 65_535
+            or connect_address is None
+        ):
+            raise SignedVerifierHTTPSTransportError(
+                "signed verifier HTTPS transport: configuration rejected"
+            )
+        return value
 
     def __repr__(self) -> str:
         return "SignedVerifierHTTPSTransport(authentication='none', one_shot=True)"
@@ -312,7 +408,10 @@ class SignedVerifierHTTPSTransport:
         expired = threading.Event()
         deadline = time.monotonic() + self._timeout_seconds
         try:
-            context = self._create_verified_ssl_context()
+            context = self._create_verified_ssl_context(
+                self._custom_ca_bundle_path,
+                self._custom_ca_bundle_sha256,
+            )
             factory = self._connection_factory or http.client.HTTPSConnection
             connection = factory(
                 self._host,
@@ -321,9 +420,28 @@ class SignedVerifierHTTPSTransport:
                 context=context,
             )
             if self._connection_factory is None:
-                addresses = _resolve_verifier_addresses(
-                    self._host, self._port, deadline, expired
-                )
+                if self._connect_address is None:
+                    addresses = _resolve_verifier_addresses(
+                        self._host, self._port, deadline, expired
+                    )
+                else:
+                    resolved = ipaddress.ip_address(self._connect_address)
+                    dial_port = (
+                        self._port if self._connect_port is None else self._connect_port
+                    )
+                    sockaddr: tuple[object, ...] = (
+                        (self._connect_address, dial_port)
+                        if resolved.version == 4
+                        else (self._connect_address, dial_port, 0, 0)
+                    )
+                    addresses = (
+                        (
+                            socket.AF_INET if resolved.version == 4 else socket.AF_INET6,
+                            socket.SOCK_STREAM,
+                            socket.IPPROTO_TCP,
+                            sockaddr,
+                        ),
+                    )
 
                 def connect_to_resolved_addresses(
                     _address: tuple[str, int],
@@ -429,14 +547,37 @@ class SignedVerifierHTTPSTransport:
                 except Exception:
                     pass
 
-    @staticmethod
-    def _create_verified_ssl_context() -> ssl.SSLContext:
+    @classmethod
+    def _create_verified_ssl_context(
+        cls,
+        custom_ca_bundle_path: str | None = None,
+        custom_ca_bundle_sha256: str | None = None,
+    ) -> ssl.SSLContext:
         try:
             context = ssl.create_default_context()
             ca_file = certifi.where()
             if type(ca_file) is not str or not ca_file:
                 raise ValueError
             context.load_verify_locations(cafile=ca_file)
+            if custom_ca_bundle_path is not None:
+                if custom_ca_bundle_sha256 is None:
+                    raise ValueError
+                with open(custom_ca_bundle_path, "rb") as ca_bundle_file:
+                    custom_ca_bytes = ca_bundle_file.read(
+                        cls.MAX_CUSTOM_CA_BUNDLE_BYTES + 1
+                    )
+                if (
+                    not custom_ca_bytes
+                    or len(custom_ca_bytes) > cls.MAX_CUSTOM_CA_BUNDLE_BYTES
+                    or not hmac.compare_digest(
+                        hashlib.sha256(custom_ca_bytes).hexdigest(),
+                        custom_ca_bundle_sha256,
+                    )
+                ):
+                    raise ValueError
+                context.load_verify_locations(
+                    cadata=custom_ca_bytes.decode("ascii")
+                )
             if (
                 not context.check_hostname
                 or context.verify_mode != ssl.CERT_REQUIRED
@@ -614,6 +755,7 @@ class SignedVerifierClient:
             # replace the key trusted by this client instance.
             self._trusted_public_keys = dict(trusted_public_keys)
             self._trust_enrollment_digest: str | None = None
+            self._trust_enrollment: VerifiedVerifierTrustEnrollment | None = None
             self._host_trust_decision_digest: str | None = None
             self._host_trust_decision: VerifiedVerifierHostTrustDecision | None = None
             self._trust_enrollment_bytes: bytes | None = None
@@ -675,6 +817,7 @@ class SignedVerifierClient:
                 {enrollment.verifier_key_id: enrollment.verifier_public_key},
             )
             client._trust_enrollment_digest = enrollment.enrollment_digest
+            client._trust_enrollment = enrollment
             client._trust_enrollment_bytes = bytes(enrollment_bytes)
             if host_trust_decision_bytes is not None:
                 decision = verify_verifier_host_trust_decision(
@@ -726,6 +869,88 @@ class SignedVerifierClient:
         )
 
     @property
+    def verifier_profile_digest(self) -> str:
+        """Digest of the exact verifier profile bound to this client."""
+
+        return self._profile.profile_digest
+
+    @property
+    def endpoint_url(self) -> str | None:
+        """Configured HTTPS endpoint, if this client uses the HTTPS adapter."""
+
+        endpoint_url = getattr(self._transport, "endpoint_url", None)
+        return endpoint_url if type(endpoint_url) is str else None
+
+    @property
+    def connect_address(self) -> str | None:
+        """Optional IP dial destination, without changing endpoint identity."""
+
+        connect_address = getattr(self._transport, "connect_address", None)
+        return connect_address if type(connect_address) is str else None
+
+    @property
+    def connect_port(self) -> int | None:
+        """Optional TCP port override, without changing endpoint authority."""
+
+        connect_port = getattr(self._transport, "connect_port", None)
+        return connect_port if type(connect_port) is int else None
+
+    @property
+    def independent_host_trust_established(self) -> bool:
+        """Whether a verified OOB host decision was attached at construction."""
+
+        return (
+            self._host_trust_decision_digest is not None
+            and self._host_trust_decision is not None
+        )
+
+    def has_current_independent_host_trust(self, now: datetime | None = None) -> bool:
+        """Check that both signed trust records are currently within lifetime."""
+
+        enrollment = self._trust_enrollment
+        decision = self._host_trust_decision
+        if (
+            not self.independent_host_trust_established
+            or type(enrollment) is not VerifiedVerifierTrustEnrollment
+            or type(decision) is not VerifiedVerifierHostTrustDecision
+        ):
+            return False
+        moment = datetime.now(timezone.utc) if now is None else now
+        if (
+            not isinstance(moment, datetime)
+            or moment.tzinfo is None
+            or moment.utcoffset() is None
+        ):
+            return False
+        moment = moment.astimezone(timezone.utc)
+        try:
+            records = (
+                (enrollment.issued_at, enrollment.expires_at),
+                (decision.issued_at, decision.expires_at),
+            )
+            for issued_at, expires_at in records:
+                if (
+                    type(issued_at) is not str
+                    or type(expires_at) is not str
+                    or not issued_at.endswith("Z")
+                    or not expires_at.endswith("Z")
+                ):
+                    return False
+                issued = datetime.fromisoformat(issued_at[:-1] + "+00:00")
+                expires = datetime.fromisoformat(expires_at[:-1] + "+00:00")
+                if not issued <= moment < expires:
+                    return False
+            return True
+        except Exception:
+            return False
+
+    @property
+    def host_trust_decision(self) -> VerifiedVerifierHostTrustDecision | None:
+        """Verified OOB host decision bound to this client, if present."""
+
+        return self._host_trust_decision
+
+    @property
     def trust_enrollment_digest(self) -> str | None:
         """Digest-only locator for the validated enrollment, when configured."""
 
@@ -750,6 +975,14 @@ class SignedVerifierClient:
                 invocation_nonce=invocation_nonce,
                 verifier_profile_digest=self._profile.profile_digest,
             )
+            host_trust_bound = self._host_trust_decision_digest is not None
+            if (
+                host_trust_bound
+                and self.has_current_independent_host_trust() is not True
+            ):
+                raise SignedVerifierClientError(
+                    "signed verifier client: host trust is not current"
+                )
             response_bytes = self._transport.request(invocation_bytes)
             if (
                 type(response_bytes) is not bytes
@@ -766,6 +999,13 @@ class SignedVerifierClient:
                 trusted_public_keys=self._trusted_public_keys,
                 now=datetime.now(timezone.utc),
             )
+            if (
+                host_trust_bound
+                and self.has_current_independent_host_trust() is not True
+            ):
+                raise SignedVerifierClientError(
+                    "signed verifier client: host trust is not current"
+                )
             if (
                 type(attestation) is not VerifiedVerifierAttestation
                 or attestation.signature_valid is not True

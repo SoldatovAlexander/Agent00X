@@ -30,7 +30,12 @@ from app_contracts.deepseek_worker import (
     ChatCompletionMessage,
     ChatCompletionsModelResult,
 )
-from app_contracts.executor import ExecutionError, WorkerInput, WorkerProposal
+from app_contracts.executor import (
+    ExecutionError,
+    WorkerInput,
+    WorkerProposal,
+    WorkerTerminalOutcome,
+)
 
 
 def _task() -> WorkerInput:
@@ -68,6 +73,28 @@ class FakeChannel:
 
 
 class ContainerProposalWorkerTests(unittest.TestCase):
+    def test_terminal_child_frame_is_validated_as_bounded_outcome(self):
+        worker = object.__new__(ContainerProposalWorker)
+        frame = {
+            "schema": "agent00x-worker-result/v2",
+            "outcome": "denied",
+            "changes": None,
+            "reason_code": "publication_not_authorized",
+        }
+        self.assertEqual(
+            worker._validated_proposal(frame, _task()),
+            WorkerTerminalOutcome("denied", "publication_not_authorized"),
+        )
+        for malformed in (
+            {**frame, "extra": "x"},
+            {**frame, "reason_code": "conflicting_requirements"},
+            {**frame, "changes": []},
+        ):
+            with self.subTest(frame=malformed), self.assertRaisesRegex(
+                ExecutionError, "proposal is invalid"
+            ):
+                worker._validated_proposal(malformed, _task())
+
     def test_child_program_is_syntax_valid_and_statuses_are_fixed(self):
         compile(WORKER_CHILD_PROGRAM, "<container-proposal-worker>", "exec")
         self.assertEqual(len(WORKER_STARTUP_STATUSES), len(set(WORKER_STARTUP_STATUSES)))
@@ -131,6 +158,11 @@ class ContainerProposalWorkerTests(unittest.TestCase):
         self.assertEqual(frame["snapshot_tree_digest"], tree_digest)
         self.assertEqual(frame["snapshot_origin"], "github_rest_api_claim")
         self.assertEqual(frame["snapshot_claim_digest"], claim_digest)
+        self.assertEqual(frame["model_timeout_seconds"], 30.0)
+        self.assertEqual(
+            _worker_input_frame(task, model_timeout_seconds=180)["model_timeout_seconds"],
+            180,
+        )
 
     def test_frame_encoding_is_bounded(self):
         self.assertEqual(_frame_bytes({"x": 1}, maximum=32)[:4], b"\x00\x00\x00\x07")
@@ -195,6 +227,12 @@ class ContainerProposalWorkerTests(unittest.TestCase):
             ContainerProposalWorker(object(), docker_executable="/usr/local/bin/docker")
         with self.assertRaises(ExecutionError):
             ContainerProposalWorker(FakeChannel(), docker_executable="docker")
+        with self.assertRaises(ExecutionError):
+            ContainerProposalWorker(
+                FakeChannel(),
+                docker_executable="/usr/local/bin/docker",
+                model_timeout_seconds=181,
+            )
 
     @unittest.skipUnless(
         os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1",

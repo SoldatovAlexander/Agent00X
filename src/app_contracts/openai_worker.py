@@ -20,6 +20,7 @@ from .executor import (
     ExecutionError,
     WorkerInput,
     WorkerProposal,
+    WorkerTerminalOutcome,
 )
 
 MODEL_NAME = "gpt-6.1-sol"
@@ -105,10 +106,15 @@ def build_responses_payload(task: WorkerInput) -> dict:
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["changes"],
+                    "required": ["schema", "outcome", "changes", "reason_code"],
                     "properties": {
+                        "schema": {"type": "string", "enum": ["agent00x-worker-result/v2"]},
+                        "outcome": {
+                            "type": "string",
+                            "enum": ["changes", "clarification_required", "blocked", "denied"],
+                        },
                         "changes": {
-                            "type": "array",
+                            "type": ["array", "null"],
                             "minItems": 1,
                             "items": {
                                 "type": "object",
@@ -119,7 +125,16 @@ def build_responses_payload(task: WorkerInput) -> dict:
                                     "content": {"type": "string"},
                                 },
                             },
-                        }
+                        },
+                        "reason_code": {
+                            "type": ["string", "null"],
+                            "enum": [
+                                "conflicting_requirements",
+                                "target_test_outcome_unknown",
+                                "publication_not_authorized",
+                                None,
+                            ],
+                        },
                     },
                 },
             }
@@ -128,8 +143,10 @@ def build_responses_payload(task: WorkerInput) -> dict:
     }
 
 
-def parse_model_result(result: object, declared_change_paths: object) -> WorkerProposal:
-    """Strictly convert one model result to a scoped WorkerProposal."""
+def parse_model_result(
+    result: object, declared_change_paths: object
+) -> WorkerProposal | WorkerTerminalOutcome:
+    """Convert the legacy patch or exact bounded v2 Worker result."""
     if type(result) is not ResponsesModelResult:
         raise ExecutionError("execution worker: provider response is invalid")
     if result.refusal is not None:
@@ -156,7 +173,36 @@ def parse_model_result(result: object, declared_change_paths: object) -> WorkerP
         raise ExecutionError("execution worker: provider response is invalid") from None
     if type(parsed) is not dict:
         raise ExecutionError("execution worker: provider response is invalid")
-    changes = parsed.get("changes")
+    if "schema" in parsed or "outcome" in parsed or "reason_code" in parsed:
+        if (
+            set(parsed) != {"schema", "outcome", "changes", "reason_code"}
+            or parsed.get("schema") != "agent00x-worker-result/v2"
+        ):
+            raise ExecutionError("execution worker: provider response is invalid")
+        outcome = parsed.get("outcome")
+        changes = parsed.get("changes")
+        reason_code = parsed.get("reason_code")
+        if outcome == "changes":
+            if reason_code is not None:
+                raise ExecutionError("execution worker: provider response is invalid")
+        else:
+            expected_reasons = {
+                "clarification_required": "conflicting_requirements",
+                "blocked": "target_test_outcome_unknown",
+                "denied": "publication_not_authorized",
+            }
+            if (
+                type(outcome) is not str
+                or outcome not in expected_reasons
+                or changes is not None
+                or reason_code != expected_reasons.get(outcome)
+            ):
+                raise ExecutionError("execution worker: provider response is invalid")
+            return WorkerTerminalOutcome(outcome=outcome, reason_code=reason_code)
+    else:
+        if set(parsed) != {"changes"}:
+            raise ExecutionError("execution worker: provider response is invalid")
+        changes = parsed.get("changes")
     if not isinstance(changes, list) or not changes:
         raise ExecutionError("execution worker: provider response is invalid")
     if not isinstance(declared_change_paths, tuple) or not declared_change_paths:

@@ -9,14 +9,21 @@ host trust.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import math
+import os
 import re
+import ssl
 import threading
 from typing import Callable
 
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from .signed_verifier_protocol import (
     MAX_SIGNED_VERIFIER_INVOCATION_BYTES,
@@ -41,6 +48,8 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}\Z")
 _CONTENT_LENGTH = re.compile(r"(?:0|[1-9][0-9]{0,8})\Z")
 _REJECTED_BODY = b'{"error":"request_rejected"}'
 _UNAVAILABLE_BODY = b'{"error":"verifier_unavailable"}'
+_EPHEMERAL_TLS_DNS_NAME = "testdev.local"
+_MAX_EPHEMERAL_TLS_MATERIAL_BYTES = 65_536
 
 
 @dataclass(frozen=True)
@@ -356,3 +365,208 @@ def create_loopback_http_server(
         raise SignedVerifierServiceError(
             "signed verifier HTTP service: server unavailable"
         ) from None
+
+
+def create_loopback_https_server(
+    service: SignedVerifierHTTPService,
+    port: int,
+    tls_context: ssl.SSLContext,
+    *,
+    request_timeout_seconds: float = 30.0,
+) -> HTTPServer:
+    """Bind the same one-request service to loopback with server-side TLS."""
+
+    if (
+        type(tls_context) is not ssl.SSLContext
+        or tls_context.protocol != ssl.PROTOCOL_TLS_SERVER
+        or tls_context.minimum_version < ssl.TLSVersion.TLSv1_2
+    ):
+        raise SignedVerifierServiceError(
+            "signed verifier HTTPS service: TLS configuration rejected"
+        )
+
+    server = create_loopback_http_server(
+        service, port, request_timeout_seconds=request_timeout_seconds
+    )
+    try:
+        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+        server.tls_enabled = True
+        return server
+    except Exception:
+        try:
+            server.server_close()
+        except Exception:
+            pass
+        raise SignedVerifierServiceError(
+            "signed verifier HTTPS service: server unavailable"
+        ) from None
+
+
+def create_ephemeral_verifier_tls_context() -> tuple[ssl.SSLContext, bytes, str]:
+    """Create a short-lived testdev.local TLS identity without key files.
+
+    The public CA certificate and its SHA-256 digest are returned for explicit
+    caller pinning. Private TLS material is loaded through sealed Linux memfds;
+    this function intentionally has no disk/environment fallback.
+    """
+
+    certificate_fd = -1
+    private_key_fd = -1
+    private_key_pem = bytearray()
+    try:
+        memfd_create = getattr(os, "memfd_create", None)
+        memfd_cloexec = getattr(os, "MFD_CLOEXEC", None)
+        memfd_allow_sealing = getattr(os, "MFD_ALLOW_SEALING", None)
+        if (
+            not callable(memfd_create)
+            or type(memfd_cloexec) is not int
+            or type(memfd_allow_sealing) is not int
+            or not os.path.isdir("/proc/self/fd")
+        ):
+            raise ValueError
+
+        ca_key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+        leaf_key = rsa.generate_private_key(public_exponent=65_537, key_size=2048)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        not_before = (now - timedelta(seconds=15)).replace(microsecond=0)
+        not_after = not_before + timedelta(minutes=30)
+        ca_name = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "Agent00X ephemeral verifier CA")]
+        )
+        leaf_name = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, _EPHEMERAL_TLS_DNS_NAME)]
+        )
+        ca_certificate = (
+            x509.CertificateBuilder()
+            .subject_name(ca_name)
+            .issuer_name(ca_name)
+            .public_key(ca_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(not_before)
+            .not_valid_after(not_after)
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=False,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=None,
+                    decipher_only=None,
+                ),
+                critical=True,
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+                critical=False,
+            )
+            .sign(ca_key, hashes.SHA256())
+        )
+        leaf_certificate = (
+            x509.CertificateBuilder()
+            .subject_name(leaf_name)
+            .issuer_name(ca_name)
+            .public_key(leaf_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(not_before)
+            .not_valid_after(not_after)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(
+                x509.SubjectAlternativeName(
+                    [x509.DNSName(_EPHEMERAL_TLS_DNS_NAME)]
+                ),
+                critical=False,
+            )
+            .add_extension(
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+                critical=False,
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=True,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    encipher_only=None,
+                    decipher_only=None,
+                ),
+                critical=True,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                    ca_key.public_key()
+                ),
+                critical=False,
+            )
+            .sign(ca_key, hashes.SHA256())
+        )
+        ca_pem = ca_certificate.public_bytes(serialization.Encoding.PEM)
+        chain_pem = (
+            leaf_certificate.public_bytes(serialization.Encoding.PEM) + ca_pem
+        )
+        private_key_pem.extend(
+            leaf_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        if (
+            not ca_pem
+            or len(ca_pem) > _MAX_EPHEMERAL_TLS_MATERIAL_BYTES
+            or len(chain_pem) > _MAX_EPHEMERAL_TLS_MATERIAL_BYTES
+            or not private_key_pem
+            or len(private_key_pem) > _MAX_EPHEMERAL_TLS_MATERIAL_BYTES
+        ):
+            raise ValueError
+
+        import fcntl
+
+        flags = memfd_cloexec | memfd_allow_sealing
+        certificate_fd = memfd_create("agent00x-verifier-chain", flags)
+        private_key_fd = memfd_create("agent00x-verifier-key", flags)
+        for descriptor, material in (
+            (certificate_fd, chain_pem),
+            (private_key_fd, private_key_pem),
+        ):
+            offset = 0
+            while offset < len(material):
+                written = os.write(descriptor, material[offset:])
+                if written <= 0:
+                    raise ValueError
+                offset += written
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            seals = (
+                fcntl.F_SEAL_WRITE
+                | fcntl.F_SEAL_GROW
+                | fcntl.F_SEAL_SHRINK
+                | fcntl.F_SEAL_SEAL
+            )
+            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(
+            certfile=f"/proc/self/fd/{certificate_fd}",
+            keyfile=f"/proc/self/fd/{private_key_fd}",
+        )
+        return context, ca_pem, hashlib.sha256(ca_pem).hexdigest()
+    except Exception:
+        raise SignedVerifierServiceError(
+            "signed verifier HTTPS service: ephemeral TLS identity unavailable"
+        ) from None
+    finally:
+        for descriptor in (private_key_fd, certificate_fd):
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except Exception:
+                    pass
+        for index in range(len(private_key_pem)):
+            private_key_pem[index] = 0

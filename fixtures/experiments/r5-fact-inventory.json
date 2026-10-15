@@ -1,0 +1,52 @@
+{
+  "schema": "agent00x-r5-fact-inventory/v1",
+  "source": {
+    "owner": "SoldatovAlexander",
+    "repository": "brainbooster_full_v11",
+    "commit": "2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e",
+    "tree": "2007066217aadafd9887fb3e3069220333b4fddb",
+    "path": "backend/routes.py",
+    "url": "https://raw.githubusercontent.com/SoldatovAlexander/brainbooster_full_v11/2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e/backend/routes.py",
+    "retrieval": "public-read-only",
+    "signature_verified": false
+  },
+  "facts": [
+    {
+      "id": "route.method-and-path",
+      "kind": "source-observation",
+      "statement": "The handler is registered as POST /save-session.",
+      "source_lines": [10, 11]
+    },
+    {
+      "id": "route.telegram-default",
+      "kind": "source-observation",
+      "statement": "A missing telegram_id uses the literal default local.",
+      "source_lines": [12, 12]
+    },
+    {
+      "id": "route.numeric-fields",
+      "kind": "source-observation",
+      "statement": "The handler converts level, correct, wrong, total, and time_ms with int() before executing SQL.",
+      "source_lines": [13, 17]
+    },
+    {
+      "id": "route.no-visible-numeric-validation",
+      "kind": "bounded-inference",
+      "statement": "No explicit numeric type or signed-64 range check appears between those conversions and the SQL insert in this handler.",
+      "source_lines": [13, 20]
+    },
+    {
+      "id": "route.database-write",
+      "kind": "source-observation",
+      "statement": "The handler inserts all five numeric values and telegram_id into the sessions table, then commits the connection.",
+      "source_lines": [18, 22]
+    },
+    {
+      "id": "route.success-response",
+      "kind": "source-observation",
+      "statement": "After commit, the handler returns a JSON object with status ok.",
+      "source_lines": [22, 23]
+    }
+  ],
+  "scope_note": "This inventory records only source observations and a bounded source-level inference. It does not assert runtime HTTP/SQLite outcomes, authorship, signed provenance, or behavior outside this pinned file."
+}

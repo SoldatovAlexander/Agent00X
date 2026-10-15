@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from .deepseek_worker import MODEL_NAME, REASONING_EFFORT
+from .deepseek_worker import (
+    MAX_LOCAL_MODEL_TIMEOUT_SECONDS,
+    MODEL_NAME,
+    REASONING_EFFORT,
+)
 
 
 MAX_TIMEOUT_SECONDS = 30.0

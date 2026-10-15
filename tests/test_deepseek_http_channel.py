@@ -102,11 +102,13 @@ class FakeConnection:
         self.error = error
         self.block_request = block_request
         self.closed_event = threading.Event()
+        self.request_started = threading.Event()
         self.request_args: tuple[object, ...] | None = None
         self.request_kwargs: dict[str, object] | None = None
         self.closed = False
 
     def request(self, *args: object, **kwargs: object) -> None:
+        self.request_started.set()
         if self.block_request:
             self.closed_event.wait()
         if self.error is not None:
@@ -670,14 +672,21 @@ class DeepSeekHTTPChannelTests(unittest.TestCase):
             DeepSeekHTTPChannelError,
             "^deepseek channel: provider request timed out$",
         ):
-            channel.create_chat_completion(valid_payload(), timeout_seconds=0.05)
+            context = ssl.create_default_context()
+            with patch(
+                "app_contracts.deepseek_http_channel._create_verified_ssl_context",
+                return_value=context,
+            ):
+                channel.create_chat_completion(
+                    valid_payload(), timeout_seconds=0.05
+                )
         elapsed = time.monotonic() - started
 
         self.assertLess(elapsed, 1.0)
         self.assertTrue(connection.closed)
         self.assertEqual(provider.calls, 1)
         self.assertEqual(len(factory_calls), 1)
-        self.assertIsNotNone(connection.request_args)
+        self.assertTrue(connection.request_started.is_set())
 
     def test_deadline_closes_a_blocked_response_read_without_retry(self):
         channel, provider, response, connection, factory_calls = self.make_channel(

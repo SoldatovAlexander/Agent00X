@@ -349,6 +349,39 @@ class SignedVerifierClientTests(unittest.TestCase):
         )
         self.assertNotIn("audit_only", client.limitations)
 
+    def test_expired_host_trust_before_transport_fails_without_dispatch(self):
+        client, _transport, service_transport, _enrollment, _authority_key = (
+            self.enrolled_client(trust_decision=True)
+        )
+
+        with patch.object(client, "has_current_independent_host_trust", return_value=False):
+            with self.assertRaisesRegex(
+                SignedVerifierClientError,
+                "^signed verifier client: host trust is not current$",
+            ):
+                client.verify(prepared_input())
+
+        self.assertEqual(service_transport.calls, [])
+
+    def test_host_trust_expiring_during_transport_fails_without_retry(self):
+        client, _transport, service_transport, _enrollment, _authority_key = (
+            self.enrolled_client(trust_decision=True)
+        )
+
+        with patch.object(
+            client,
+            "has_current_independent_host_trust",
+            side_effect=(True, False),
+        ) as check_trust:
+            with self.assertRaisesRegex(
+                SignedVerifierClientError,
+                "^signed verifier client: host trust is not current$",
+            ):
+                client.verify(prepared_input())
+
+        self.assertEqual(check_trust.call_count, 2)
+        self.assertEqual(len(service_transport.calls), 1)
+
     def test_unrelated_trust_decision_fails_configuration_before_transport(self):
         selected_profile = profile()
         signing_key = Ed25519PrivateKey.generate()
@@ -876,6 +909,7 @@ class SignedVerifierHTTPSTransportTests(unittest.TestCase):
         transport = self.make_transport(connection)
 
         self.assertEqual(transport.endpoint_url, self.ENDPOINT)
+        self.assertIsNone(transport.connect_address)
 
         self.assertEqual(transport.request(b"invocation"), b"attestation")
 
@@ -941,7 +975,6 @@ class SignedVerifierHTTPSTransportTests(unittest.TestCase):
             "https://verifier.example.com:0443/v1/verify",
             "https://127.0.0.1/v1/verify",
             "https://localhost/v1/verify",
-            "https://service.local/v1/verify",
         ):
             with self.subTest(endpoint=endpoint):
                 with self.assertRaisesRegex(
@@ -957,6 +990,95 @@ class SignedVerifierHTTPSTransportTests(unittest.TestCase):
                     SignedVerifierHTTPSTransport(
                         self.ENDPOINT, timeout_seconds=timeout
                     )
+
+        invalid_ca_configurations = (
+            {"custom_ca_bundle_path": "/tmp/ca.pem"},
+            {"custom_ca_bundle_sha256": "0" * 64},
+            {
+                "custom_ca_bundle_path": "relative/ca.pem",
+                "custom_ca_bundle_sha256": "0" * 64,
+            },
+            {
+                "custom_ca_bundle_path": "/tmp/ca.pem",
+                "custom_ca_bundle_sha256": "A" * 64,
+            },
+        )
+        for kwargs in invalid_ca_configurations:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(
+                    SignedVerifierHTTPSTransportError,
+                    "^signed verifier HTTPS transport: configuration rejected$",
+                ):
+                    SignedVerifierHTTPSTransport(self.ENDPOINT, **kwargs)
+
+        for address in (
+            "testdev.local",
+            "192.168.88.101:443",
+            "fe80::1%en0",
+            "fe80::1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "255.255.255.255",
+            "8.8.8.8",
+            "2001:4860::1",
+            "192.0.2.1",
+            "",
+        ):
+            with self.subTest(connect_address=address):
+                with self.assertRaisesRegex(
+                    SignedVerifierHTTPSTransportError,
+                    "^signed verifier HTTPS transport: configuration rejected$",
+                ):
+                    SignedVerifierHTTPSTransport(
+                        "https://testdev.local/v1/verify",
+                        connect_address=address,
+                    )
+
+        with self.assertRaisesRegex(
+            SignedVerifierHTTPSTransportError,
+            "^signed verifier HTTPS transport: configuration rejected$",
+        ):
+            SignedVerifierHTTPSTransport(
+                "https://testdev.local/v1/verify",
+                connect_address="192.168.88.101",
+                connection_factory=lambda *_args, **_kwargs: None,
+            )
+
+        for port in (True, False, 0, 443, 1023, 65_536, "8443"):
+            with self.subTest(connect_port=port):
+                with self.assertRaisesRegex(
+                    SignedVerifierHTTPSTransportError,
+                    "^signed verifier HTTPS transport: configuration rejected$",
+                ):
+                    SignedVerifierHTTPSTransport(
+                        "https://testdev.local/v1/verify",
+                        connect_address="127.0.0.1",
+                        connect_port=port,
+                    )
+
+        with self.assertRaisesRegex(
+            SignedVerifierHTTPSTransportError,
+            "^signed verifier HTTPS transport: configuration rejected$",
+        ):
+            SignedVerifierHTTPSTransport(
+                "https://testdev.local/v1/verify", connect_port=8443
+            )
+
+        for address in (
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.88.101",
+            "127.0.0.1",
+            "169.254.1.2",
+            "fd00::1",
+        ):
+            with self.subTest(allowed_connect_address=address):
+                pinned = SignedVerifierHTTPSTransport(
+                    "https://testdev.local/v1/verify",
+                    connect_address=address,
+                )
+                self.assertEqual(pinned.connect_address, address)
+                self.assertIsNone(pinned.connect_port)
 
         connection = FakeHTTPSConnection()
         transport = self.make_transport(connection)
@@ -1065,7 +1187,7 @@ class SignedVerifierHTTPSTransportTests(unittest.TestCase):
 
 
 class SignedVerifierHTTPSTransportLoopbackTests(unittest.TestCase):
-    ENDPOINT = "https://verifier.example.com/v1/verify"
+    ENDPOINT = "https://testdev.local/v1/verify"
 
     def create_certificate(self, openssl, directory, name, dns_name):
         certificate = Path(directory) / f"{name}-cert.pem"
@@ -1143,10 +1265,8 @@ class SignedVerifierHTTPSTransportLoopbackTests(unittest.TestCase):
 
     def make_transport(self, server, trusted_certificate, *, timeout_seconds=1):
         def factory(host, *, port, timeout, context):
-            self.assertEqual(host, "verifier.example.com")
+            self.assertEqual(host, "testdev.local")
             self.assertEqual(port, 443)
-            if trusted_certificate is not None:
-                context.load_verify_locations(cafile=trusted_certificate)
             connection = http.client.HTTPSConnection(
                 host,
                 port=server.server_port,
@@ -1164,9 +1284,17 @@ class SignedVerifierHTTPSTransportLoopbackTests(unittest.TestCase):
             connection._create_connection = connect_to_loopback
             return connection
 
+        ca_path = str(trusted_certificate) if trusted_certificate is not None else None
+        ca_digest = (
+            hashlib.sha256(Path(ca_path).read_bytes()).hexdigest()
+            if ca_path is not None
+            else None
+        )
         return SignedVerifierHTTPSTransport(
             self.ENDPOINT,
             timeout_seconds=timeout_seconds,
+            custom_ca_bundle_path=ca_path,
+            custom_ca_bundle_sha256=ca_digest,
             connection_factory=factory,
         )
 
@@ -1184,7 +1312,7 @@ class SignedVerifierHTTPSTransportLoopbackTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="verifier-loopback-tls-") as directory:
             matching_certificate, matching_key = self.create_certificate(
-                openssl, directory, "matching", "verifier.example.com"
+                openssl, directory, "matching", "testdev.local"
             )
             wrong_certificate, wrong_key = self.create_certificate(
                 openssl, directory, "wrong-host", "other.example.com"
@@ -1234,6 +1362,98 @@ class SignedVerifierHTTPSTransportLoopbackTests(unittest.TestCase):
             finally:
                 self.stop_server(untrusted_server)
 
+            pinned_ca_server = self.start_server(matching_certificate, matching_key)
+            try:
+                server, _thread, received, _release, _finished, _requests = pinned_ca_server
+                ca_digest = hashlib.sha256(
+                    Path(matching_certificate).read_bytes()
+                ).hexdigest()
+                transport = SignedVerifierHTTPSTransport(
+                    self.ENDPOINT,
+                    custom_ca_bundle_path=str(matching_certificate),
+                    custom_ca_bundle_sha256="0" * 64,
+                    connection_factory=lambda *_args, **_kwargs: self.fail(
+                        "custom CA digest mismatch must fail before connection"
+                    ),
+                )
+                self.assertNotEqual(ca_digest, "0" * 64)
+                with self.assertRaisesRegex(
+                    SignedVerifierHTTPSTransportError,
+                    "^signed verifier HTTPS transport: TLS trust configuration rejected$",
+                ):
+                    transport.request(b"canonical invocation")
+                self.assertFalse(received.is_set())
+            finally:
+                self.stop_server(pinned_ca_server)
+
+    def test_ip_dial_override_keeps_testdev_hostname_tls_verification(self):
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            self.skipTest("openssl is unavailable for ephemeral TLS fixture")
+
+        with tempfile.TemporaryDirectory(prefix="verifier-ip-dial-tls-") as directory:
+            certificate, private_key = self.create_certificate(
+                openssl, directory, "matching", "testdev.local"
+            )
+            state = self.start_server(certificate, private_key)
+            server, _thread, received, _release, finished, requests = state
+            ca_digest = hashlib.sha256(Path(certificate).read_bytes()).hexdigest()
+            transport = SignedVerifierHTTPSTransport(
+                self.ENDPOINT,
+                custom_ca_bundle_path=str(certificate),
+                custom_ca_bundle_sha256=ca_digest,
+                connect_address="127.0.0.1",
+                connect_port=server.server_port,
+            )
+            try:
+                with patch(
+                    "app_contracts.signed_verifier_client.socket.getaddrinfo",
+                    side_effect=AssertionError("explicit address must bypass DNS"),
+                ):
+                    body = transport.request(b"canonical invocation")
+                self.assertEqual(body, b'{"transport":"loopback"}')
+                self.assertEqual(transport.endpoint_url, self.ENDPOINT)
+                self.assertEqual(transport.connect_address, "127.0.0.1")
+                self.assertEqual(transport.connect_port, server.server_port)
+                self.assertTrue(received.wait(1))
+                self.assertTrue(finished.wait(1))
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(requests[0][0], "/v1/verify")
+                self.assertEqual(requests[0][2], b"canonical invocation")
+                self.assertEqual(requests[0][1]["Host"], "testdev.local")
+                self.assertNotIn("Authorization", requests[0][1])
+            finally:
+                self.stop_server(state)
+
+            wrong_certificate, wrong_private_key = self.create_certificate(
+                openssl, directory, "wrong-host", "other.example.com"
+            )
+            wrong_state = self.start_server(wrong_certificate, wrong_private_key)
+            wrong_server, _thread, wrong_received, _release, _finished, _requests = wrong_state
+            wrong_ca_digest = hashlib.sha256(
+                Path(wrong_certificate).read_bytes()
+            ).hexdigest()
+            wrong_host_transport = SignedVerifierHTTPSTransport(
+                self.ENDPOINT,
+                custom_ca_bundle_path=str(wrong_certificate),
+                custom_ca_bundle_sha256=wrong_ca_digest,
+                connect_address="127.0.0.1",
+                connect_port=wrong_server.server_port,
+            )
+            try:
+                with patch(
+                    "app_contracts.signed_verifier_client.socket.getaddrinfo",
+                    side_effect=AssertionError("explicit address must bypass DNS"),
+                ):
+                    with self.assertRaisesRegex(
+                        SignedVerifierHTTPSTransportError,
+                        "^signed verifier HTTPS transport: request failed$",
+                    ):
+                        wrong_host_transport.request(b"canonical invocation")
+                self.assertFalse(wrong_received.is_set())
+            finally:
+                self.stop_server(wrong_state)
+
     def test_real_loopback_stall_is_interrupted_by_total_deadline(self):
         openssl = shutil.which("openssl")
         if openssl is None:
@@ -1241,7 +1461,7 @@ class SignedVerifierHTTPSTransportLoopbackTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="verifier-loopback-stall-") as directory:
             certificate, private_key = self.create_certificate(
-                openssl, directory, "matching", "verifier.example.com"
+                openssl, directory, "matching", "testdev.local"
             )
             state = self.start_server(certificate, private_key, stall=True)
             server, _thread, received, _release, _finished, _requests = state

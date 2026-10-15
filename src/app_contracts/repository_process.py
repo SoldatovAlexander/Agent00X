@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import difflib
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .digests import sha256_bytes, sha256_digest
 from .sandbox import LocalProcessSandbox
@@ -14,6 +14,20 @@ from .validator import ContractValidationError
 
 
 _TEST_FAILURE_MARKER_PREFIX = "agent00x:test-failure:"
+_DETAIL_FIELDS = ("level", "correct", "wrong", "total", "time_ms")
+_DETAIL_CASES = (
+    ("malformed", "bool"),
+    ("malformed", "fractional"),
+    ("malformed", "numeric-string"),
+    ("sqlite-range", "above"),
+    ("sqlite-range", "below"),
+)
+_DETAILED_TEST_FAILURE_CATEGORIES = frozenset(
+    f"{category}-{phase}-{field}-{case}"
+    for category, case in _DETAIL_CASES
+    for field in _DETAIL_FIELDS
+    for phase in ("status", "no-write")
+)
 _SAFE_TEST_FAILURE_CATEGORIES = frozenset({
     "readiness-exit",
     "readiness-timeout",
@@ -26,7 +40,26 @@ _SAFE_TEST_FAILURE_CATEGORIES = frozenset({
     "valid-status",
     "valid-body",
     "valid-row",
-})
+}) | _DETAILED_TEST_FAILURE_CATEGORIES
+_SAFE_TEST_FAILURE_FALLBACK = "allowlisted-tests-failed"
+SAFE_TARGET_TEST_FAILURE_CODES = frozenset(
+    f"target-test-{category}"
+    for category in _SAFE_TEST_FAILURE_CATEGORIES | {_SAFE_TEST_FAILURE_FALLBACK}
+)
+
+
+class AllowlistedTestFailureError(ContractValidationError):
+    """A failed fixed test command with one safe, allowlisted category."""
+
+    __slots__ = ("category",)
+
+    def __init__(self, category: object) -> None:
+        if type(category) is not str or category not in (
+            _SAFE_TEST_FAILURE_CATEGORIES | {_SAFE_TEST_FAILURE_FALLBACK}
+        ):
+            category = _SAFE_TEST_FAILURE_FALLBACK
+        self.category = category
+        super().__init__("allowlisted tests failed")
 
 
 def _safe_test_failure_category(stdout: str) -> str:
@@ -72,6 +105,7 @@ def prepare_change(
     changes: Mapping[str, str],
     test_command: Sequence[str],
     now: datetime | None = None,
+    workspace_apply: Callable[[Callable[[], None]], None] | None = None,
 ) -> PreparedChange:
     """Apply scoped text replacements and produce verified immutable artifacts."""
 
@@ -92,6 +126,8 @@ def prepare_change(
         or any(not isinstance(part, str) or not part for part in test_command)
     ):
         raise ContractValidationError("test command is malformed")
+    if workspace_apply is not None and not callable(workspace_apply):
+        raise ContractValidationError("workspace apply callback is malformed")
     for label, value in (
         ("process_id", process_id),
         ("task_id", task_id),
@@ -140,20 +176,39 @@ def prepare_change(
             raise ContractValidationError(f"proposed content is unchanged: {relative_name}")
         planned.append((posix, old_content, new_content))
 
-    for posix, old_content, new_content in planned:
-        workspace_file = _contained_file(sandbox.workspace, _safe_relative_path(posix))
-        workspace_file.write_text(new_content, encoding="utf-8")
-        changed_paths.append(posix)
-        verified_pairs.append((posix, new_content))
-        source_digests.append(sha256_bytes(old_content.encode("utf-8")))
-        patch_parts.extend(
-            difflib.unified_diff(
-                old_content.splitlines(keepends=True),
-                new_content.splitlines(keepends=True),
-                fromfile=f"a/{posix}",
-                tofile=f"b/{posix}",
+    def apply_planned_changes() -> None:
+        for posix, old_content, new_content in planned:
+            workspace_file = _contained_file(
+                sandbox.workspace, _safe_relative_path(posix)
             )
-        )
+            workspace_file.write_text(new_content, encoding="utf-8")
+            changed_paths.append(posix)
+            verified_pairs.append((posix, new_content))
+            source_digests.append(sha256_bytes(old_content.encode("utf-8")))
+            patch_parts.extend(
+                difflib.unified_diff(
+                    old_content.splitlines(keepends=True),
+                    new_content.splitlines(keepends=True),
+                    fromfile=f"a/{posix}",
+                    tofile=f"b/{posix}",
+                )
+            )
+
+    if workspace_apply is None:
+        apply_planned_changes()
+    else:
+        dispatch_used = False
+
+        def guarded_apply() -> None:
+            nonlocal dispatch_used
+            if dispatch_used:
+                raise ContractValidationError("workspace apply callback is unavailable")
+            dispatch_used = True
+            apply_planned_changes()
+
+        workspace_apply(guarded_apply)
+        if not dispatch_used:
+            raise ContractValidationError("workspace apply callback did not dispatch")
 
     patch = "".join(patch_parts)
     if not patch:
@@ -215,10 +270,7 @@ def prepare_change(
     }
     if verification["verdict"] != "pass":
         failure_category = _safe_test_failure_category(test_result.stdout)
-        raise ContractValidationError(
-            "verification failed; staged change was not created: "
-            f"{failure_category}"
-        )
+        raise AllowlistedTestFailureError(failure_category)
 
     verification_digest = sha256_digest(verification)
     staged = {

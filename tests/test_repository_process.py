@@ -15,7 +15,9 @@ TWIN_BASE_METADATA = {
 }
 
 from app_contracts.digests import sha256_bytes, sha256_digest
+from app_contracts.brainbooster_target_profile import PINNED_HTTP_DB_FAILURE_CATEGORIES
 from app_contracts.repository_process import (
+    AllowlistedTestFailureError,
     PublishableFile,
     _safe_relative_path,
     build_publish_manifest,
@@ -62,6 +64,97 @@ class RepositoryProcessTests(unittest.TestCase):
         self.assertEqual(TWIN_NOW.tzinfo, timezone.utc)
         self.assertEqual(TWIN_BASE_METADATA["base_commit"], "a" * 40)
         self.assertNotIn("token", repr(TWIN_BASE_METADATA))
+
+    def test_workspace_apply_callback_brackets_all_proposed_file_writes(self):
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        source = (sandbox.workspace / "calculator.py").read_text(encoding="utf-8")
+        sequence = []
+
+        def gated_apply(dispatch):
+            self.assertEqual(
+                (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"),
+                source,
+            )
+            sequence.append("before")
+            dispatch()
+            sequence.append("after")
+
+        prepared = prepare_change(
+            sandbox,
+            process_id="process-workspace-apply",
+            task_id="task-workspace-apply",
+            repository_id="fixture-repository",
+            base_commit="fixture-base-001",
+            changes={"calculator.py": self.new_calculator},
+            test_command=["python3", "-m", "unittest", "-v"],
+            workspace_apply=gated_apply,
+        )
+
+        self.assertEqual(sequence, ["before", "after"])
+        self.assertEqual(
+            (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"),
+            self.new_calculator,
+        )
+        self.assertEqual(prepared.verified_contents, (("calculator.py", self.new_calculator),))
+
+    def test_workspace_apply_callback_refusal_prevents_proposed_file_writes(self):
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        source = (sandbox.workspace / "calculator.py").read_text(encoding="utf-8")
+
+        def refuse_apply(_dispatch):
+            raise RuntimeError("synthetic workspace gate refusal")
+
+        with self.assertRaisesRegex(RuntimeError, "synthetic workspace gate refusal"):
+            prepare_change(
+                sandbox,
+                process_id="process-workspace-refusal",
+                task_id="task-workspace-refusal",
+                repository_id="fixture-repository",
+                base_commit="fixture-base-001",
+                changes={"calculator.py": self.new_calculator},
+                test_command=["python3", "-m", "unittest", "-v"],
+                workspace_apply=refuse_apply,
+            )
+
+        self.assertEqual(
+            (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"),
+            source,
+        )
+
+    def test_workspace_apply_callback_must_dispatch_exactly_once(self):
+        sandbox = self.backend.create(self.fixture, {"python3"})
+        self.addCleanup(sandbox.close)
+        source = (sandbox.workspace / "calculator.py").read_text(encoding="utf-8")
+        kwargs = {
+            "process_id": "process-workspace-no-dispatch",
+            "task_id": "task-workspace-no-dispatch",
+            "repository_id": "fixture-repository",
+            "base_commit": "fixture-base-001",
+            "changes": {"calculator.py": self.new_calculator},
+            "test_command": ["python3", "-m", "unittest", "-v"],
+        }
+
+        with self.subTest(mode="no-dispatch"):
+            with self.assertRaisesRegex(
+                ContractValidationError, "workspace apply callback did not dispatch"
+            ):
+                prepare_change(sandbox, workspace_apply=lambda _dispatch: None, **kwargs)
+            self.assertEqual(
+                (sandbox.workspace / "calculator.py").read_text(encoding="utf-8"),
+                source,
+            )
+
+        with self.subTest(mode="duplicate-dispatch"):
+            def duplicate_dispatch(dispatch):
+                dispatch()
+                dispatch()
+
+            with self.assertRaisesRegex(
+                ContractValidationError, "workspace apply callback is unavailable"
+            ):
+                prepare_change(sandbox, workspace_apply=duplicate_dispatch, **kwargs)
 
     def test_twin_preparations_keep_patch_digest_and_manifest_workspace_bound(self):
         first, second = self.twin_sandboxes()
@@ -725,10 +818,7 @@ class RepositoryProcessTests(unittest.TestCase):
     def test_failed_tests_do_not_create_staged_change(self):
         broken = self.new_calculator.replace("return left + right", "return left - right")
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
-            with self.assertRaisesRegex(
-                ContractValidationError,
-                "verification failed; staged change was not created: allowlisted-tests-failed",
-            ):
+            with self.assertRaises(AllowlistedTestFailureError) as raised:
                 prepare_change(
                     sandbox,
                     process_id="process-m1-demo",
@@ -738,6 +828,8 @@ class RepositoryProcessTests(unittest.TestCase):
                     changes={"calculator.py": broken},
                     test_command=["python3", "-m", "unittest", "-v"],
                 )
+        self.assertEqual(raised.exception.category, "allowlisted-tests-failed")
+        self.assertEqual(str(raised.exception), "allowlisted tests failed")
 
     def test_failed_test_exposes_only_allowlisted_stdout_marker(self):
         from types import SimpleNamespace
@@ -754,7 +846,7 @@ class RepositoryProcessTests(unittest.TestCase):
             "valid-status",
             "valid-body",
             "valid-row",
-        ):
+        ) + tuple(sorted(PINNED_HTTP_DB_FAILURE_CATEGORIES)):
             with self.subTest(category=category):
                 with self.backend.create(self.fixture, {"python3"}) as sandbox:
                     sandbox.run = lambda *args, **kwargs: SimpleNamespace(
@@ -765,7 +857,7 @@ class RepositoryProcessTests(unittest.TestCase):
                         ),
                         stderr="PRIVATE-STDERR-CANARY",
                     )
-                    with self.assertRaises(ContractValidationError) as raised:
+                    with self.assertRaises(AllowlistedTestFailureError) as raised:
                         prepare_change(
                             sandbox,
                             process_id="process-m1-diagnostic",
@@ -775,8 +867,9 @@ class RepositoryProcessTests(unittest.TestCase):
                             changes={"calculator.py": self.new_calculator},
                             test_command=["python3", "-m", "unittest", "-v"],
                         )
+                self.assertEqual(raised.exception.category, category)
                 message = str(raised.exception)
-                self.assertIn(f": {category}", message)
+                self.assertEqual(message, "allowlisted tests failed")
                 self.assertNotIn("PRIVATE-STDOUT-CANARY", message)
                 self.assertNotIn("PRIVATE-STDERR-CANARY", message)
 
@@ -797,7 +890,7 @@ class RepositoryProcessTests(unittest.TestCase):
                         stdout=stdout,
                         stderr="PRIVATE-STDERR-CANARY",
                     )
-                    with self.assertRaises(ContractValidationError) as raised:
+                    with self.assertRaises(AllowlistedTestFailureError) as raised:
                         prepare_change(
                             sandbox,
                             process_id="process-m1-diagnostic",
@@ -808,7 +901,8 @@ class RepositoryProcessTests(unittest.TestCase):
                             test_command=["python3", "-m", "unittest", "-v"],
                         )
                 message = str(raised.exception)
-                self.assertTrue(message.endswith("allowlisted-tests-failed"))
+                self.assertEqual(raised.exception.category, "allowlisted-tests-failed")
+                self.assertEqual(message, "allowlisted tests failed")
                 self.assertNotIn("PRIVATE-CANARY", message)
                 self.assertNotIn("PRIVATE-STDERR-CANARY", message)
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 import copy
 import json
 from contextlib import closing
+import os
 from pathlib import Path
 import sqlite3
+import stat
 import sys
 import tempfile
 import unittest
@@ -21,7 +23,7 @@ from app_contracts.observation_store import (
     PreDispatchError,
     run_gated_dispatch,
 )
-from app_contracts.validator import ContractValidationError
+from app_contracts.validator import ContractValidationError, validate_schema
 
 
 def valid_event(event_id: str = "event-store-demo-001", sequence: int = 0) -> dict:
@@ -61,6 +63,46 @@ def valid_checkpoint(trigger_event_id: str = "event-store-demo-001", cursor: int
 
 
 class ObservationStoreTests(unittest.TestCase):
+    def test_sandbox_return_code_schema_is_strict_and_bounded(self):
+        for returncode in (-255, 0, 255):
+            with self.subTest(returncode=returncode):
+                accepted = valid_event()
+                accepted["safe_parameters"] = {
+                    "sandbox_return_code": returncode
+                }
+                ObservationStore().append(accepted)
+
+        for returncode in (True, False, -256, 256, 1.5, "7", None):
+            with self.subTest(returncode=repr(returncode)):
+                invalid = valid_event()
+                invalid["safe_parameters"] = {
+                    "sandbox_return_code": returncode
+                }
+                with self.assertRaises(ContractValidationError):
+                    ObservationStore().append(invalid)
+
+        with self.assertRaisesRegex(RuntimeError, "numeric bounds are inconsistent"):
+            validate_schema({"type": "integer", "minimum": 2, "maximum": 1})
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file-mode assertion")
+    def test_new_sqlite_database_is_private_and_existing_mode_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "private-observations.sqlite3"
+            with SQLiteObservationStore(database):
+                self.assertEqual(stat.S_IMODE(database.stat().st_mode), 0o600)
+            with SQLiteObservationStore(database):
+                self.assertEqual(stat.S_IMODE(database.stat().st_mode), 0o600)
+
+            preexisting = Path(directory) / "existing-observations.sqlite3"
+            preexisting.touch()
+            preexisting.chmod(0o644)
+            with SQLiteObservationStore(preexisting):
+                self.assertEqual(stat.S_IMODE(preexisting.stat().st_mode), 0o644)
+
+    def test_sqlite_store_keeps_in_memory_database_support(self):
+        with SQLiteObservationStore(":memory:") as store:
+            self.assertEqual(len(store), 0)
+
     def test_sqlite_store_creates_and_reopens_versioned_empty_journal(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "observations.sqlite3"

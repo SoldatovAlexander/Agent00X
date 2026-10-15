@@ -11,7 +11,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from app_contracts.executor import ExecutionError, WorkerInput, WorkerProposal
+from app_contracts.executor import (
+    ExecutionError,
+    WorkerInput,
+    WorkerProposal,
+    WorkerTerminalOutcome,
+)
 from app_contracts.openai_worker import (
     OpenAIProposalWorker,
     OpenAIResponsesChannel,
@@ -54,7 +59,12 @@ class FakeChannel:
 
 
 def success_result(content: str = "fixed content") -> ResponsesModelResult:
-    payload = {"changes": [{"path": "calculator.py", "content": content}]}
+    payload = {
+        "schema": "agent00x-worker-result/v2",
+        "outcome": "changes",
+        "changes": [{"path": "calculator.py", "content": content}],
+        "reason_code": None,
+    }
     return ResponsesModelResult(status="completed", output_text=json.dumps(payload))
 
 
@@ -80,7 +90,9 @@ class RequestMappingTests(unittest.TestCase):
         self.assertEqual(text_format["type"], "json_schema")
         self.assertEqual(text_format["strict"], True)
         schema = text_format["schema"]
-        self.assertEqual(schema["required"], ["changes"])
+        self.assertEqual(
+            schema["required"], ["schema", "outcome", "changes", "reason_code"]
+        )
         changes_schema = schema["properties"]["changes"]
         self.assertGreaterEqual(changes_schema["minItems"], 1)
         item_schema = changes_schema["items"]
@@ -166,6 +178,94 @@ class ModelInputValidationTests(unittest.TestCase):
 
 
 class ProviderResponseTests(unittest.TestCase):
+    def test_legacy_v1_patch_remains_accepted(self):
+        channel = FakeChannel(
+            result=ResponsesModelResult(
+                status="completed",
+                output_text=json.dumps(
+                    {"changes": [{"path": "calculator.py", "content": "legacy"}]}
+                ),
+            )
+        )
+        self.assertEqual(
+            OpenAIProposalWorker(channel=channel).propose(valid_task()),
+            WorkerProposal((("calculator.py", "legacy"),)),
+        )
+        self.assertEqual(channel.calls, 1)
+
+    def test_legacy_v1_patch_remains_accepted(self):
+        channel = FakeChannel(
+            result=ResponsesModelResult(
+                status="completed",
+                output_text=json.dumps(
+                    {"changes": [{"path": "calculator.py", "content": "legacy"}]}
+                ),
+            )
+        )
+        self.assertEqual(
+            OpenAIProposalWorker(channel=channel).propose(valid_task()),
+            WorkerProposal((("calculator.py", "legacy"),)),
+        )
+        self.assertEqual(channel.calls, 1)
+
+    def test_v2_terminal_outcomes_are_exact_and_bounded(self):
+        cases = (
+            ("clarification_required", "conflicting_requirements"),
+            ("blocked", "target_test_outcome_unknown"),
+            ("denied", "publication_not_authorized"),
+        )
+        for outcome, reason_code in cases:
+            payload = {
+                "schema": "agent00x-worker-result/v2",
+                "outcome": outcome,
+                "changes": None,
+                "reason_code": reason_code,
+            }
+            channel = FakeChannel(
+                result=ResponsesModelResult(
+                    status="completed", output_text=json.dumps(payload)
+                )
+            )
+            result = OpenAIProposalWorker(channel=channel).propose(valid_task())
+            self.assertEqual(result, WorkerTerminalOutcome(outcome, reason_code))
+            self.assertEqual(channel.calls, 1)
+
+    def test_v2_changes_are_accepted_and_mixed_envelopes_rejected(self):
+        valid = {
+            "schema": "agent00x-worker-result/v2",
+            "outcome": "changes",
+            "changes": [{"path": "calculator.py", "content": "v2"}],
+            "reason_code": None,
+        }
+        self.assertEqual(
+            OpenAIProposalWorker(
+                channel=FakeChannel(
+                    result=ResponsesModelResult(
+                        status="completed", output_text=json.dumps(valid)
+                    )
+                )
+            ).propose(valid_task()),
+            WorkerProposal((("calculator.py", "v2"),)),
+        )
+        invalid = (
+            {**valid, "reason_code": "publication_not_authorized"},
+            {**valid, "extra": True},
+            {**valid, "schema": "agent00x-worker-result/v3"},
+            {**valid, "outcome": "blocked"},
+            {**valid, "outcome": [], "reason_code": None},
+            {**valid, "changes": None},
+        )
+        for payload in invalid:
+            channel = FakeChannel(
+                result=ResponsesModelResult(
+                    status="completed", output_text=json.dumps(payload)
+                )
+            )
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                ExecutionError, "provider response is invalid"
+            ):
+                OpenAIProposalWorker(channel=channel).propose(valid_task())
+
     def test_refusal_incomplete_or_bad_output_gives_response_invalid(self):
         cases = [
             ResponsesModelResult(status="completed", output_text=json.dumps({"changes": [{"path": "calculator.py", "content": "x"}]}), refusal="declined"),

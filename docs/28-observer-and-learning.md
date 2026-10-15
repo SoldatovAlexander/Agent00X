@@ -1,9 +1,10 @@
 # Наблюдатель, контрольные точки и обучение через корректировку
 
 Статус: концепция принята; observer contracts и локальный SQLite journal
-реализованы частично; structural report может разрешать content-addressed
-event и checkpoint artifacts из отдельного local SQLite store, но полный runtime collector,
-checkpoint/workspace restore, replay и учебные ветки отсутствуют
+реализованы частично; structural report разрешает content-addressed event и
+checkpoint references и поддерживает cursor/time-bounded views. Полный runtime
+collector, восстановление workspace в исполняемую среду, replay и исполнение
+учебной ветки остаются не реализованы.
 
 Дата: 2026-09-07
 
@@ -113,6 +114,51 @@ Checkpoint и соответствующее событие намерения �
 `correction_proposed`, `branch_created`. Повторное получение одного `event_id`
 не создаёт вторую запись; конфликт содержимого с тем же ID отклоняется.
 
+Для завершённого Worker без patch поле `safe_parameters.worker_outcome` может
+содержать только `clarification_required`, `blocked` или `denied`. Свободный
+reason text, prompt, raw model output и reasoning не записываются; reason code
+возвращается только как фиксированное CLI-поле. Такой исход не является
+approval, разрешением или capability.
+
+Для terminal-события `SandboxSession.run.*` допускается только строго
+ограниченный integer `safe_parameters.sandbox_return_code` в диапазоне
+[-255, 255]. Он помогает различать классы завершения процесса, но не заменяет
+диагностику и не содержит argv, stdout/stderr или содержимое результата.
+Структурный отчёт проецирует только это поле для двух allowlisted sandbox
+операций и не раскрывает остальные `safe_parameters`.
+
+EXP-1304 confirmed that the fixed target HTTP/SQLite probe emits a deterministic
+`agent00x:test-failure:<code>` marker for 57 statically bounded cases (50
+field/invalid-value checks and seven fixed readiness/overflow/valid controls).
+The Docker sandbox returns command stdout/stderr to the parent process in
+memory, but the observer now persists only return code 1 and, when the fixed
+target command returns exactly one newline-terminated allowlisted marker, its
+bounded failure code. EXP-1305 validates all 57 fixed codes against a strict
+schema enum and exposes the code as a diagnostic report fact. Unknown,
+malformed, extra-line, and wrong-scope markers are discarded; stdout/stderr,
+argv, prompts, candidates, and source remain absent from journal/report. Such a
+self-reported marker is potentially untrusted metadata, not an independent
+verifier verdict, and cannot affect approval or publication. Focused tests
+passed (79 tests). After the EXP-1306 image/code pin refresh, the full suite
+passed (1,740 tests, 25 skipped). EXP-1306's exact image metadata inspect
+passed, but both synthetic container tests failed at child exit 1: the image
+omitted `brainbooster_target_profile.py`, now imported by `observer_runtime.py`.
+No retry or container-output diagnosis was performed. EXP-1307 added the
+profile to the image context and passed both synthetic container tests, but the
+full suite detected that the image/code pin was embedded in that same hashed
+profile. EXP-1308 moved the pin pair to `verifier_image_pin.py`, outside the
+image context. Focused tests passed (104; 2 skipped); one offline
+`linux/amd64` build and independent code-digest calculation matched. Exact
+image `sha256:babefaa38e0e068f3af35b9f00d0ff0ea319a69e3a13697fe471b3e01a2cdf6a`
+passed metadata inspection (48,854,834 bytes, nine ordered layers), both
+synthetic container tests and the full suite (1,744 tests, 25 skipped). The
+source digest is
+`sha256:f63ecc2359fe0c9dcd51893d55d831bacb33daa0b289a3b87d0b6a65de1d660f`.
+Two in-memory verifier-host bundle builds matched at
+`sha256:98a8432f7d6eb48f9079d30979b8887daa3ea4358958e5c062ca83b6a285ae67`
+(32 members, 540,864 source bytes); this is not a deployment pin. No Worker
+retry or remote verifier action occurred.
+
 ### Checkpoint — откуда можно продолжить исследование
 
 | Поля | Значение |
@@ -150,9 +196,18 @@ Checkpoint и соответствующее событие намерения �
 Отчёт содержит вопрос, время среза, границу записанных событий, факты со ссылками,
 заявленные основания, результаты и пробелы. Интерпретации наблюдателя помечены
 отдельно. Запрос «что было известно в момент T» использует только данные,
-доступные тогда. Запрос «что теперь известно о моменте T» может включать поздние
-результаты, но обязан их обозначать. Нет события завершения — исход неизвестен,
-а не автоматически успешен или ошибочен.
+доступные тогда. CLI `--as-of-recorded-at` ограничивает события по `recorded_at`,
+а контрольные точки — по времени trigger-события и `created_at`. Срез не
+разрешает содержимое артефактов из текущего store: время их доступности не
+записано, поэтому пробел указывается явно. Локальные timestamps не
+аутентифицированы и не доказывают независимую временную последовательность.
+Запрос «что теперь известно о моменте T» доступен через
+`--about-occurred-at`: он включает события, произошедшие к T, в том числе
+записанные позже, и помечает их `recorded_after_about_time`. Такой срез явно
+показывает неизвестность времени записи контрольных точек и доступности
+артефактов; найденные сейчас артефакты не объявляются доступными тогда. Нет
+события завершения — исход неизвестен, а не автоматически успешен или
+ошибочен.
 
 Если история неполная, система выдаёт частичный отчёт. Обещание «на любой момент»
 ограничено периодом наблюдения и сроком хранения разрешённых данных. Нельзя
@@ -379,3 +434,72 @@ digests and byte counts. The 10,000-reference limit covers both events and
 checkpoints. Resolution confirms only content-addressed availability; it does
 not deserialize state, restore a workspace, replay a step, or prove that the
 checkpoint is complete or trustworthy.
+
+Batch TU / EXP-950 adds one deterministic `simulation-step-patch/v1` operation
+over a `MaterializedSimulationWorkspace` and schema-valid `LearningCorrection`.
+The patch binds the exact correction ID/version/canonical digest, source
+manifest and each exact file preimage digest; it can only replace existing
+bounded files in a separate in-memory result. Paths, replacement digests,
+base64, sizes and credential-like content fail closed. Evidence contains
+step/result/correction digests, changed paths and file count, with
+`code_executed=false` and `external_effects_replayed=false`. The API has no
+Worker, callback, command or dispatch input. This is a concrete alternative
+workspace step, not execution or replay of the restored code: no target tests,
+filesystem workspace, persisted branch result, sandbox isolation or
+learning-transfer evaluation is established.
+The positive test prepared its materializer input in an isolated temporary
+SQLite fixture, removed automatically; the simulation-step function itself
+does not access or write SQLite.
+
+Batch UC / EXP-958 exercises that exact in-memory correction in two separate
+sessions of the current digest-pinned target image. The uncorrected synthetic
+workspace fails its target test; the EXP-950 preimage-bound replacement passes.
+Both sessions report the `container-network-none` profile and run without
+external network. The materialized source bytes and host fixture files remain
+unchanged; no worker, model, credential, verifier, or external action is
+involved. The opt-in test passed once in 1.331s after an exact local image
+inspection. The full offline suite passed 1497 tests with 25 skipped in
+84.874s, and `git diff --check` passed. This advances one sandbox target case
+only: it does not persist a replayable branch run or evaluate transfer to new
+cases and regressions.
+
+Batch YW / EXP-1190 adds one fixed `SandboxSnapshot.validate-binding` decision
+to the observed repository-change path. After sandbox creation but before
+Worker dispatch, the journal now records a checkpoint/intent before validating
+the copied tree against the pinned snapshot and/or comparing the remote snapshot
+claim with source and copied files. Refused or unknown journal outcomes stop
+before Worker dispatch; a binding mismatch is recorded only as `denied` and
+preserves the existing bounded error. Resume restores the one-shot flag. This
+improves criterion 13 coverage but does not make the collector comprehensive,
+production-trusted, or power-loss durable; R1/R2/MVP remain OPEN.
+
+Batch ACD / EXP-1283 adds an opt-in `JournaledModelChannel` around the host-side
+Chat Completions call. The wrapper is bound to the same run after journal
+startup, persists checkpoint/intent before dispatch and fixed terminal status
+afterward, and never copies prompt, response, usage details or credentials into
+the journal. The step is one-shot, including after resume; a pre-dispatch write
+failure blocks the request, while missing terminal evidence is unknown and
+cannot authorize a retry. CLI wiring is covered with synthetic readiness and
+fake runtime; no model request was performed. This closes only the separate
+model-channel event gap for future observer-enabled runs. EXP-1269 predates the
+hook; the collector remains opt-in, local/unattested and incomplete. R2/MVP stay
+OPEN.
+
+EXP-1284 rebuilt the current verifier image offline because the shared observer
+runtime source is part of its pinned code closure. The new local image and code
+digest are bound in the target profile, and the two bounded synthetic container
+tests pass. This refresh does not make the observer complete or independently
+trusted; no remote import or Worker/model rerun occurred.
+
+EXP-1289 then exercised the hook in one local Worker attempt. Its
+`ModelChannel.create_chat_completion` intent/completion pair was persisted with
+no prompt or response copied into the event. The run later failed at a
+restricted sandbox command; it did not reach verifier or stage. This validates
+the model-call journal boundary, not end-to-end completion or audit coverage.
+
+EXP-1291 fixes local Ollama sampling parameters at temperature 0 and seed 42 and
+rejects caller overrides; this is a reproducibility control, not a diagnosis of
+EXP-1289's failure. EXP-1292 prepared fresh profile EXP-1293, but its sole
+readiness result was `READINESS|200|35|1792090084` (<36), so the card is BLOCKED
+before snapshot/Ollama/model and must not be retried. No second model request
+occurred; a fresh profile/card is needed after reset.

@@ -19,6 +19,7 @@ import time
 from .worker_model_protocol import (
     MAX_REQUEST_BYTES as _MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES as _MAX_RESPONSE_BYTES,
+    MAX_LOCAL_MODEL_TIMEOUT_SECONDS as _MAX_LOCAL_TIMEOUT_SECONDS,
     MAX_TIMEOUT_SECONDS as _MAX_TIMEOUT_SECONDS,
     encode_chat_completions_request as _encode_request,
 )
@@ -80,12 +81,14 @@ def _decode_json(encoded: bytes, *, maximum: int) -> object:
         raise WorkerModelIPCError("worker model IPC: message is invalid") from None
 
 
-def _validate_timeout(value: object) -> float:
+def _validate_timeout(
+    value: object, *, maximum: float = _MAX_TIMEOUT_SECONDS
+) -> float:
     try:
         valid = (
             not isinstance(value, bool)
             and isinstance(value, (int, float))
-            and 0 < float(value) <= _MAX_TIMEOUT_SECONDS
+            and 0 < float(value) <= maximum
         )
         timeout = float(value)
     except (OverflowError, TypeError, ValueError):
@@ -325,11 +328,20 @@ def _decode_result(encoded: bytes) -> ChatCompletionsModelResult:
 class StdioChatCompletionsChannel:
     """One-call adapter over explicitly injected anonymous binary pipes."""
 
-    def __init__(self, reader: object, writer: object) -> None:
+    def __init__(
+        self,
+        reader: object,
+        writer: object,
+        *,
+        maximum_timeout_seconds: float = _MAX_TIMEOUT_SECONDS,
+    ) -> None:
         self._reader_fd = _validate_pipe_stream(reader)
         self._writer_fd = _validate_pipe_stream(writer)
         if self._reader_fd == self._writer_fd:
             raise WorkerModelIPCError("worker model IPC: stream unavailable")
+        self._maximum_timeout_seconds = _validate_timeout(
+            maximum_timeout_seconds, maximum=_MAX_LOCAL_TIMEOUT_SECONDS
+        )
         self._attempt_lock = threading.Lock()
         self._attempt_started = False
         self._closed = False
@@ -340,7 +352,9 @@ class StdioChatCompletionsChannel:
     def create_chat_completion(
         self, payload: dict, *, timeout_seconds: float
     ) -> ChatCompletionsModelResult:
-        timeout = _validate_timeout(timeout_seconds)
+        timeout = _validate_timeout(
+            timeout_seconds, maximum=self._maximum_timeout_seconds
+        )
         try:
             _encode_request(payload)
             request = _encode_json(
@@ -415,8 +429,16 @@ class StdioChatCompletionsChannel:
 class UnixSocketChatCompletionsChannel:
     """One-call worker-side client; it has no credential or network adapter."""
 
-    def __init__(self, socket_path: str | os.PathLike[str]) -> None:
+    def __init__(
+        self,
+        socket_path: str | os.PathLike[str],
+        *,
+        maximum_timeout_seconds: float = _MAX_TIMEOUT_SECONDS,
+    ) -> None:
         self._socket_path = Path(socket_path)
+        self._maximum_timeout_seconds = _validate_timeout(
+            maximum_timeout_seconds, maximum=_MAX_LOCAL_TIMEOUT_SECONDS
+        )
         self._attempt_lock = threading.Lock()
         self._attempt_started = False
 
@@ -426,7 +448,9 @@ class UnixSocketChatCompletionsChannel:
     def create_chat_completion(
         self, payload: dict, *, timeout_seconds: float
     ) -> ChatCompletionsModelResult:
-        timeout = _validate_timeout(timeout_seconds)
+        timeout = _validate_timeout(
+            timeout_seconds, maximum=self._maximum_timeout_seconds
+        )
         try:
             _encode_request(payload)
             request = _encode_json(
@@ -482,7 +506,9 @@ class UnixSocketChatCompletionsBroker:
             raise WorkerModelIPCError("worker model IPC: broker config invalid")
         self._socket_path = _validate_socket_path(socket_path)
         self._channel = channel
-        self._timeout_seconds = _validate_timeout(timeout_seconds)
+        self._timeout_seconds = _validate_timeout(
+            timeout_seconds, maximum=_MAX_LOCAL_TIMEOUT_SECONDS
+        )
         self._server: socket.socket | None = None
         self._socket_identity: tuple[int, int] | None = None
         self._used = False
@@ -537,7 +563,10 @@ class UnixSocketChatCompletionsBroker:
                     raise WorkerModelIPCError("worker model IPC: request is invalid")
                 timeout = min(
                     self._timeout_seconds,
-                    _validate_timeout(request.get("timeout_seconds")),
+                    _validate_timeout(
+                        request.get("timeout_seconds"),
+                        maximum=self._timeout_seconds,
+                    ),
                     _remaining(deadline),
                 )
                 payload = request.get("payload")

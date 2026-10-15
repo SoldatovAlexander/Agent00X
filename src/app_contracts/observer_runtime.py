@@ -9,12 +9,42 @@ from typing import Callable
 from urllib.parse import urlsplit
 import uuid
 
+from .brainbooster_target_profile import (
+    PINNED_HTTP_DB_FAILURE_CODES,
+    PINNED_HTTP_DB_TEST_COMMAND,
+)
 from .observation_store import PreDispatchError, run_gated_dispatch
 
 
 _IDENTITY = re.compile(r"^(process|task)-[a-z0-9-]{1,120}$")
 _SAFE_ID_PART = re.compile(r"^[a-z0-9-]{8,64}$")
 _WORKER_TOOL = "ProposalWorker.propose"
+_TARGET_TEST_FAILURE_PREFIX = "agent00x:test-failure:"
+
+
+def _safe_target_test_failure_code(result: object, *, purpose: str, argv) -> str | None:
+    """Return only the exact allowlisted marker from the fixed target probe."""
+
+    if purpose != "target-tests" or type(argv) not in (tuple, list):
+        return None
+    if tuple(argv) != PINNED_HTTP_DB_TEST_COMMAND:
+        return None
+    try:
+        if getattr(result, "argv", None) != PINNED_HTTP_DB_TEST_COMMAND:
+            return None
+        if type(getattr(result, "returncode", None)) is not int:
+            return None
+        if result.returncode != 1:
+            return None
+        stdout = getattr(result, "stdout", None)
+        if type(stdout) is not str or not stdout.endswith("\n") or stdout.count("\n") != 1:
+            return None
+        if not stdout.startswith(_TARGET_TEST_FAILURE_PREFIX):
+            return None
+        code = stdout[len(_TARGET_TEST_FAILURE_PREFIX):-1]
+        return code if code in PINNED_HTTP_DB_FAILURE_CODES else None
+    except Exception:
+        return None
 
 
 class WorkerJournalError(RuntimeError):
@@ -105,14 +135,22 @@ class ControlledPublicationCallFailedError(ControlledPublicationJournalError):
     """A local controlled-publication call failed and a fixed result was recorded."""
 
 
+# Generic aliases let non-publication runtime gates share the fixed journal
+# implementation without importing a publication-named capability into the
+# executor contract module.
+JournaledStepGateError = ControlledPublicationJournalError
+JournaledStepOutcomeUnknownError = ControlledPublicationOutcomeUnknownError
+
+
 class JournaledProposalWorker:
     """Own one execution run and gate its wrapped operations with safe evidence.
 
-    The adapter is intentionally partial: it covers only explicit Worker,
-    verifier, sandbox command, stage, and pinned snapshot source calls routed
-    through its wrappers, plus one opt-in local-mock controlled-publication
-    invocation. It does not observe individual authorization decisions or
-    Gateway calls, and it is not a complete runtime collector.
+    The adapter is intentionally partial: it covers explicit Worker, verifier,
+    sandbox command, stage, and pinned snapshot source calls routed through its
+    wrappers, plus selected fixed readiness, permit, approval, signature,
+    policy, Gateway, broker, and publication steps when callers explicitly
+    wrap them. It does not automatically instrument arbitrary runtime calls
+    and is not a complete runtime collector.
     """
 
     __slots__ = (
@@ -339,7 +377,27 @@ class JournaledProposalWorker:
                 for _, event in selected
             )
             instance._controlled_publication_used = False
-            instance._controlled_steps_used = set()
+            controlled_steps = {
+                "GitHubReadiness.fetch",
+                "RemoteExecutionPermit.issue",
+                "ModelChannel.create_chat_completion",
+                "WorkerProposal.validate",
+                "SandboxSnapshot.validate-binding",
+                "PreparedChange.apply-proposal",
+                "PreparedChange.validate-binding",
+                "Approval.validate",
+                "SignedApproval.verify",
+                "PolicyEngine.evaluate",
+                "Gateway.authorize",
+                "CredentialBroker.open-channel",
+                "Publication.dispatch",
+            }
+            instance._controlled_steps_used = {
+                event.get("decision_or_tool")
+                for _, event in selected
+                if event.get("decision_or_tool") in controlled_steps
+                and event.get("event_type") in intent_types | terminal_types
+            }
             return instance
         except WorkerJournalError:
             raise
@@ -769,6 +827,11 @@ class JournaledProposalWorker:
         allowed_steps = {
             "GitHubReadiness.fetch",
             "RemoteExecutionPermit.issue",
+            "ModelChannel.create_chat_completion",
+            "WorkerProposal.validate",
+            "SandboxSnapshot.validate-binding",
+            "PreparedChange.apply-proposal",
+            "PreparedChange.validate-binding",
             "Approval.validate",
             "SignedApproval.verify",
             "PolicyEngine.evaluate",
@@ -793,9 +856,16 @@ class JournaledProposalWorker:
                 "controlled publication journal: execution run is unavailable"
             )
         is_readiness_fetch = step == "GitHubReadiness.fetch"
-        is_tool = is_readiness_fetch or step == "Publication.dispatch"
+        is_tool = is_readiness_fetch or step in {
+            "ModelChannel.create_chat_completion",
+            "Publication.dispatch",
+        }
         is_publication = step == "Publication.dispatch"
-        agent_id = "service-publication-observer"
+        agent_id = (
+            "service-model-channel"
+            if step == "ModelChannel.create_chat_completion"
+            else "service-publication-observer"
+        )
         captured_error: list[Exception] = []
         try:
             checkpoint_id = f"checkpoint-{self._next_id()}"
@@ -832,6 +902,11 @@ class JournaledProposalWorker:
                     "expected_result": {
                         "GitHubReadiness.fetch": "bounded readiness response metadata",
                         "RemoteExecutionPermit.issue": "bounded readiness eligibility result",
+                        "ModelChannel.create_chat_completion": "bounded model-call outcome metadata",
+                        "WorkerProposal.validate": "bounded proposal acceptance decision",
+                        "SandboxSnapshot.validate-binding": "bounded sandbox snapshot binding decision",
+                        "PreparedChange.apply-proposal": "bounded proposal workspace-application decision",
+                        "PreparedChange.validate-binding": "bounded prepared-change binding decision",
                     }.get(step, "bounded publication-gate outcome"),
                     "status": "pending",
                 }
@@ -883,6 +958,7 @@ class JournaledProposalWorker:
                 terminal["error_code"] = {
                     "GitHubReadiness.fetch": "readiness-fetch-failed",
                     "RemoteExecutionPermit.issue": "readiness-ineligible",
+                    "ModelChannel.create_chat_completion": "model-request-failed",
                     "Publication.dispatch": "publication-dispatch-failed",
                 }.get(step, "publication-gate-denied")
             try:
@@ -912,6 +988,7 @@ class JournaledProposalWorker:
             raise ControlledPublicationJournalError(
                 "controlled publication journal: gate unavailable"
             ) from None
+
 
     def _base_event(
         self, *, event_type: str, sequence: int, event_id: str,
@@ -1009,12 +1086,25 @@ class JournaledProposalWorker:
                 raise WorkerProposalFailedError(
                     "worker journal: proposal call failed"
                 ) from None
+            terminal_parameters = None
+            try:
+                from .executor import WorkerTerminalOutcome
+
+                if type(dispatch_result) is WorkerTerminalOutcome:
+                    terminal_parameters = {
+                        "worker_outcome": dispatch_result.outcome
+                    }
+            except Exception:
+                raise WorkerJournalError(
+                    "worker journal: result type unavailable"
+                ) from None
             self._append_terminal(
                 event_type="tool_completed",
                 sequence=self._sequence,
                 invocation_id=invocation_id,
                 intent_id=intent_id,
                 status="ok",
+                safe_parameters=terminal_parameters,
             )
             return dispatch_result
         except WorkerOutcomeUnknownError:
@@ -1035,6 +1125,7 @@ class JournaledProposalWorker:
         intent_id: str,
         status: str,
         error_code: str | None = None,
+        safe_parameters: dict[str, str] | None = None,
     ) -> None:
         event = self._base_event(
             event_type=event_type,
@@ -1050,6 +1141,8 @@ class JournaledProposalWorker:
         )
         if error_code is not None:
             event["error_code"] = error_code
+        if safe_parameters is not None:
+            event["safe_parameters"] = safe_parameters
         try:
             cursor = self._store.append(event)
         except Exception:
@@ -1512,12 +1605,27 @@ class JournaledProposalWorker:
             returncode = getattr(result, "returncode", None)
             has_valid_returncode = type(returncode) is int
             success = has_valid_returncode and returncode == 0
+            safe_parameters = (
+                {"sandbox_return_code": returncode}
+                if has_valid_returncode and -255 <= returncode <= 255
+                else None
+            )
+            failure_code = _safe_target_test_failure_code(
+                result,
+                purpose=purpose,
+                argv=argv,
+            )
+            if failure_code is not None:
+                if safe_parameters is None:
+                    safe_parameters = {}
+                safe_parameters["sandbox_failure_code"] = failure_code
             self._append_sandbox_terminal(
                 event_type="tool_completed" if success else "tool_failed",
                 invocation_id=invocation_id,
                 intent_id=intent_id,
                 status="ok" if success else "failed",
                 error_code=None if success else "sandbox-command-nonzero",
+                safe_parameters=safe_parameters,
             )
             return result
         except SandboxOutcomeUnknownError:
@@ -1702,6 +1810,7 @@ class JournaledProposalWorker:
         intent_id: str,
         status: str,
         error_code: str | None,
+        safe_parameters: dict[str, str | int] | None = None,
     ) -> None:
         event = self._base_event(
             event_type=event_type,
@@ -1718,6 +1827,8 @@ class JournaledProposalWorker:
         )
         if error_code is not None:
             event["error_code"] = error_code
+        if safe_parameters is not None:
+            event["safe_parameters"] = safe_parameters
         try:
             cursor = self._store.append(event)
         except Exception:
@@ -1727,6 +1838,45 @@ class JournaledProposalWorker:
         self._last_event_id = event["event_id"]
         self._last_event_cursor = cursor
         self._sequence += 1
+
+
+class JournaledModelChannel:
+    """Record one host-side model-channel call without retaining its payload.
+
+    The channel is bound to its execution run only after the observer journal
+    has started. Neither request nor response data is copied into the journal.
+    """
+
+    __slots__ = ("_channel", "_run")
+
+    def __init__(self, channel: object) -> None:
+        if not callable(getattr(channel, "create_chat_completion", None)):
+            raise ControlledPublicationJournalError(
+                "model channel journal: configuration unavailable"
+            )
+        self._channel = channel
+        self._run: JournaledProposalWorker | None = None
+
+    def bind(self, run: JournaledProposalWorker) -> None:
+        if type(run) is not JournaledProposalWorker or self._run is not None:
+            raise ControlledPublicationJournalError(
+                "model channel journal: run binding unavailable"
+            )
+        self._run = run
+
+    def create_chat_completion(self, payload: dict, *, timeout_seconds: float):
+        run = self._run
+        if run is None:
+            raise ControlledPublicationJournalError(
+                "model channel journal: run binding unavailable"
+            )
+        return run.run_controlled_step(
+            "ModelChannel.create_chat_completion",
+            lambda: self._channel.create_chat_completion(
+                payload, timeout_seconds=timeout_seconds
+            ),
+            process_id=run._process_id,
+        )
 
 
 class JournaledVerifier:

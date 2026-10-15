@@ -93,8 +93,13 @@ class ReplayStagedCandidateTests(unittest.TestCase):
         for item in reversed(self.patches):
             item.stop()
 
-    def _source_database(self, path: Path):
+    def _source_database(self, path: Path, *, verifier_id: str | None = None):
         request, prepared, result, _ = get_verified_artifact()
+        if verifier_id is not None:
+            result = replace(
+                result,
+                verifier_result=replace(result.verifier_result, verifier_id=verifier_id),
+            )
         artifact = build_staged_artifact(request, prepared, result)
         with SQLiteStagedArtifactStore(path) as store:
             store.save(artifact)
@@ -164,6 +169,44 @@ class ReplayStagedCandidateTests(unittest.TestCase):
             snapshot_reader=reader,
             observation_store=observation_store,
         )
+
+    def test_historical_source_verifier_is_rechecked_by_current_verifier(self):
+        with tempfile.TemporaryDirectory(prefix="replay-historical-verifier-") as directory:
+            root = Path(directory)
+            source = root / "source.sqlite3"
+            output = root / "output.sqlite3"
+            artifact = self._source_database(
+                source, verifier_id="historical-verifier-image-v1"
+            )
+            sandbox = RecordingSandbox()
+            verifier = RecordingVerifier()
+
+            evidence = self._run(
+                source,
+                artifact,
+                output,
+                sandbox=sandbox,
+                verifier=verifier,
+            )
+
+            self.assertEqual(evidence["status"], "verified")
+            self.assertEqual(
+                evidence["source_stage_verifier_result"], "not_carried_forward"
+            )
+            self.assertEqual(evidence["current_verification_status"], "fresh_pass")
+            self.assertGreaterEqual(sandbox.calls, 1)
+            self.assertEqual(verifier.calls, 1)
+            with SQLiteStagedArtifactStore(output, read_only=True) as store:
+                replayed = store.load(evidence["staged_change_digest"])
+            replay_payload = replayed.payload_copy()
+            self.assertEqual(
+                replay_payload["verifier_result"]["verifier_id"],
+                replay._VERIFIER_ID,
+            )
+            self.assertNotEqual(
+                replay_payload["verifier_result"]["verifier_id"],
+                "historical-verifier-image-v1",
+            )
 
     def test_optional_observer_carries_replay_from_readiness_through_stage(self):
         with tempfile.TemporaryDirectory(prefix="replay-observer-") as directory:

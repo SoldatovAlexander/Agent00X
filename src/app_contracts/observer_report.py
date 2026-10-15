@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import sqlite3
 from typing import Any
 
 from .digests import sha256_digest
+from .brainbooster_target_profile import PINNED_HTTP_DB_FAILURE_CODES
 from .observer_artifact_store import (
     ArtifactResolution,
     ObserverArtifactStoreError,
@@ -149,6 +151,22 @@ def _validate_selector(name: str, value: str | None) -> None:
         raise HistoryReportError("history report: selector is invalid")
 
 
+def _parse_recorded_time(value: object) -> datetime:
+    """Parse one timezone-aware RFC3339 timestamp and normalize it to UTC."""
+
+    try:
+        if type(value) is not str or not value or len(value) > 64:
+            raise ValueError
+        parsed = datetime.fromisoformat(
+            value[:-1] + "+00:00" if value.endswith("Z") else value
+        )
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        raise HistoryReportError("history report: timestamp is invalid") from None
+
+
 def build_history_report(
     events: list[tuple[int, dict]],
     checkpoints: list[tuple[int, dict]],
@@ -157,6 +175,8 @@ def build_history_report(
     run_id: str | None = None,
     branch_id: str | None = None,
     as_of_cursor: int | None = None,
+    as_of_recorded_at: str | None = None,
+    about_occurred_at: str | None = None,
     artifact_resolver: object | None = None,
 ) -> dict[str, Any]:
     """Build a deterministic partial report from verified journal rows."""
@@ -199,6 +219,22 @@ def build_history_report(
         ("branch_id", branch_id),
     ):
         _validate_selector(name, value)
+    temporal_selectors = sum(
+        value is not None
+        for value in (as_of_cursor, as_of_recorded_at, about_occurred_at)
+    )
+    if temporal_selectors > 1:
+        raise HistoryReportError("history report: temporal selector is invalid")
+    cutoff = (
+        _parse_recorded_time(as_of_recorded_at)
+        if as_of_recorded_at is not None
+        else None
+    )
+    about_cutoff = (
+        _parse_recorded_time(about_occurred_at)
+        if about_occurred_at is not None
+        else None
+    )
     if as_of_cursor is not None and (
         type(as_of_cursor) is not int
         or as_of_cursor < 0
@@ -213,6 +249,13 @@ def build_history_report(
     for cursor, event in events:
         if as_of_cursor is not None and cursor > as_of_cursor:
             continue
+        if cutoff is not None and _parse_recorded_time(event["recorded_at"]) > cutoff:
+            continue
+        if (
+            about_cutoff is not None
+            and _parse_recorded_time(event["occurred_at"]) > about_cutoff
+        ):
+            continue
         if process_id is not None and event["process_id"] != process_id:
             continue
         if run_id is not None and event["run_id"] != run_id:
@@ -226,6 +269,20 @@ def build_history_report(
         (cursor, checkpoint)
         for cursor, checkpoint in checkpoints
         if (as_of_cursor is None or checkpoint["event_cursor"] <= as_of_cursor)
+        and (
+            cutoff is None
+            or (
+                checkpoint["trigger_event_id"] in selected_ids
+                and _parse_recorded_time(checkpoint["created_at"]) <= cutoff
+            )
+        )
+        and (
+            about_cutoff is None
+            or (
+                checkpoint["trigger_event_id"] in selected_ids
+                and _parse_recorded_time(checkpoint["created_at"]) <= about_cutoff
+            )
+        )
         and (process_id is None or checkpoint["process_id"] == process_id)
         and (run_id is None or checkpoint["run_id"] == run_id)
         and (branch_id is None or checkpoint["branch_id"] == branch_id)
@@ -240,6 +297,21 @@ def build_history_report(
     gaps: list[dict[str, Any]] = [
         {"code": "collector_coverage_unverified", "event_ids": []}
     ]
+    temporally_unverified_event_ids: set[str] = set()
+    if cutoff is not None:
+        gaps.append({"code": "recorded_timestamps_unattested", "event_ids": []})
+    if about_cutoff is not None:
+        gaps.append({"code": "occurred_timestamps_unattested", "event_ids": []})
+        if selected_checkpoints:
+            gaps.append(
+                {
+                    "code": "checkpoint_availability_at_time_unverified",
+                    "event_ids": sorted(
+                        checkpoint["trigger_event_id"]
+                        for _, checkpoint in selected_checkpoints
+                    ),
+                }
+            )
     resolved_artifacts: dict[str, ArtifactResolution] = {}
     artifact_reference_count = 0
     by_run: dict[tuple[str, str, str], list[tuple[int, dict]]] = {}
@@ -262,9 +334,32 @@ def build_history_report(
             "classification": event["classification"],
             "redaction_status": event["redaction_status"],
         }
+        if about_cutoff is not None:
+            fact["recorded_after_about_time"] = (
+                _parse_recorded_time(event["recorded_at"]) > about_cutoff
+            )
         for field in ("status", "checkpoint_id", "invocation_id"):
             if field in event:
                 fact[field] = event[field]
+        safe_parameters = event.get("safe_parameters")
+        if (
+            event.get("decision_or_tool")
+            in {
+                "SandboxSession.run.target-tests",
+                "SandboxSession.run.verifier-replay",
+            }
+            and type(safe_parameters) is dict
+            and type(safe_parameters.get("sandbox_return_code")) is int
+            and -255 <= safe_parameters["sandbox_return_code"] <= 255
+        ):
+            fact["sandbox_return_code"] = safe_parameters["sandbox_return_code"]
+        if (
+            event.get("decision_or_tool") == "SandboxSession.run.target-tests"
+            and type(safe_parameters) is dict
+            and type(safe_parameters.get("sandbox_failure_code")) is str
+            and safe_parameters["sandbox_failure_code"] in PINNED_HTTP_DB_FAILURE_CODES
+        ):
+            fact["sandbox_failure_code"] = safe_parameters["sandbox_failure_code"]
         if "causal_event_ids" in event:
             fact["causal_event_ids"] = list(event["causal_event_ids"])
         for field in ("input_refs", "output_refs"):
@@ -325,6 +420,8 @@ def build_history_report(
             event.get("output_refs", ())
         )
         if artifact_refs:
+            if about_cutoff is not None:
+                temporally_unverified_event_ids.add(event["event_id"])
             artifact_reference_count += len(artifact_refs)
             if artifact_reference_count > MAX_ARTIFACT_REFERENCES:
                 raise HistoryReportError(
@@ -339,6 +436,10 @@ def build_history_report(
                     unresolved = True
                     continue
                 if artifact_ref in resolved_artifacts:
+                    continue
+                if cutoff is not None:
+                    unresolved = True
+                    temporally_unverified_event_ids.add(event["event_id"])
                     continue
                 if artifact_resolver is None:
                     unresolved = True
@@ -402,6 +503,8 @@ def build_history_report(
                 safe_checkpoint_refs[field] = safe_refs
 
         artifact_reference_count += len(checkpoint_refs)
+        if about_cutoff is not None and checkpoint_refs:
+            temporally_unverified_event_ids.add(checkpoint["trigger_event_id"])
         if artifact_reference_count > MAX_ARTIFACT_REFERENCES:
             raise HistoryReportError(
                 "history report: artifact reference limit exceeded"
@@ -414,6 +517,10 @@ def build_history_report(
                 unresolved_reference = True
                 continue
             if artifact_ref in resolved_artifacts:
+                continue
+            if cutoff is not None:
+                unresolved_reference = True
+                temporally_unverified_event_ids.add(checkpoint["trigger_event_id"])
                 continue
             if artifact_resolver is None:
                 unresolved_reference = True
@@ -504,6 +611,14 @@ def build_history_report(
                 }
             )
 
+    if temporally_unverified_event_ids:
+        gaps.append(
+            {
+                "code": "artifact_availability_at_time_unverified",
+                "event_ids": sorted(temporally_unverified_event_ids),
+            }
+        )
+
     gaps.sort(key=lambda gap: (gap["code"], tuple(gap["event_ids"])))
     return {
         "schema_version": 1,
@@ -514,6 +629,16 @@ def build_history_report(
         },
         "snapshot": {
             "as_of_cursor": as_of_cursor,
+            "as_of_recorded_at": (
+                cutoff.isoformat().replace("+00:00", "Z")
+                if cutoff is not None
+                else None
+            ),
+            "about_occurred_at": (
+                about_cutoff.isoformat().replace("+00:00", "Z")
+                if about_cutoff is not None
+                else None
+            ),
             "event_count": len(facts),
             "checkpoint_count": len(selected_checkpoints),
             "completeness": "partial",
@@ -539,6 +664,8 @@ def report_from_sqlite(
     run_id: str | None = None,
     branch_id: str | None = None,
     as_of_cursor: int | None = None,
+    as_of_recorded_at: str | None = None,
+    about_occurred_at: str | None = None,
     artifact_database: str | Path | None = None,
 ) -> dict[str, Any]:
     events, checkpoints = _read_only_rows(path)
@@ -550,6 +677,8 @@ def report_from_sqlite(
             run_id=run_id,
             branch_id=branch_id,
             as_of_cursor=as_of_cursor,
+            as_of_recorded_at=as_of_recorded_at,
+            about_occurred_at=about_occurred_at,
         )
     try:
         with SQLiteObserverArtifactStore(artifact_database, read_only=True) as artifacts:
@@ -560,6 +689,8 @@ def report_from_sqlite(
                 run_id=run_id,
                 branch_id=branch_id,
                 as_of_cursor=as_of_cursor,
+                as_of_recorded_at=as_of_recorded_at,
+                about_occurred_at=about_occurred_at,
                 artifact_resolver=artifacts,
             )
     except ObserverArtifactStoreError:

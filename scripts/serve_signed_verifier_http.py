@@ -12,13 +12,17 @@ from datetime import datetime, timezone
 import os
 import shutil
 import sys
+from collections.abc import Mapping
 from typing import Callable
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from app_contracts.credential_source import ProcessEnvironmentCredentialSource  # noqa: E402
+from app_contracts.credential_source import (  # noqa: E402
+    ProcessEnvironmentCredentialSource,
+    SystemdCredentialSource,
+)
 from app_contracts.signed_verifier_http_service import (  # noqa: E402
     SignedVerifierHTTPService,
     create_loopback_http_server,
@@ -37,15 +41,30 @@ _MIN_PORT = 1024
 _MAX_PORT = 65_535
 
 
-def _default_service_factory() -> SignedVerifierHTTPService:
+def _create_signing_seed_credential_source(
+    credential_source_kind: str,
+    environment: Mapping[str, str],
+):
+    if credential_source_kind == "process-environment":
+        return ProcessEnvironmentCredentialSource(
+            environment, _SIGNING_SEED_ENV_NAME
+        )
+    if credential_source_kind == "systemd-credential":
+        return SystemdCredentialSource(environment)
+    raise SignedVerifierServiceError("unsupported credential source")
+
+
+def _default_service_factory(
+    credential_source_kind: str = "process-environment",
+) -> SignedVerifierHTTPService:
     docker_executable = shutil.which("docker")
     if docker_executable is None:
         raise SignedVerifierServiceError(
             "signed verifier HTTP service: service unavailable"
         )
     verifier = create_brainbooster_verifier_runner(docker_executable)
-    credential_source = ProcessEnvironmentCredentialSource(
-        os.environ, _SIGNING_SEED_ENV_NAME
+    credential_source = _create_signing_seed_credential_source(
+        credential_source_kind, os.environ
     )
     signing_key = Ed25519SeedCredentialSource(credential_source)
     return SignedVerifierHTTPService(
@@ -70,10 +89,18 @@ def main(
     try:
         parser = argparse.ArgumentParser(add_help=True)
         parser.add_argument("--port", type=int, required=True)
+        parser.add_argument(
+            "--signing-seed-source",
+            choices=("process-environment", "systemd-credential"),
+            default="process-environment",
+        )
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
         if type(args.port) is not int or not _MIN_PORT <= args.port <= _MAX_PORT:
             raise ValueError
-        service = (service_factory or _default_service_factory)()
+        factory = service_factory or (
+            lambda: _default_service_factory(args.signing_seed_source)
+        )
+        service = factory()
         server = (server_factory or create_loopback_http_server)(
             service, args.port, request_timeout_seconds=30.0
         )

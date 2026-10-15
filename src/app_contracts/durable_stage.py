@@ -43,6 +43,18 @@ from .secret_scan import CredentialLeakDetected, assert_no_credential_pattern_co
 STAGED_ARTIFACT_SCHEMA_VERSION = 1
 STAGED_ARTIFACT_CANONICALIZATION = "durable-staged-artifact/v1"
 MAX_STAGED_ARTIFACT_BYTES = 8_000_000
+
+
+def _create_private_stage_database_file(path: str) -> None:
+    """Create a missing writable stage database with owner-only access."""
+
+    try:
+        Path(path).touch(mode=0o600, exist_ok=False)
+    except FileExistsError:
+        return
+    Path(path).chmod(0o600)
+
+
 MAX_STAGED_PATCH_BYTES = 2_100_000
 MAX_STAGED_RECORD_BYTES = 256_000
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -845,6 +857,7 @@ class SQLiteStagedArtifactStore:
                     database_uri, timeout=5.0, isolation_level=None, uri=True
                 )
             else:
+                _create_private_stage_database_file(path_text)
                 connection = sqlite3.connect(path_text, timeout=5.0, isolation_level=None)
             connection.row_factory = sqlite3.Row
             if read_only:

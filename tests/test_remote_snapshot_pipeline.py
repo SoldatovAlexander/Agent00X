@@ -72,6 +72,7 @@ from approval_test_support import (
     TEST_APPROVER_PUBLIC_KEYS,
     sign_test_approval,
 )
+from test_durable_stage import get_verified_artifact
 from app_contracts.openai_worker import OpenAIProposalWorker, ResponsesModelResult
 from app_contracts.pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
 from app_contracts.publication_seed import (
@@ -83,27 +84,33 @@ from app_contracts.durable_stage import (
     DurableStageError,
     SQLiteStagedArtifactStore,
     StagedArtifact,
+    build_staged_artifact,
 )
 from app_contracts.secret_scan import assert_canary_absent
 from app_contracts.observation_store import ObservationStore, SQLiteObservationStore
+from app_contracts.observer_copy import ObserverCopyError, copy_observer_evidence
 from app_contracts.observer_report import report_from_sqlite
 from app_contracts.observer_runtime import JournaledProposalWorker
 from app_contracts.brainbooster_target_profile import (
     PINNED_COMMIT,
-    PINNED_CONTENT_DIGEST,
+    PINNED_SNAPSHOT_TREE_DIGEST,
     PINNED_FILE_COUNT,
     PINNED_HTTP_DB_TEST_COMMAND,
     PINNED_HTTP_DB_TEST_TIMEOUT_SECONDS,
+    PINNED_HTTP_DB_FAILURE_CATEGORIES,
     PINNED_OWNER,
     PINNED_REPOSITORY,
     PINNED_TREE,
     TARGET_RUNTIME_IMAGE_ID,
+)
+from app_contracts.verifier_image_pin import (
     VERIFIER_RUNTIME_CODE_DIGEST,
     VERIFIER_RUNTIME_IMAGE_ID,
 )
 from app_contracts.remote_snapshot_workspace import materialize_github_snapshot
 from app_contracts.sandbox import CommandResult, DockerSandboxBackend, LocalProcessSandboxBackend
 from app_contracts.stage_approval import run_local_mock_publication
+from app_contracts.stage_copy import StageCopyError, copy_staged_evidence
 from app_contracts.stage_preview import render_stage_preview
 from app_contracts.verifier_process import SubprocessVerifier, VerifierProcessConfig
 from app_contracts.verifier_container import (
@@ -260,7 +267,7 @@ _SAFE_TARGET_PROBE_FAILURES = frozenset(
         "valid-body",
         "valid-row",
     }
-)
+) | PINNED_HTTP_DB_FAILURE_CATEGORIES
 
 
 def _safe_target_probe_failure_marker(result: object) -> str:
@@ -724,6 +731,167 @@ def make_full_snapshot() -> tuple[GitHubSnapshotContents, str]:
 
 
 _PUBLIC_SNAPSHOT_EVIDENCE_PREFIX = "AGENT00X_PUBLIC_SNAPSHOT_EVIDENCE="
+_PUBLIC_STAGE_COPY_EVIDENCE_PREFIX = "AGENT00X_PUBLIC_STAGE_COPY_EVIDENCE="
+_OBSERVER_COPY_EVIDENCE_PREFIX = "AGENT00X_OBSERVER_COPY_EVIDENCE="
+
+
+def _validated_public_stage_destination(value: object) -> Path | None:
+    """Preflight an opt-in retained stage path before any public request."""
+
+    if value is None:
+        return None
+    try:
+        if type(value) is not str or not value:
+            raise ValueError
+        path = Path(value)
+        parent = path.parent
+        if (
+            not path.is_absolute()
+            or ".." in path.parts
+            or path.name in ("", ".", "..")
+            or path.is_symlink()
+            or path.exists()
+            or not parent.is_dir()
+            or parent.is_symlink()
+            or parent.resolve(strict=True) != parent
+            or not os.access(parent, os.W_OK)
+            or path.with_name(path.name + "-wal").exists()
+            or path.with_name(path.name + "-wal").is_symlink()
+            or path.with_name(path.name + "-shm").exists()
+            or path.with_name(path.name + "-shm").is_symlink()
+        ):
+            raise ValueError
+        return path
+    except Exception:
+        raise ValueError("public stage retention destination is unavailable") from None
+
+
+def _emit_public_stage_copy_evidence(stream, evidence: object) -> None:
+    """Emit bounded content-free metadata for one exact no-overwrite copy."""
+
+    digest_pattern = re.compile(r"sha256:[0-9a-f]{64}\Z")
+    if (
+        type(evidence) is not dict
+        or set(evidence)
+        != {
+            "schema",
+            "status",
+            "staged_change_digest",
+            "artifact_digest",
+            "database_file_sha256",
+            "database_bytes",
+            "overwrite",
+        }
+        or evidence.get("schema") != "stage-copy-evidence/v1"
+        or evidence.get("status") != "copied"
+        or type(evidence.get("staged_change_digest")) is not str
+        or digest_pattern.fullmatch(evidence["staged_change_digest"]) is None
+        or type(evidence.get("artifact_digest")) is not str
+        or digest_pattern.fullmatch(evidence["artifact_digest"]) is None
+        or type(evidence.get("database_file_sha256")) is not str
+        or re.fullmatch(r"[0-9a-f]{64}\Z", evidence["database_file_sha256"]) is None
+        or type(evidence.get("database_bytes")) is not int
+        or evidence["database_bytes"] < 1
+        or evidence.get("overwrite") is not False
+    ):
+        raise ValueError("public stage copy evidence is invalid")
+    record = {
+        "schema": "public-snapshot-retained-stage/v1",
+        "staged_change_digest": evidence["staged_change_digest"],
+        "artifact_digest": evidence["artifact_digest"],
+        "database_file_sha256": evidence["database_file_sha256"],
+        "database_bytes": evidence["database_bytes"],
+        "overwrite": False,
+    }
+    line = (
+        _PUBLIC_STAGE_COPY_EVIDENCE_PREFIX
+        + json.dumps(record, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+    if len(line) > 1024:
+        raise ValueError("public stage copy evidence is invalid")
+    stream.write(line)
+
+
+def _validated_public_observer_destination(value: object) -> Path | None:
+    """Preflight an opt-in retained observer path before public requests."""
+
+    if value is None:
+        return None
+    try:
+        if type(value) is not str or not value:
+            raise ValueError
+        path = Path(value)
+        parent = path.parent
+        if (
+            not path.is_absolute()
+            or ".." in path.parts
+            or path.name in ("", ".", "..")
+            or path.is_symlink()
+            or path.exists()
+            or not parent.is_dir()
+            or parent.is_symlink()
+            or parent.resolve(strict=True) != parent
+            or not os.access(parent, os.W_OK)
+            or path.with_name(path.name + "-wal").exists()
+            or path.with_name(path.name + "-wal").is_symlink()
+            or path.with_name(path.name + "-shm").exists()
+            or path.with_name(path.name + "-shm").is_symlink()
+        ):
+            raise ValueError
+        return path
+    except Exception:
+        raise ValueError("public observer retention destination is unavailable") from None
+
+
+def _emit_public_observer_copy_evidence(stream, evidence: object) -> None:
+    """Emit bounded metadata for one retained, exact observer-run database."""
+
+    if (
+        type(evidence) is not dict
+        or set(evidence)
+        != {
+            "schema",
+            "status",
+            "run_id",
+            "event_count",
+            "checkpoint_count",
+            "database_file_sha256",
+            "database_bytes",
+            "overwrite",
+        }
+        or evidence.get("schema") != "observer-copy-evidence/v1"
+        or evidence.get("status") != "copied"
+        or type(evidence.get("run_id")) is not str
+        or re.fullmatch(r"run-[a-z0-9-]{8,64}", evidence["run_id"]) is None
+        or type(evidence.get("event_count")) is not int
+        or evidence["event_count"] < 1
+        or type(evidence.get("checkpoint_count")) is not int
+        or evidence["checkpoint_count"] < 0
+        or type(evidence.get("database_file_sha256")) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", evidence["database_file_sha256"]) is None
+        or type(evidence.get("database_bytes")) is not int
+        or evidence["database_bytes"] < 1
+        or evidence.get("overwrite") is not False
+    ):
+        raise ValueError("public observer copy evidence is invalid")
+    record = {
+        "schema": "snapshot-retained-observer/v1",
+        "run_id": evidence["run_id"],
+        "event_count": evidence["event_count"],
+        "checkpoint_count": evidence["checkpoint_count"],
+        "database_file_sha256": evidence["database_file_sha256"],
+        "database_bytes": evidence["database_bytes"],
+        "overwrite": False,
+    }
+    line = (
+        _OBSERVER_COPY_EVIDENCE_PREFIX
+        + json.dumps(record, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+    if len(line) > 1024:
+        raise ValueError("public observer copy evidence is invalid")
+    stream.write(line)
 
 
 def _emit_public_snapshot_evidence(
@@ -748,7 +916,7 @@ def _emit_public_snapshot_evidence(
         != {"commit_oid", "tree_oid", "content_digest", "file_count"}
         or snapshot_metadata.get("commit_oid") != PINNED_COMMIT
         or snapshot_metadata.get("tree_oid") != PINNED_TREE
-        or snapshot_metadata.get("content_digest") != PINNED_CONTENT_DIGEST
+        or snapshot_metadata.get("content_digest") != PINNED_SNAPSHOT_TREE_DIGEST
         or type(snapshot_metadata.get("file_count")) is not int
         or snapshot_metadata.get("file_count") != PINNED_FILE_COUNT
         or oid_pattern.fullmatch(snapshot_metadata["commit_oid"]) is None
@@ -2125,6 +2293,19 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             ),
             "target-test-failure:sqlite-range-status",
         )
+        for category in sorted(PINNED_HTTP_DB_FAILURE_CATEGORIES):
+            with self.subTest(category=category):
+                self.assertEqual(
+                    _safe_target_probe_failure_marker(
+                        CommandResult(
+                            ("python3",),
+                            1,
+                            "agent00x:test-failure:" + category + "\n",
+                            "synthetic private stderr",
+                        )
+                    ),
+                    "target-test-failure:" + category,
+                )
         canary = "synthetic-private-value-EXP715"
         untrusted_results = (
             CommandResult(("python3",), 0, "agent00x:test-failure:valid-row", ""),
@@ -2380,11 +2561,11 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 observer_events = observer_store.events()
 
             report = report_from_sqlite(observer_database)
-            self.assertEqual(report["snapshot"]["event_count"], 21)
-            self.assertEqual(report["snapshot"]["checkpoint_count"], 10)
-            self.assertEqual(len(report["facts"]), 21)
+            self.assertEqual(report["snapshot"]["event_count"], 29)
+            self.assertEqual(report["snapshot"]["checkpoint_count"], 14)
+            self.assertEqual(len(report["facts"]), 29)
             self.assertEqual(
-                [event["sequence"] for event in report["facts"]], list(range(21))
+                [event["sequence"] for event in report["facts"]], list(range(29))
             )
             self.assertEqual(
                 [
@@ -2407,10 +2588,6 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             )
             self.assertEqual(len({event["run_id"] for event in report["facts"]}), 1)
             self.assertEqual(
-                report["facts"][3]["causal_event_ids"],
-                [report["facts"][2]["event_id"]],
-            )
-            self.assertEqual(
                 report["facts"][5]["causal_event_ids"],
                 [report["facts"][4]["event_id"]],
             )
@@ -2427,25 +2604,34 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 [report["facts"][10]["event_id"]],
             )
             self.assertEqual(
-                observer_events[5]["decision_or_tool"],
+                report["facts"][13]["causal_event_ids"],
+                [report["facts"][12]["event_id"]],
+            )
+            self.assertEqual(
+                observer_events[11]["decision_or_tool"],
                 "SandboxSession.run.target-tests",
             )
             self.assertEqual(
-                observer_events[9]["decision_or_tool"],
-                "SandboxSession.run.verifier-replay",
-            )
-            self.assertEqual(
-                observer_events[13]["decision_or_tool"],
-                "IndependentVerifier.verify",
-            )
-            self.assertEqual(
                 observer_events[15]["decision_or_tool"],
-                "StagedArtifactStore.save",
+                "SandboxBackend.create.verifier-replay",
             )
             self.assertEqual(
                 observer_events[17]["decision_or_tool"],
+                "SandboxSession.run.verifier-replay",
+            )
+            self.assertEqual(
+                observer_events[21]["decision_or_tool"],
+                "IndependentVerifier.verify",
+            )
+            self.assertEqual(
+                observer_events[23]["decision_or_tool"],
+                "StagedArtifactStore.save",
+            )
+            self.assertEqual(
+                observer_events[25]["decision_or_tool"],
                 "StagedArtifactStore.load",
             )
+            self.assertEqual(report["checkpoints"][1]["event_cursor"], 2)
             self.assertEqual(report["checkpoints"][2]["event_cursor"], 4)
             self.assertEqual(report["checkpoints"][4]["event_cursor"], 8)
             self.assertEqual(report["checkpoints"][6]["event_cursor"], 12)
@@ -2554,6 +2740,37 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             signed_verifier_attestation=True,
         )
 
+    def test_synthetic_rest_pipeline_retains_same_run_observer_journal(self):
+        with tempfile.TemporaryDirectory(prefix="synthetic-observer-retention-") as temporary:
+            destination = Path(temporary).resolve() / "retained-observer.sqlite3"
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self._run_pinned_operator_cli_to_signed_mock_receipt_same_observer_run(
+                    use_docker=False,
+                    synthetic_rest_snapshot=True,
+                    signed_verifier_attestation=True,
+                    retained_observer_destination=destination,
+                )
+            lines = [
+                line for line in output.getvalue().splitlines()
+                if line.startswith(_OBSERVER_COPY_EVIDENCE_PREFIX)
+            ]
+            self.assertEqual(len(lines), 1)
+            evidence = json.loads(
+                lines[0][len(_OBSERVER_COPY_EVIDENCE_PREFIX) :]
+            )
+            self.assertEqual(evidence["schema"], "snapshot-retained-observer/v1")
+            self.assertEqual(evidence["event_count"], 59)
+            self.assertFalse(evidence["overwrite"])
+            with SQLiteObservationStore(destination) as retained:
+                events = retained.events()
+                self.assertEqual(len(events), evidence["event_count"])
+                self.assertEqual({event["run_id"] for event in events}, {evidence["run_id"]})
+            report = report_from_sqlite(destination, run_id=evidence["run_id"])
+            self.assertEqual(report["snapshot"]["event_count"], evidence["event_count"])
+            self.assertNotIn(str(destination), lines[0])
+            self.assertNotIn("backend/routes.py", lines[0])
+
     def test_synthetic_codeload_snapshot_reaches_enrolled_mock_receipt_with_signed_verifier_proof(self):
         self._run_pinned_operator_cli_to_signed_mock_receipt_same_observer_run(
             use_docker=False,
@@ -2566,7 +2783,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
         snapshot_metadata = {
             "commit_oid": PINNED_COMMIT,
             "tree_oid": PINNED_TREE,
-            "content_digest": PINNED_CONTENT_DIGEST,
+            "content_digest": PINNED_SNAPSHOT_TREE_DIGEST,
             "file_count": PINNED_FILE_COUNT,
         }
         staged_digest = "sha256:" + "c" * 64
@@ -2614,7 +2831,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
         self.assertEqual(record["schema"], "public-snapshot-observer-mock-evidence/v1")
         self.assertEqual(record["snapshot"]["commit_oid"], PINNED_COMMIT)
         self.assertEqual(record["snapshot"]["tree_oid"], PINNED_TREE)
-        self.assertEqual(record["snapshot"]["content_digest"], PINNED_CONTENT_DIGEST)
+        self.assertEqual(record["snapshot"]["content_digest"], PINNED_SNAPSHOT_TREE_DIGEST)
         self.assertEqual(record["snapshot"]["file_count"], PINNED_FILE_COUNT)
         self.assertEqual(record["staged_change_digest"], staged_digest)
         self.assertEqual(record["observer_run_id"], "run-public-evidence-test-001")
@@ -2649,6 +2866,116 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             )
         self.assertEqual(over_limit_output.getvalue(), "")
 
+    def test_retained_public_stage_preflight_fails_closed_and_copy_evidence_is_bounded(self):
+        self.assertIsNone(_validated_public_stage_destination(None))
+        with tempfile.TemporaryDirectory(prefix="public-stage-retention-") as temporary:
+            root = Path(temporary).resolve()
+            destination = root / "retained-stage.sqlite3"
+            self.assertEqual(
+                _validated_public_stage_destination(str(destination)), destination
+            )
+            with self.assertRaisesRegex(
+                ValueError, "retention destination is unavailable"
+            ):
+                _validated_public_stage_destination("relative/stage.sqlite3")
+            destination.write_bytes(b"preserve")
+            with self.assertRaisesRegex(
+                ValueError, "retention destination is unavailable"
+            ):
+                _validated_public_stage_destination(str(destination))
+            self.assertEqual(destination.read_bytes(), b"preserve")
+            destination.unlink()
+
+            request, prepared, result, _ = get_verified_artifact()
+            artifact = build_staged_artifact(request, prepared, result)
+            source = root / "source-stage.sqlite3"
+            with SQLiteStagedArtifactStore(source) as store:
+                store.save(artifact)
+            source_before = source.read_bytes()
+            copy_evidence = copy_staged_evidence(
+                source,
+                artifact.staged_change_digest,
+                destination,
+            )
+            self.assertEqual(source.read_bytes(), source_before)
+            self.assertEqual(copy_evidence["status"], "copied")
+            self.assertEqual(
+                copy_evidence["staged_change_digest"], artifact.staged_change_digest
+            )
+            self.assertFalse(copy_evidence["overwrite"])
+            output = io.StringIO()
+            _emit_public_stage_copy_evidence(output, copy_evidence)
+            line = output.getvalue()
+            self.assertEqual(len(line.splitlines()), 1)
+            self.assertTrue(line.startswith(_PUBLIC_STAGE_COPY_EVIDENCE_PREFIX))
+            record = json.loads(line[len(_PUBLIC_STAGE_COPY_EVIDENCE_PREFIX) :])
+            self.assertEqual(
+                record["schema"], "public-snapshot-retained-stage/v1"
+            )
+            self.assertEqual(
+                record["staged_change_digest"], artifact.staged_change_digest
+            )
+            self.assertEqual(record["artifact_digest"], artifact.artifact_digest)
+            self.assertEqual(
+                record["database_file_sha256"],
+                hashlib.sha256(destination.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(record["database_bytes"], destination.stat().st_size)
+            self.assertFalse(record["overwrite"])
+            self.assertNotIn(str(destination), line)
+            self.assertNotIn(str(source), line)
+            self.assertNotIn("calculator.py", line)
+            with SQLiteStagedArtifactStore(destination, read_only=True) as store:
+                self.assertEqual(store.load(artifact.staged_change_digest), artifact)
+
+    def test_retained_public_observer_preflight_and_copy_evidence_are_bounded(self):
+        self.assertIsNone(_validated_public_observer_destination(None))
+        with tempfile.TemporaryDirectory(prefix="public-observer-retention-") as temporary:
+            root = Path(temporary).resolve()
+            destination = root / "retained-observer.sqlite3"
+            self.assertEqual(
+                _validated_public_observer_destination(str(destination)), destination
+            )
+            with self.assertRaisesRegex(
+                ValueError, "public observer retention destination is unavailable"
+            ):
+                _validated_public_observer_destination("relative/observer.sqlite3")
+            destination.write_bytes(b"preserve")
+            with self.assertRaisesRegex(
+                ValueError, "public observer retention destination is unavailable"
+            ):
+                _validated_public_observer_destination(str(destination))
+            self.assertEqual(destination.read_bytes(), b"preserve")
+
+        evidence = {
+            "schema": "observer-copy-evidence/v1",
+            "status": "copied",
+            "run_id": "run-exp963-observer-copy",
+            "event_count": 12,
+            "checkpoint_count": 4,
+            "database_file_sha256": "a" * 64,
+            "database_bytes": 8192,
+            "overwrite": False,
+        }
+        output = io.StringIO()
+        _emit_public_observer_copy_evidence(output, evidence)
+        line = output.getvalue()
+        self.assertEqual(len(line.splitlines()), 1)
+        self.assertTrue(line.startswith(_OBSERVER_COPY_EVIDENCE_PREFIX))
+        record = json.loads(line[len(_OBSERVER_COPY_EVIDENCE_PREFIX) :])
+        self.assertEqual(record["schema"], "snapshot-retained-observer/v1")
+        self.assertEqual(record["run_id"], evidence["run_id"])
+        self.assertNotIn(str(destination), line)
+        self.assertNotIn("event-observer", line)
+        for invalid in (
+            {**evidence, "overwrite": True},
+            {**evidence, "database_file_sha256": "BAD"},
+            {**evidence, "extra": "unbounded"},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "public observer copy evidence is invalid"):
+                    _emit_public_observer_copy_evidence(io.StringIO(), invalid)
+
     @unittest.skipUnless(
         os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1"
         and os.environ.get("AGENT00X_VERIFIER_IMAGE_ID") == VERIFIER_RUNTIME_IMAGE_ID
@@ -2674,6 +3001,25 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
     )
     def test_pinned_public_snapshot_to_enrolled_mock_receipt_docker(self):
         from urllib.parse import urlsplit
+
+        retained_stage_destination = _validated_public_stage_destination(
+            os.environ.get("AGENT00X_PUBLIC_STAGE_DESTINATION")
+        )
+        retained_observer_destination = _validated_public_observer_destination(
+            os.environ.get("AGENT00X_PUBLIC_OBSERVER_DESTINATION")
+        )
+        if (
+            retained_stage_destination is not None
+            or retained_observer_destination is not None
+        ) and (
+            os.environ.get("AGENT00X_EMIT_PUBLIC_SNAPSHOT_EVIDENCE") != "1"
+        ):
+            raise ValueError("public evidence retention requires success evidence opt-in")
+        if (
+            retained_stage_destination is not None
+            and retained_observer_destination == retained_stage_destination
+        ):
+            raise ValueError("public evidence retention destinations must be distinct")
 
         class CountedPublicTransport:
             def __init__(self):
@@ -2754,6 +3100,8 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             public_transport=transport,
             public_commit_source=commit_source,
             runtime_invocations=runtime_invocations,
+            retained_stage_destination=retained_stage_destination,
+            retained_observer_destination=retained_observer_destination,
         )
 
     def _run_pinned_operator_cli_to_signed_mock_receipt_same_observer_run(
@@ -2766,6 +3114,8 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
         synthetic_codeload_snapshot: bool = False,
         signed_verifier_attestation: bool = False,
         runtime_invocations: list | None = None,
+        retained_stage_destination: Path | None = None,
+        retained_observer_destination: Path | None = None,
     ):
         runtime_invocation_counter = (
             [] if runtime_invocations is None else runtime_invocations
@@ -2818,7 +3168,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 "REMOTE_REPOSITORY_NAME": PINNED_REPOSITORY,
                 "REMOTE_REPOSITORY_COMMIT": PINNED_COMMIT,
                 "REMOTE_REPOSITORY_TREE": PINNED_TREE,
-                "REMOTE_REPOSITORY_CONTENT_DIGEST": PINNED_CONTENT_DIGEST,
+                "REMOTE_REPOSITORY_CONTENT_DIGEST": PINNED_SNAPSHOT_TREE_DIGEST,
                 "REMOTE_REPOSITORY_FILE_COUNT": PINNED_FILE_COUNT,
             }
             if public_mode
@@ -2847,16 +3197,55 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
         }
         synthetic_credential_canary = "SYNTHETIC-API-CREDENTIAL-CANARY-EXP675"
         credential_reads = []
+        channel_instances = []
         worker_candidates = []
 
         class SyntheticCredentialChannel:
             def __init__(self, credential_source):
                 self.credential_source = credential_source
+                self.model_calls = 0
+                channel_instances.append(self)
 
             def consume_for_fake_worker(self):
                 value = self.credential_source()
                 credential_reads.append("read")
                 return value
+
+            def create_chat_completion(self, payload, *, timeout_seconds):
+                self.consume_for_fake_worker()
+                self.model_calls += 1
+                if self.model_calls != 1 or timeout_seconds <= 0:
+                    raise AssertionError("synthetic model channel call bound violated")
+                user_content = payload["messages"][1]["content"]
+                if "\n\nContext file: backend/routes.py\n" in user_content:
+                    path = "backend/routes.py"
+                    marker = "\n\nContext file: backend/routes.py\n"
+                    source = user_content.split(marker, 1)[1]
+                    candidate = _strict_signed_range_routes_candidate(source)
+                else:
+                    path = "calculator.py"
+                    marker = "\n\nContext file: calculator.py\n"
+                    if marker not in user_content:
+                        raise AssertionError("synthetic Worker context was not supplied")
+                    source = user_content.split(marker, 1)[1]
+                    candidate = source + "\n# synthetic end-to-end candidate\n"
+                worker_candidates.append(candidate)
+                content = json.dumps(
+                    {"changes": [{"path": path, "content": candidate}]},
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+                return ChatCompletionsModelResult(
+                    choices=(
+                        ChatCompletionChoice(
+                            finish_reason="stop",
+                            message=ChatCompletionMessage(
+                                role="assistant",
+                                content=content,
+                            ),
+                        ),
+                    ),
+                )
 
         class FixedWorker:
             def __init__(self, channel=None):
@@ -2864,7 +3253,8 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
 
             def propose(self, worker_input):
                 if self.channel is not None:
-                    self.channel.consume_for_fake_worker()
+                    channel = getattr(self.channel, "_channel", self.channel)
+                    channel.consume_for_fake_worker()
                 if not public_mode:
                     context = dict(worker_input.context_files)
                     if context.get("calculator.py") != base_content:
@@ -3364,6 +3754,8 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                     "--observation-database",
                     str(observer_database),
                 ]
+                if not use_docker:
+                    pinned_argv.extend(("--worker-backend", "host-process"))
                 pinned_code = pinned_worker_cli.main(
                     pinned_argv,
                     input_fn=lambda _prompt: pinned_worker_cli.CONFIRMATION_PHRASE,
@@ -3371,7 +3763,11 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                     stderr=pinned_stderr,
                     readiness_transport_factory=lambda: readiness_transport,
                     runtime_runner=safe_fake_runtime,
-                    docker_which=lambda _name: "/synthetic/docker",
+                    docker_which=lambda _name: (
+                        os.environ["AGENT00X_DOCKER_EXECUTABLE"]
+                        if use_docker
+                        else "/synthetic/docker"
+                    ),
                     docker_inspect=lambda _path: None,
                 )
             self.assertEqual(
@@ -3393,6 +3789,8 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             )
             self.assertEqual(runtime_result["code"], 0)
             self.assertEqual(credential_reads, ["read"])
+            self.assertEqual(len(channel_instances), 1)
+            self.assertEqual(channel_instances[0].model_calls, 1 if use_docker else 0)
             self.assertEqual(readiness_transport.calls, 1)
             if public_mode:
                 snapshot = runtime_result.get("snapshot")
@@ -3403,7 +3801,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 self.assertEqual(snapshot.claim.commit_oid, PINNED_COMMIT)
                 self.assertEqual(snapshot.claim.tree_oid, PINNED_TREE)
                 self.assertEqual(len(snapshot.files), PINNED_FILE_COUNT)
-                self.assertEqual(snapshot.claim.content_digest, PINNED_CONTENT_DIGEST)
+                self.assertEqual(snapshot.claim.content_digest, PINNED_SNAPSHOT_TREE_DIGEST)
                 self.assertEqual(
                     snapshot.verified_commit_object.commit_oid, PINNED_COMMIT
                 )
@@ -3755,6 +4153,10 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 [
                     "GitHubReadiness.fetch",
                     "RemoteExecutionPermit.issue",
+                    "SandboxSnapshot.validate-binding",
+                    "WorkerProposal.validate",
+                    "PreparedChange.apply-proposal",
+                    "PreparedChange.validate-binding",
                     "ControlledPublication.local-mock",
                     "SignedApproval.verify",
                     "Approval.validate",
@@ -3846,6 +4248,34 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                         "external_write": receipt["external_write"],
                         "observer_completeness": receipt["observer"]["completeness"],
                     },
+                )
+            if retained_stage_destination is not None:
+                if not public_mode:
+                    raise AssertionError("only the guarded public stage may be retained")
+                try:
+                    stage_copy_evidence = copy_staged_evidence(
+                        stage_database.resolve(strict=True),
+                        execution.staged_change_digest,
+                        retained_stage_destination,
+                    )
+                except StageCopyError:
+                    raise
+                _emit_public_stage_copy_evidence(sys.stdout, stage_copy_evidence)
+            if retained_observer_destination is not None:
+                if not (public_mode or synthetic_rest_snapshot):
+                    raise AssertionError(
+                        "only a guarded public or synthetic REST observer may be retained"
+                    )
+                try:
+                    observer_copy_evidence = copy_observer_evidence(
+                        observer_database.resolve(strict=True),
+                        run_id,
+                        retained_observer_destination,
+                    )
+                except ObserverCopyError:
+                    raise
+                _emit_public_observer_copy_evidence(
+                    sys.stdout, observer_copy_evidence
                 )
 
     def test_deepseek_fake_worker_remote_replay_verifier_seed_and_intent(self):

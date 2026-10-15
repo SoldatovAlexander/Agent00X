@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import ssl
+import socket
+import http.client
 import sys
 from unittest.mock import patch
 import unittest
@@ -86,6 +88,11 @@ class HeaderOnlyRateLimitResponse:
 
 
 class GitHubAnonymousSnapshotTransportTests(unittest.TestCase):
+    def test_invalid_rate_limit_evidence_uses_fixed_response_category(self):
+        with self.assertRaises(GitHubHTTPTransportError) as raised:
+            GitHubRateLimitEvidence(status=99, remaining=None, reset_unix=None, observed_monotonic=1)
+        self.assertEqual(raised.exception.failure_code, "response-invalid")
+
     def test_rate_limit_is_one_verified_tls_header_only_get(self):
         captured = {}
         response = HeaderOnlyRateLimitResponse()
@@ -289,6 +296,10 @@ class GitHubAnonymousSnapshotTransportTests(unittest.TestCase):
         self.assertTrue(connection.closed)
 
     def test_failure_is_sanitized_and_connection_is_closed(self):
+        self.assertEqual(
+            GitHubHTTPTransportError("fixed message", failure_code=[]).failure_code,
+            "request-failed",
+        )
         connection = FakeConnection()
 
         def fail_request(*_args, **_kwargs):
@@ -310,7 +321,36 @@ class GitHubAnonymousSnapshotTransportTests(unittest.TestCase):
                 allow_redirects=False,
             )
         self.assertNotIn("HTTP-CANARY-SECRET", str(raised.exception))
+        self.assertEqual(raised.exception.failure_code, "request-failed")
         self.assertTrue(connection.closed)
+
+    def test_readiness_network_failures_have_fixed_redacted_categories(self):
+        failures = (
+            (TimeoutError("private timeout detail"), "timeout"),
+            (ssl.SSLError("private TLS detail"), "tls-failed"),
+            (socket.gaierror("private DNS detail"), "dns-failed"),
+            (ConnectionError("private connection detail"), "connection-failed"),
+            (http.client.HTTPException("private protocol detail"), "http-protocol-failed"),
+            (OSError("private OS detail"), "system-network-failed"),
+            (RuntimeError("private generic detail"), "request-failed"),
+        )
+        for failure, expected_code in failures:
+            with self.subTest(expected_code=expected_code):
+                connection = FakeConnection()
+
+                def fail_request(*_args, _failure=failure, **_kwargs):
+                    raise _failure
+
+                connection.request = fail_request
+                transport = GitHubAnonymousSnapshotTransport(
+                    connection_factory=lambda *_args, _connection=connection, **_kwargs: _connection
+                )
+                with self.assertRaises(GitHubHTTPTransportError) as raised:
+                    transport.read_rate_limit()
+                self.assertEqual(raised.exception.failure_code, expected_code)
+                self.assertEqual(str(raised.exception), "github http transport: request failed")
+                self.assertNotIn("private", str(raised.exception))
+                self.assertTrue(connection.closed)
 
     def test_invalid_timeout_config_is_rejected(self):
         for timeout in (0, -1, float("inf"), float("nan"), 31, True, 10**10000):

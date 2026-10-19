@@ -52,6 +52,13 @@ def main(
     parser.add_argument("--verifier-authority-key-set")
     parser.add_argument("--verifier-authority-key-set-digest")
     args = parser.parse_args(argv)
+    try:
+        interactive_stdin = sys.stdin.isatty() is True
+    except Exception:
+        interactive_stdin = False
+    if not interactive_stdin:
+        errors.write("approval signer: interactive terminal required\n")
+        return 2
     metadata = os.environ if environ is None else environ
     try:
         binding = repository_target_binding_from_metadata(metadata)

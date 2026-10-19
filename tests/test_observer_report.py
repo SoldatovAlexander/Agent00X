@@ -630,6 +630,123 @@ class ObserverHistoryReportTests(unittest.TestCase):
                 ],
             )
 
+    def test_cross_run_reconciliation_link_requires_both_runs_in_report_view(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "cross-run-reconciliation.sqlite3"
+            unknown = event(
+                "event-reconcile-unknown",
+                0,
+                "outcome_unknown",
+                run_id="run-reconcile-parent",
+                status="unknown",
+            )
+            continuation = event(
+                "event-reconcile-start",
+                0,
+                "agent_started",
+                run_id="run-reconcile-child",
+                causal_event_ids=[unknown["event_id"]],
+                invocation_id="invocation-reconcile-child",
+            )
+            with SQLiteObservationStore(database) as store:
+                store.append(unknown)
+                store.append(continuation)
+
+            all_runs = report_from_sqlite(database)
+            all_run_gaps = {gap["code"] for gap in all_runs["gaps"]}
+            self.assertNotIn("causal_reference_missing", all_run_gaps)
+            self.assertNotIn("causal_reference_not_prior", all_run_gaps)
+            self.assertNotIn("causal_reference_out_of_view", all_run_gaps)
+
+            child_only = report_from_sqlite(database, run_id="run-reconcile-child")
+            child_gaps = {gap["code"] for gap in child_only["gaps"]}
+            self.assertIn("causal_reference_out_of_view", child_gaps)
+            self.assertNotIn("causal_reference_missing", child_gaps)
+
+    def test_agent_finish_closes_only_its_matching_invocation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "agent-invocation-pairs.sqlite3"
+            first_start = event(
+                "event-agent-a-start",
+                0,
+                "agent_started",
+                invocation_id="invocation-agent-a",
+            )
+            second_start = event(
+                "event-agent-b-start",
+                1,
+                "agent_started",
+                invocation_id="invocation-agent-b",
+            )
+            first_finish = event(
+                "event-agent-a-finish",
+                2,
+                "agent_finished",
+                invocation_id="invocation-agent-a",
+                causal_event_ids=[first_start["event_id"]],
+            )
+            with SQLiteObservationStore(database) as store:
+                store.append(first_start)
+                store.append(second_start)
+                store.append(first_finish)
+
+            report = report_from_sqlite(database)
+            terminal_gaps = [
+                gap
+                for gap in report["gaps"]
+                if gap["code"] == "agent_terminal_event_missing"
+            ]
+            self.assertEqual(
+                terminal_gaps,
+                [{"code": "agent_terminal_event_missing", "event_ids": [second_start["event_id"]]}],
+            )
+
+    def test_agent_lifecycle_reports_missing_ids_and_ambiguous_pairs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "agent-lifecycle-gaps.sqlite3"
+            legacy_start = event("event-agent-legacy-start", 0, "agent_started")
+            duplicate_start = event(
+                "event-agent-duplicate-start",
+                1,
+                "agent_started",
+                invocation_id="invocation-agent-duplicate",
+            )
+            second_duplicate_start = event(
+                "event-agent-duplicate-start-2",
+                2,
+                "agent_started",
+                invocation_id="invocation-agent-duplicate",
+            )
+            ambiguous_finish = event(
+                "event-agent-duplicate-finish",
+                3,
+                "agent_finished",
+                invocation_id="invocation-agent-duplicate",
+                causal_event_ids=[duplicate_start["event_id"]],
+            )
+            orphan_finish = event(
+                "event-agent-orphan-finish",
+                4,
+                "agent_finished",
+                invocation_id="invocation-agent-orphan",
+            )
+            with SQLiteObservationStore(database) as store:
+                for item in (
+                    legacy_start,
+                    duplicate_start,
+                    second_duplicate_start,
+                    ambiguous_finish,
+                    orphan_finish,
+                ):
+                    store.append(item)
+
+            report = report_from_sqlite(database)
+            gaps = {gap["code"] for gap in report["gaps"]}
+            self.assertIn("agent_invocation_id_missing", gaps)
+            self.assertIn("agent_terminal_event_missing", gaps)
+            self.assertIn("agent_lifecycle_pair_ambiguous", gaps)
+            self.assertIn("agent_start_event_missing", gaps)
+
     def test_digest_or_checkpoint_reference_corruption_fails_without_repair(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "corrupt.sqlite3"

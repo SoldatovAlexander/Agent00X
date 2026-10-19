@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import subprocess
 import sys
 import tarfile
@@ -17,6 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import build_verifier_host_bundle as bundle_builder
+import stream_pinned_verifier_host_bundle as transfer
 from app_contracts.brainbooster_target_profile import PINNED_HTTP_DB_FAILURE_CODES
 
 _EXPECTED_VERIFIER_HOST_PINS = frozenset({
@@ -172,6 +174,18 @@ class VerifierHostBundleTests(unittest.TestCase):
         first_manifest = self._archive_members(first_archive)["MANIFEST.json"]
         second_manifest = self._archive_members(second_archive)["MANIFEST.json"]
         self.assertNotEqual(first_manifest, second_manifest)
+
+    def test_launcher_import_is_included_in_transitive_source_closure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._make_project(root)
+            (root / "scripts/serve_ephemeral_signed_verifier_https.py").write_bytes(
+                b"from app_contracts.service import SERVICE\n"
+            )
+            archive_bytes, _, _, _ = bundle_builder.build_bundle(root)
+
+        members = self._archive_members(archive_bytes)
+        self.assertEqual(members["src/app_contracts/service.py"], b"SERVICE = 1\n")
 
     def test_symlink_is_rejected_before_any_archive_bytes_are_written(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -346,20 +360,29 @@ class VerifierHostBundleTests(unittest.TestCase):
         self.assertNotIn("src/app_contracts/credential_source.py", members)
 
     def test_real_bundle_imports_launcher_after_extraction_without_starting_service(self):
-        archive_bytes, _, _, _ = bundle_builder.build_bundle(ROOT)
+        archive_bytes, digest, count, source_bytes = bundle_builder.build_bundle(ROOT)
+        self.assertEqual(digest, transfer.BUNDLE_SHA256)
+        self.assertEqual(len(archive_bytes), transfer.BUNDLE_ARCHIVE_BYTES)
+        self.assertEqual(count, transfer.BUNDLE_MEMBER_COUNT)
+        self.assertEqual(source_bytes, transfer.BUNDLE_SOURCE_BYTES)
         with tempfile.TemporaryDirectory() as temporary:
             extracted = Path(temporary)
             with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
-                for member in archive.getmembers():
-                    if not member.isfile():
-                        continue
-                    target = extracted / member.name
+                members = archive.getmembers()
+                self.assertEqual(len(members), count + 1)
+                for member in members:
+                    path = PurePosixPath(member.name)
+                    self.assertTrue(member.isfile())
+                    self.assertFalse(path.is_absolute())
+                    self.assertNotIn("..", path.parts)
+                    target = extracted.joinpath(*path.parts)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(archive.extractfile(member).read())
             launcher = extracted / "scripts/serve_ephemeral_signed_verifier_https.py"
             result = subprocess.run(
                 [sys.executable, "-B", str(launcher), "--help"],
-                env={"PYTHONDONTWRITEBYTECODE": "1"},
+                cwd=extracted,
+                env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/usr/bin:/bin"},
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=10,

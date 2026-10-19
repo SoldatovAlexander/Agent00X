@@ -92,7 +92,7 @@ class VerifiedVerifierTrustEnrollment:
         )
 
 
-def build_signed_verifier_trust_enrollment(
+def build_verifier_trust_enrollment_signing_message(
     *,
     enrollment_id: str,
     authority_key_id: str,
@@ -104,15 +104,17 @@ def build_signed_verifier_trust_enrollment(
     worker_host_id: str,
     verifier_host_id: str,
     host_separation_evidence_digest: str,
-    signing_key: Ed25519PrivateKey,
     issued_at: datetime,
     expires_at: datetime,
 ) -> bytes:
-    """Build one canonical signed record; does not store or enroll any key."""
+    """Return public canonical bytes for an external authority signer.
+
+    The returned message contains no private key or signature. Its signature
+    must be assembled and then verified against a separately pinned authority
+    key set before the enrollment is trusted.
+    """
 
     try:
-        if not isinstance(signing_key, Ed25519PrivateKey):
-            raise ValueError
         payload = _validate_fields(
             {
                 "schema": ENROLLMENT_SCHEMA,
@@ -139,11 +141,97 @@ def build_signed_verifier_trust_enrollment(
             _parse_time(payload["expires_at"]),
             now=_parse_time(payload["issued_at"]),
         )
-        signature = signing_key.sign(_DOMAIN + _canonical_json(payload)).hex()
-        encoded = _canonical_json({**payload, "signature": signature})
+        message = _DOMAIN + _canonical_json(payload)
+        if len(message) > MAX_ENROLLMENT_BYTES + len(_DOMAIN):
+            raise ValueError
+        return message
+    except Exception:
+        raise VerifierTrustEnrollmentError(
+            "verifier trust enrollment: signing request rejected"
+        ) from None
+
+
+def assemble_signed_verifier_trust_enrollment(
+    signing_message: object, signature: object
+) -> bytes:
+    """Assemble an untrusted record from a canonical message and detached sig.
+
+    This function does not verify who produced ``signature``. Call
+    :func:`verify_verifier_trust_enrollment` with an independently pinned
+    authority key set and expected deployment bindings before using the record.
+    """
+
+    try:
+        if (
+            type(signing_message) is not bytes
+            or not signing_message.startswith(_DOMAIN)
+            or len(signing_message) > MAX_ENROLLMENT_BYTES + len(_DOMAIN)
+            or type(signature) is not bytes
+            or len(signature) != 64
+        ):
+            raise ValueError
+        payload_bytes = signing_message[len(_DOMAIN) :]
+        payload = json.loads(
+            payload_bytes.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
+        )
+        payload = _validate_fields(payload)
+        if _canonical_json(payload) != payload_bytes:
+            raise ValueError
+        _validate_window(
+            _parse_time(payload["issued_at"]),
+            _parse_time(payload["expires_at"]),
+            now=_parse_time(payload["issued_at"]),
+        )
+        encoded = _canonical_json({**payload, "signature": signature.hex()})
         if len(encoded) > MAX_ENROLLMENT_BYTES:
             raise ValueError
         return encoded
+    except Exception:
+        raise VerifierTrustEnrollmentError(
+            "verifier trust enrollment: detached signature rejected"
+        ) from None
+
+
+def build_signed_verifier_trust_enrollment(
+    *,
+    enrollment_id: str,
+    authority_key_id: str,
+    endpoint_url: str,
+    verifier_id: str,
+    verifier_profile_digest: str,
+    verifier_key_id: str,
+    verifier_public_key: bytes,
+    worker_host_id: str,
+    verifier_host_id: str,
+    host_separation_evidence_digest: str,
+    signing_key: Ed25519PrivateKey,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> bytes:
+    """Build one canonical signed record; does not store or enroll any key."""
+
+    try:
+        if not isinstance(signing_key, Ed25519PrivateKey):
+            raise ValueError
+        message = build_verifier_trust_enrollment_signing_message(
+            enrollment_id=enrollment_id,
+            authority_key_id=authority_key_id,
+            endpoint_url=endpoint_url,
+            verifier_id=verifier_id,
+            verifier_profile_digest=verifier_profile_digest,
+            verifier_key_id=verifier_key_id,
+            verifier_public_key=verifier_public_key,
+            worker_host_id=worker_host_id,
+            verifier_host_id=verifier_host_id,
+            host_separation_evidence_digest=host_separation_evidence_digest,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        return assemble_signed_verifier_trust_enrollment(
+            message, signing_key.sign(message)
+        )
     except Exception:
         raise VerifierTrustEnrollmentError(
             "verifier trust enrollment: record rejected"

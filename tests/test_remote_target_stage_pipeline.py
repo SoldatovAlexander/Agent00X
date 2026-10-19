@@ -10,7 +10,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import uuid
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from io import StringIO
@@ -54,6 +53,7 @@ from app_contracts.executor import (
     ExecutionRequest,
     ExecutionStatus,
     VerifierInput,
+    VerifierVerdict,
     verifier_snapshot_tree_digest,
 )
 from app_contracts.github_http_transport import GitHubAnonymousSnapshotTransport
@@ -373,12 +373,14 @@ class _FixedProposalChannel:
         )
 
 
-def _build_verifier_runtime() -> tuple[str, str, str]:
+def _build_verifier_runtime(*, tag: str) -> tuple[str, str, str]:
     if os.environ.get("RUN_DOCKER_SANDBOX_TESTS") != "1":
         raise RuntimeError("Docker verifier build is opt-in")
     docker = shutil.which("docker")
     if not docker or not Path(docker).is_absolute():
         raise RuntimeError("Docker executable unavailable")
+    if tag != "agent00x-verifier:exp-1521-e6fb28b":
+        raise RuntimeError("Docker verifier build tag is invalid")
     source_root = ROOT / "src" / "app_contracts"
     with tempfile.TemporaryDirectory(prefix="agent00x-exp466-build-") as build_root, tempfile.TemporaryDirectory(
         prefix="agent00x-exp466-docker-config-"
@@ -398,9 +400,22 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
         for schema_file in VERIFIER_CONTEXT_SCHEMA_FILES:
             shutil.copyfile(ROOT / "schemas" / schema_file, schema_dir / schema_file)
 
-        env = dict(os.environ)
-        env["DOCKER_CONFIG"] = docker_config
-        env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+        env = {
+            "DOCKER_CONFIG": docker_config,
+            "DOCKER_HOST": "unix:///var/run/docker.sock",
+            "LANG": "C",
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+        }
+        existing_tag = subprocess.run(
+            [docker, "--host=unix:///var/run/docker.sock", "image", "inspect", "--format", "{{.Id}}", tag],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            env=env,
+        )
+        if existing_tag.returncode == 0 or "No such image" not in existing_tag.stderr:
+            raise RuntimeError("local verifier build tag is not safely available")
         source_container = subprocess.run(
             [docker, "--host=unix:///var/run/docker.sock", "create", TARGET_RUNTIME_IMAGE_ID],
             capture_output=True,
@@ -443,7 +458,6 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
             code_hash.update(relative.encode("utf-8") + b"\0")
             code_hash.update(hashlib.sha256(path.read_bytes()).digest())
         code_digest = "sha256:" + code_hash.hexdigest()
-        tag = "agent00x-verifier-exp466:" + uuid.uuid4().hex
         image_id_file = context / "image-id"
         build = subprocess.run(
             [
@@ -476,6 +490,82 @@ def _build_verifier_runtime() -> tuple[str, str, str]:
         ):
             raise RuntimeError("verifier image identity unavailable")
     return docker, image_id, code_digest
+
+
+@unittest.skipUnless(
+    os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1",
+    "offline verifier image build is opt-in",
+)
+class LocalVerifierImageBuildTests(unittest.TestCase):
+    def test_current_verifier_image_builds_offline_and_passes_one_synthetic_request(self):
+        tag = "agent00x-verifier:exp-1521-e6fb28b"
+        docker, image_id, code_digest = _build_verifier_runtime(tag=tag)
+        self.assertEqual(
+            code_digest,
+            "sha256:e6fb28b9296648bc866560b81c87a0934b8f10cb36867a8c0191849761c29f1e",
+        )
+        with tempfile.TemporaryDirectory(prefix="agent00x-exp1521-docker-config-") as docker_config:
+            inspected = subprocess.run(
+                [
+                    docker,
+                    "--host=unix:///var/run/docker.sock",
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{.Id}}|{{.Os}}|{{.Architecture}}",
+                    tag,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+                env={
+                    "DOCKER_CONFIG": docker_config,
+                    "DOCKER_HOST": "unix:///var/run/docker.sock",
+                    "LANG": "C",
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                },
+            )
+        self.assertEqual(inspected.returncode, 0)
+        self.assertEqual(inspected.stdout.strip(), f"{image_id}|linux|amd64")
+
+        snapshot_files = (("calculator.py", "100644", b"def add(a, b): return 0\n"),)
+        verified_contents = (("calculator.py", "def add(a, b): return a + b\n"),)
+        prepared = VerifierInput(
+            process_id="process-exp-1521-synthetic-001",
+            repository_id="local-verifier-fixture",
+            base_commit="a" * 40,
+            snapshot_tree_digest=verifier_snapshot_tree_digest(snapshot_files),
+            declared_change_paths=("calculator.py",),
+            verified_contents=verified_contents,
+            test_command=(
+                "python3",
+                "-c",
+                "import calculator; assert calculator.add(2, 3) == 5",
+            ),
+            test_timeout_seconds=10,
+            patch_digest="sha256:" + "1" * 64,
+            evidence_digest="sha256:" + "2" * 64,
+            verification_digest="sha256:" + "3" * 64,
+            verified_contents_digest=sha256_digest(verified_contents),
+            replay_result_digest="sha256:" + "4" * 64,
+            snapshot_files=snapshot_files,
+        )
+        result = DockerContainerVerifier(
+            VerifierContainerConfig(
+                docker,
+                image_id,
+                code_digest,
+                timeout_seconds=60,
+                max_stdout_bytes=20_000,
+                max_stderr_bytes=20_000,
+            )
+        ).verify(prepared)
+        self.assertEqual(result.verdict, VerifierVerdict.PASS)
+        self.assertEqual(
+            result.verifier_id,
+            f"docker-image:{image_id}/code:{code_digest}",
+        )
 
 
 class PinnedTargetCommandContractTests(unittest.TestCase):

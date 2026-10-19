@@ -90,7 +90,7 @@ def is_verified_verifier_host_trust_decision(value: object) -> bool:
     )
 
 
-def build_signed_verifier_host_trust_decision(
+def build_verifier_host_trust_decision_signing_message(
     *,
     decision_id: str,
     authority_key_id: str,
@@ -102,15 +102,17 @@ def build_signed_verifier_host_trust_decision(
     worker_host_id: str,
     verifier_host_id: str,
     host_separation_evidence_digest: str,
-    signing_key: Ed25519PrivateKey,
     issued_at: datetime,
     expires_at: datetime,
 ) -> bytes:
-    """Create a canonical signed approval record without storing its key."""
+    """Return public canonical bytes for a detached authority signer.
+
+    A signature over this message is not trusted until the assembled decision
+    is checked against an independently pinned authority key set and exact
+    deployment bindings.
+    """
 
     try:
-        if not isinstance(signing_key, Ed25519PrivateKey):
-            raise ValueError
         payload = _validate_fields(
             {
                 "schema": DECISION_SCHEMA,
@@ -132,11 +134,97 @@ def build_signed_verifier_host_trust_decision(
         issued = _parse_time(payload["issued_at"])
         expires = _parse_time(payload["expires_at"])
         _validate_window(issued, expires, now=issued)
-        signature = signing_key.sign(_DOMAIN + _canonical_json(payload)).hex()
-        encoded = _canonical_json({**payload, "signature": signature})
+        message = _DOMAIN + _canonical_json(payload)
+        if len(message) > MAX_DECISION_BYTES + len(_DOMAIN):
+            raise ValueError
+        return message
+    except Exception:
+        raise VerifierHostTrustDecisionError(
+            "verifier host trust decision: signing request rejected"
+        ) from None
+
+
+def assemble_signed_verifier_host_trust_decision(
+    signing_message: object, signature: object
+) -> bytes:
+    """Assemble an untrusted record from a canonical message and detached sig.
+
+    This does not authenticate the signature. Call
+    :func:`verify_verifier_host_trust_decision` with a separately pinned
+    authority key set and exact expected bindings before trusting the result.
+    """
+
+    try:
+        if (
+            type(signing_message) is not bytes
+            or not signing_message.startswith(_DOMAIN)
+            or len(signing_message) > MAX_DECISION_BYTES + len(_DOMAIN)
+            or type(signature) is not bytes
+            or len(signature) != 64
+        ):
+            raise ValueError
+        payload_bytes = signing_message[len(_DOMAIN) :]
+        payload = json.loads(
+            payload_bytes.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
+        )
+        payload = _validate_fields(payload)
+        if _canonical_json(payload) != payload_bytes:
+            raise ValueError
+        _validate_window(
+            _parse_time(payload["issued_at"]),
+            _parse_time(payload["expires_at"]),
+            now=_parse_time(payload["issued_at"]),
+        )
+        encoded = _canonical_json({**payload, "signature": signature.hex()})
         if len(encoded) > MAX_DECISION_BYTES:
             raise ValueError
         return encoded
+    except Exception:
+        raise VerifierHostTrustDecisionError(
+            "verifier host trust decision: detached signature rejected"
+        ) from None
+
+
+def build_signed_verifier_host_trust_decision(
+    *,
+    decision_id: str,
+    authority_key_id: str,
+    enrollment_digest: str,
+    endpoint_url: str,
+    verifier_id: str,
+    verifier_profile_digest: str,
+    verifier_key_id: str,
+    worker_host_id: str,
+    verifier_host_id: str,
+    host_separation_evidence_digest: str,
+    signing_key: Ed25519PrivateKey,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> bytes:
+    """Create a canonical signed approval record without storing its key."""
+
+    try:
+        if not isinstance(signing_key, Ed25519PrivateKey):
+            raise ValueError
+        message = build_verifier_host_trust_decision_signing_message(
+            decision_id=decision_id,
+            authority_key_id=authority_key_id,
+            enrollment_digest=enrollment_digest,
+            endpoint_url=endpoint_url,
+            verifier_id=verifier_id,
+            verifier_profile_digest=verifier_profile_digest,
+            verifier_key_id=verifier_key_id,
+            worker_host_id=worker_host_id,
+            verifier_host_id=verifier_host_id,
+            host_separation_evidence_digest=host_separation_evidence_digest,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+        return assemble_signed_verifier_host_trust_decision(
+            message, signing_key.sign(message)
+        )
     except Exception:
         raise VerifierHostTrustDecisionError(
             "verifier host trust decision: record rejected"

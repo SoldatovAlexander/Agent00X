@@ -1456,8 +1456,10 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             },
         )
         self.assertEqual(err.getvalue(), "")
-        self.assertEqual(observer_store.events()[-1]["event_type"], "decision_applied")
-        self.assertEqual(observer_store.events()[-1]["status"], "denied")
+        self.assertEqual(observer_store.events()[-2]["event_type"], "decision_applied")
+        self.assertEqual(observer_store.events()[-2]["status"], "denied")
+        self.assertEqual(observer_store.events()[-1]["event_type"], "agent_finished")
+        self.assertEqual(observer_store.events()[-1]["status"], "failed")
         read_snapshot.assert_not_called()
 
     def test_observed_permit_journal_failures_stop_before_snapshot_intake(self):
@@ -1949,8 +1951,10 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             },
         )
         self.assertEqual(err.getvalue(), "")
-        self.assertEqual(observer_store.events()[-1]["event_type"], "decision_applied")
-        self.assertEqual(observer_store.events()[-1]["status"], "denied")
+        self.assertEqual(observer_store.events()[-2]["event_type"], "decision_applied")
+        self.assertEqual(observer_store.events()[-2]["status"], "denied")
+        self.assertEqual(observer_store.events()[-1]["event_type"], "agent_finished")
+        self.assertEqual(observer_store.events()[-1]["status"], "failed")
         execute.assert_not_called()
 
     def test_missing_raw_commit_object_proof_stops_before_worker_or_target(self):

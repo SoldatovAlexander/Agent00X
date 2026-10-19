@@ -542,11 +542,14 @@ def run_controlled_local_publication(
         verified_files = _validate_verified_files(seed, verified_files)
     if observer is not None and (
         type(observer) is not JournaledProposalWorker
-        or type(broker) is not InMemoryCredentialBroker
-        or type(endpoint) is not MockGitHubEndpoint
+        or not (
+            type(broker) is InMemoryCredentialBroker
+            and type(endpoint) is MockGitHubEndpoint
+        )
+        and not github_app_broker
     ):
         raise ControlledPublicationError(
-            "controlled publication: observer is limited to local mock path"
+            "controlled publication: observer requires a supported publication path"
         )
     _require_seed_intent_binding(seed, intent)
     if github_app_broker and seed.source_repository_id is not None:

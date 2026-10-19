@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 from typing import Protocol, Sequence
 
+from .docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT
+
 
 class SandboxError(RuntimeError):
     pass
@@ -153,7 +155,7 @@ class DockerSandbox:
             raise SandboxError(f"command {executable!r} is not allowlisted")
         completed = subprocess.run(
             [
-                "docker", "exec", "--workdir", "/workspace",
+                "docker", LOCAL_DOCKER_HOST_ARGUMENT, "exec", "--workdir", "/workspace",
                 "--env", "PATH=/usr/local/bin:/usr/bin:/bin",
                 "--env", "PYTHONDONTWRITEBYTECODE=1",
                 "--env", "LANG=C.UTF-8",
@@ -169,7 +171,7 @@ class DockerSandbox:
     def close(self) -> None:
         if self._closed:
             return
-        subprocess.run(["docker", "rm", "--force", self._container_id], capture_output=True, text=True, check=False)
+        subprocess.run(["docker", LOCAL_DOCKER_HOST_ARGUMENT, "rm", "--force", self._container_id], capture_output=True, text=True, check=False)
         _make_tree_owner_writable(self._root)
         shutil.rmtree(self._root)
         self._closed = True
@@ -223,7 +225,7 @@ class DockerSandboxBackend:
 
     def build_run_command(self, snapshot: Path, workspace: Path) -> list[str]:
         return [
-            "docker", "run", "--detach", "--rm",
+            "docker", LOCAL_DOCKER_HOST_ARGUMENT, "run", "--detach", "--rm",
             "--network", "none",
             "--read-only",
             "--cap-drop", "ALL",
@@ -242,7 +244,7 @@ class DockerSandboxBackend:
 
     def _assert_image_available(self) -> None:
         completed = subprocess.run(
-            ["docker", "image", "inspect", self.image],
+            ["docker", LOCAL_DOCKER_HOST_ARGUMENT, "image", "inspect", self.image],
             capture_output=True,
             text=True,
             timeout=15,

@@ -410,6 +410,7 @@ class SignedMockPublicationTests(unittest.TestCase):
                 task_id=task_id,
             )
             worker.propose(SimpleNamespace(process_id=process_id, task_id=task_id))
+            worker.finish_agent_invocation(status="ok")
             run_id = worker.observer_reference()["run_id"]
         return process_id, run_id
 
@@ -448,8 +449,39 @@ class SignedMockPublicationTests(unittest.TestCase):
             and event["event_type"] == "decision_proposed"
         )
         self.assertEqual(signed_verification["status"], "pending")
+        self.assertEqual(events[-2]["event_type"], "agent_finished")
+        self.assertEqual(events[-2]["status"], "failed")
+        self.assertEqual(events[-1]["event_type"], "run_finished")
+        self.assertEqual(events[-1]["status"], "failed")
         self.assertNotIn("signature", repr(events))
         self.assertNotIn(TEST_APPROVER_PUBLIC_KEY.hex(), repr(events))
+
+    def test_successful_observed_mock_publication_closes_the_run(self):
+        observer_database = self.root / "observer-success.sqlite3"
+        _process_id, run_id = self._new_observed_run(observer_database)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(
+                self._argv()
+                + [
+                    "--observer-db",
+                    str(observer_database),
+                    "--observer-run-id",
+                    run_id,
+                ],
+                now=NOW + timedelta(seconds=1),
+            )
+        self.assertEqual(code, 0, stderr.getvalue())
+        result = json.loads(stdout.getvalue())
+        self.assertIs(result["external_write"], False)
+        self.assertIs(result["identity_authenticated"], False)
+        self.assertEqual(result["observer"]["run_id"], run_id)
+        with SQLiteObservationStore(observer_database) as store:
+            events = store.events()
+        self.assertEqual(events[-2]["event_type"], "agent_finished")
+        self.assertEqual(events[-2]["status"], "ok")
+        self.assertEqual(events[-1]["event_type"], "run_finished")
+        self.assertEqual(events[-1]["status"], "ok")
 
 
 if __name__ == "__main__":

@@ -202,6 +202,14 @@ def _collect_app_modules(root: Path) -> list[_SourceMember]:
     try:
         module_index = _app_module_index(root)
         pending = list(_VERIFIER_HOST_ROOT_MODULES)
+        launcher_source = _read_regular_file(root, _FIXED_FILES[0])
+        launcher_imports = _local_import_targets(
+            ast.parse(launcher_source.decode("utf-8"), filename=_FIXED_FILES[0]),
+            package="",
+            module_index=module_index,
+        )
+        for imported_name in launcher_imports:
+            pending.extend(_module_parents(imported_name, module_index))
         included: set[str] = set()
         while pending:
             module_name = pending.pop()

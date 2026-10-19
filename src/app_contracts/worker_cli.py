@@ -1421,6 +1421,11 @@ def main(
                 "status": "error",
                 "failure_code": "remote-execution-authorization-unavailable",
             }
+            if execution_worker is not None:
+                try:
+                    execution_worker.finish_agent_invocation(status="failed")
+                except Exception:
+                    pass
             observer_reference = _observer_reference_for_cli(execution_worker)
             if observer_reference is not None:
                 authorization_error["observer"] = observer_reference
@@ -1456,6 +1461,21 @@ def main(
                 "status": "failed",
                 "failure_code": "remote-snapshot-execution-failed",
             }
+        if execution_worker is not None:
+            invocation_status = (
+                "ok"
+                if payload.get("status") == "verified"
+                else "denied"
+                if payload.get("status") in {"blocked", "denied"}
+                else "failed"
+            )
+            try:
+                execution_worker.finish_agent_invocation(status=invocation_status)
+            except WorkerJournalError:
+                payload = {
+                    "status": "failed",
+                    "failure_code": "observer-invocation-finish-failed",
+                }
         observer_reference = _observer_reference_for_cli(execution_worker)
         if observer_reference is not None:
             payload["observer"] = observer_reference

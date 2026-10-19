@@ -14,6 +14,7 @@ import tempfile
 import uuid
 
 from .executor import VerifierInput, VerifierResult, validate_verifier_result
+from .docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT
 from .verifier_process import (
     VerifierProcessConfig,
     VerifierProcessError,
@@ -40,6 +41,7 @@ _DOCKER_ARGS = (
     "--interactive",
     "--pull=never",
     "--network=none",
+    "--platform=linux/amd64",
     "--read-only",
     "--user=65532:65532",
     "--cap-drop=ALL",
@@ -53,7 +55,6 @@ _DOCKER_ARGS = (
     "/work:rw,noexec,nosuid,nodev,size=32m,mode=0700,uid=65532,gid=65532",
     "--workdir=/work",
 )
-_DOCKER_HOST = "unix:///var/run/docker.sock"
 # The runtime image fixes its own ENTRYPOINT to the verifier module, so the
 # only argument the launcher ever appends is the per-invocation nonce. The
 # child echoes it in the bounded verifier_id result field; the parent requires
@@ -112,7 +113,7 @@ class VerifierContainerConfig:
             executable=self.docker_executable,
             argv=(
                 self.docker_executable,
-                f"--host={_DOCKER_HOST}",
+                LOCAL_DOCKER_HOST_ARGUMENT,
                 *_DOCKER_ARGS,
                 self.runtime_image_id,
                 f"{_CONTAINER_ENTRYPOINT_ARGUMENT}{_SAMPLE_INVOCATION_NONCE}",
@@ -134,7 +135,7 @@ class VerifierContainerConfig:
             executable=self.docker_executable,
             argv=(
                 self.docker_executable,
-                f"--host={_DOCKER_HOST}",
+                LOCAL_DOCKER_HOST_ARGUMENT,
                 *_DOCKER_ARGS[:2],
                 f"--name={container_name}",
                 *_DOCKER_ARGS[2:],
@@ -197,7 +198,7 @@ class DockerContainerVerifier:
         try:
             argv = (
                 self._config.docker_executable,
-                f"--host={_DOCKER_HOST}",
+                LOCAL_DOCKER_HOST_ARGUMENT,
                 "rm",
                 "--force",
                 container_name,

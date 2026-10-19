@@ -48,13 +48,224 @@ trust boundaries. Наблюдатель и обучение через конт
    один LLM Worker, независимая проверка, минимальный CLI и контролируемая
    публикация. Все проверки до внешнего write; реальные границы секретов и
    durable reconciliation. Основные пути R2 инструментированы наблюдением R1.
-   **Актуальный checkpoint (2026-10-16; детали и 16 критериев — в
+   **Актуальный checkpoint (2026-10-19; детали и 16 критериев — в
    [статусе реализации](27-implementation-status.md)):** R2/MVP остаются OPEN.
+   После EXP-1384 были выполнены EXP-1391—1393 и локальная EXP-1395.
+   EXP-1395 добавила replay сохранённого stage через фиксированный trusted-HTTPS
+   verifier с caller-pinned публичными trust-записями и exact trust digests в
+   evidence; CLI не вызывает Worker/model и сохраняет обязательный Docker
+   target sandbox opt-in. Это только подготовленная возможность: runtime replay
+   не запускался; authority signature не появилась. EXP-1465 израсходовала
+   одну отдельно подтверждённую попытку: strict-host-key SSH запустила
+   одноразовый verifier и получила маркер `ready`, но полный bootstrap был
+   обрезан каналом вывода до локальной проверки. Подписей, verifier HTTP request,
+   verified replay или Docker invocation не было; карточка BLOCKED, повтора без
+   новой точной карточки и подтверждения нет. Host-fingerprint evidence есть из
+   EXP-1385/1386, а EXP-1436 обновила comparison локального Mac и `testdev`.
+   Пользователь закрепил digest текущего v2 authority key-set
+   `sha256:470937c60340149438e97d9f08fff61e6e95d2cd3bf81fdb0b4f5399e6aa1e12`
+   и принял EXP-1436 (`sha256:607a8dd219cfdc82f27e7a47fef84b63a1439fa14b05b47e068960c4c940b332`)
+   только как различие хэшированных fingerprints с точностью наблюдения до
+   даты. Это не доказывает идентичность deployment, работу runtime или
+   изоляцию verifier. Последующая локальная проверка выявила, что исходная
+   EXP-1269 SQLite-БД сопровождается WAL/SHM sidecars, и
+   `SQLiteStagedArtifactStore(read_only=True)` отказывает до SQLite-open.
+   EXP-1467 superseded. EXP-1483 создала и проверила отдельный mode-0600
+   standalone snapshot этого stage вне Git: staged digest сохранён, SQLite
+   `integrity_check=ok`, destination WAL/SHM отсутствуют, исходные main/WAL/SHM
+   остались byte-identical. EXP-1468 superseded: она ссылается на прежние
+   verifier image/code/source-bundle pins. Batch AIH синхронизировал локальные
+   transfer helpers с image `sha256:59468457bb9a2ec5e6857e3a413df1e480481d832280027ecfd1f227517bdaa2`,
+   code `sha256:a1ca1bf92f8dff1197814be3b6702c4a028763a6e9735165e304b0d59d0fad9e`
+   и bundle `sha256:3d7c9c30b2afc53c53b9a1427e95e113d684111209979ee5e7fbce2fe437dad4`;
+   batch-end suite прошёл (1,886 tests, 25 skipped). Эти pins локальны и ещё
+   не переданы на testdev. EXP-1490 затем проверила portable OCI archive в
+   памяти: config digest оказался
+   `sha256:4bc58e997bad6a48a59f8496f92aad05f294a9480ce269ef2b53862f86cab87c`,
+   отличный от прежнего classic-store pin; layer DiffIDs совпали. EXP-1491
+   обновила config bridge и remote image check к отдельным manifest/config ID,
+   не сравнивая storage `.Size`, и сформировала новый source bundle
+   `sha256:d0d51e4a37ba0dc86cd649acf79e7bab3c790dc680bd0ea81df5291782b0f35f`.
+   Batch AVI suite прошёл (1,895 tests, 25 skipped). Bundle из Batch AIH
+   `sha256:3d7c9c30b2afc53c53b9a1427e95e113d684111209979ee5e7fbce2fe437dad4`
+   superseded; актуальный source bundle —
+   `sha256:d0d51e4a37ba0dc86cd649acf79e7bab3c790dc680bd0ea81df5291782b0f35f`,
+   а актуальный classic-store config ID —
+   `sha256:4bc58e997bad6a48a59f8496f92aad05f294a9480ce269ef2b53862f86cab87c`.
+   EXP-1493 (bundle transfer) и EXP-1494 (image import) остаются отдельными
+   DRAFT gates; ни один helper ещё не запускался на testdev. Ответ пользователя
+   `RUN EXP-1468 ONCE` не был
+   исполнен и не авторизует изменённый scope. Batch AII добавил и
+   протестировал локальный bootstrap-capture/session supervisor: он
+   ограниченно читает bootstrap в памяти, валидирует текущий профиль,
+   сохраняет только публичную строку mode 0600, печатает digest/port и держит
+   strict SSH handle для последующего запроса. Его runtime не запускался; это
+   не удалённая готовность. Для продолжения нужны новые согласованные карточки
+   и отдельное точное разрешение на актуальные remote transfer/import/replay.
+   **EXP-1498 (Batch AJA):** retained EXP-1269 candidate воспроизведён один раз
+   через актуальный публичный snapshot, target `network=none` sandbox и текущий
+   локальный same-host verifier; результат `fresh_pass`. Новый stage сохранил
+   byte-identical `verified_contents` и единственный путь `backend/routes.py`,
+   но это не повтор Worker/model и не независимая проверка. Observer остаётся
+   partial на cursor 87; approval и publication не выполнялись. R2/MVP остаются
+   OPEN. EXP-1499 перенесла это ограниченное evidence в checkpoint. EXP-1500
+   затем подтвердил fail-closed поведение: без verifier provenance trust
+   `build_approval_request` отказал до создания approval request; подпись и
+   provider action не выполнялись. EXP-1493 (current source-bundle transfer)
+   и EXP-1494 (current image import) остаются отдельными DRAFT gates. Для
+   будущего remote replay нужны их отдельные свежие разрешения и последующая
+   точная карточка с актуальными pins; старое подтверждение EXP-1465 не
+   применялось к другому scope. Batch AJC завершился полным suite: 1,895 тестов,
+   25 пропущено; это regression evidence, не end-to-end доказательство.
+   Подготовительный аудит EXP-1502 установил дополнительную несовместимость:
+   текущий `BRAINBOOSTER_VERIFIER_PROFILE` имеет digest
+   `sha256:afffe37328631803e9c1afa2631085b5f2bd7ab02feffdbe344f9df35deb7556`,
+   тогда как `exp1383_macos_keychain_signer.swift` принимает только профиль
+   `sha256:603f0e674e131ef795f115f099cdeb514452a82def41e5b5853f84f62d7ff281`
+   и ограничен EXP-1383. Разрешение использовать ключ было только для
+   EXP-1383; signer не читался/не запускался. До нового live replay требуется
+   отдельное решение о совместимом authority signer и его точном scope.
+   EXP-1503 в Batch AJF прошёл локальный synthetic REST-to-signed-mock-receipt
+   composition test с `external_write=false` и
+   `identity_authenticated=false`; это не реальный verifier или публикация.
+   EXP-1505 в Batch AJH подтвердил локальный отказ GitHub publication при
+   synthetic `identity_authenticated=true` до provider configuration; это не
+   human-identity evidence. Полный offline suite Batch AJI прошёл: 1,896 тестов,
+   25 пропущено за 77.443 секунды; remote gates остаются DRAFT, а independent
+   verifier trust и MVP — OPEN.
+   EXP-1380 оставила one-shot
+   listener на testdev; позднее SSH-процесс завершился с кодом 2 без HTTP 200,
+   то есть без подтверждённого verifier-запроса. EXP-1394 затем отдельным
+   подтверждённым strict-host-key запуском получила свежий public bootstrap для
+   `https://testdev.local/v1/verify` (port 49231, fixed verifier profile,
+   caller-pinned CA/key digests). Локальный parser подтвердил схему и pins,
+   сохранив `trust=unestablished`; verifier HTTP request/response не было.
+   Это само по себе не даёт verifier trust или host-separation proof.
+   EXP-1391 создала только для
+   локального эксперимента одноразовый in-memory Control Plane Ed25519 signer,
+   проверила enrollment и enrollment-bound host-decision. Эти записи были
+   краткосрочными, истекли 2026-10-17 в 18:54 UTC и не являются независимо
+   управляемым authority source; host evidence доказывает лишь различие двух
+   наблюдённых fingerprint, не аттестацию хостов. Verifier-запрос не выполнялся.
+   EXP-1392 сверила commit/tree metadata двумя анонимными GitHub GET, а EXP-1393
+   проверила полный 23-файловый snapshot codeload-архива и raw Git commit object:
+   commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, tree
+   `2007066217aadafd9887fb3e3069220333b4fddb`, content digest
+   `sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`.
+   Это доказывает соответствие публичных Git object/content pins, не authorship
+   или подпись commit. EXP-1385 сохранила `verifier-host-separation-exp1385.json`
+   (digest `sha256:82a1c8915d819c5c71fa395a411575a1268b72ecb96efeaed8c235305e6fb941`),
+   где на 2026-10-17T18:33:56Z получены разные hashed fingerprints локального
+   macOS Worker-хоста и Linux testdev verifier-хоста. Scope артефакта ограничен
+   различием fingerprints; он не доказывает аутентичность текущего deployment,
+   verifier runtime или isolation. В артефакте указан старый disposable
+   EXP-1386 key-set digest, отличный от текущего EXP-1383 key-set.
+   EXP-1410 после этого создала локальный EXP-1383-only
+   Ed25519 signer, использующий назначенный пользователем macOS Keychain этого
+   Mac; он выдаёт public key-set/digest и содержит ограниченный detached-signing
+   путь, но не является универсальным credential store. `--sign` читает raw
+   representation generic-password item в память процесса; реальная подпись не
+   выполнялась, а non-exportable Ed25519 защита этим не доказана. Исторический
+   EXP-1410 key-set digest
+   `sha256:6e1491662c6e108ff8952f6d42cd15e2f69259a91975aee920471c6edb8701b8`
+   superseded by the separate EXP-1435 v2 key-set; pinning applies only to the
+   current v2 digest recorded below. Реальные trust-записи не
+   подписывались. Pin и ограниченное принятие EXP-1436 теперь получены, но
+   остаётся собрать актуальное read-only evidence текущего verifier runtime /
+   deployment и подходящее evidence изоляции. EXP-1453 выполнена один раз по
+   отдельному разрешению: bounded systemd/Docker/listener queries на testdev не
+   нашли совпадающих сервисов, контейнеров или listener на 49231. Это не
+   исключает другие механизмы развертывания и не доказывает host isolation.
+   Затем понадобятся отдельные точные карточки и разрешения для
+   подписи и запроса к verifier. Даже разовый smoke с
+   disposable signer не будет независимой проверкой. Полный offline suite после
+   EXP-1393 прошёл: 1,859 tests, 25 skipped; это regression evidence, не
+   сквозной runtime результат. EXP-1383 остаётся DRAFT; полного
+   verifier/approval/publication пути нет. После EXP-1395 полный offline suite
+   прошёл: 1,867 tests, 25 skipped; это regression evidence, не live verifier
+   result.
+   **Обновление 2026-10-18 (EXP-1418–1421):** попытка обеспечить строгую
+   non-exportable Ed25519 подпись через Security `SecKey` не состоялась:
+   `SecKeyCreateRandomKey` вернул OSStatus `-4`; synthetic `SecKeyCreateWithData`
+   подписал тестовое сообщение, но его атрибут остался `extractable=true`;
+   `SecItemImport` без Keychain target вернул `errSecUnknownFormat/-25257` для
+   проверенных raw/PKCS#8 представлений. Эти проверки не обращались к
+   пользовательскому Keychain и не создавали ключ. Существующий EXP-1410
+   generic-password signer копирует raw representation в память процесса и
+   не выполнял реальную подпись. EXP-1419 исправила только недостижимую форму
+   аргументов `--sign`; это не доказательство Keychain-подписи. Текущий public
+   key-set digest по-прежнему требует явного пользовательского pin, а
+   fingerprint-only evidence EXP-1385 — review/acceptance или отдельно
+   разрешённого обновления. Это историческое evidence было дополнено
+   EXP-1436; новая fingerprint-only запись ожидает user review. Bootstrap EXP-1394
+   (`sha256:798af1e26ed75159b0bf755a8083971b2796b5d6c826bc47afd425415513725c`)
+   использовал ephemeral CA, истёкший 2026-10-17T21:28:48Z; он не подходит для
+   текущего enrollment. Пользователь разрешил bounded in-process использование
+   ключа только для EXP-1383; это не заменяет явный pin key-set и review
+   evidence. Новый bootstrap/verifier request не запускался. EXP-1383,
+   независимая проверка, approval, publication и весь R2/MVP остаются OPEN.
+   EXP-1422 сопоставила локальные пробы с [официальным CryptoKit Keychain sample](https://developer.apple.com/documentation/cryptokit/storing-cryptokit-keys-in-the-keychain): Ed25519 `Curve25519.Signing.PrivateKey` не имеет прямого `SecKey`-представления и для хранения в Keychain показан generic-password путь; документированный Secure Enclave signer использует P-256. Поэтому подтверждённого Apple-native неэкспортируемого Ed25519 пути на этом Mac пока нет. Алгоритм не меняли; реальная подпись не выполнялась. Требуется решение Control Plane: bounded in-process signer либо другой поддерживаемый Ed25519 источник.
+   EXP-1423 дополнительно fail-closed отключила `--sign` и `--provision` до stdin/Keychain access; legacy Keychain item и public key-set не менялись. Synthetic-only self-test, help и оба отрицательных вызова прошли; полный offline suite: 1,867 tests, 25 skipped. Это предотвращает случайное использование пути, который раскрывает key bytes процессу, но не закрывает доверие или R2/MVP.
+   **EXP-1435:** пользователь разрешил bounded in-process использование macOS Keychain исключительно для EXP-1383, без экспорта/вывода приватных байтов. Старый EXP-1410 item не трогали; отдельный v2 Ed25519 item создан, а public-only key-set сохранён в `control-plane-authority-keys-exp1383-v2.json` (digest `sha256:470937c60340149438e97d9f08fff61e6e95d2cd3bf81fdb0b4f5399e6aa1e12`). Generic-password реализация неизбежно держит raw representation в памяти локального процесса; это не hardware-backed/non-exportable защита. Синтетическая проверка signer и help прошли; приватный материал не выводился и не сохранялся в проект. Пользователь подтвердил допустимость памяти signer-процесса, но явный pin нового digest и review/acceptance актуального EXP-1436 host-fingerprint evidence всё ещё нужны до реальной trust-подписи. EXP-1383, независимая проверка, approval/publication и R2/MVP остаются OPEN.
+   EXP-1424 зарегистрировала отдельный credential-free local Worker profile. Один запуск EXP-1425 получил HTTP 200 / remaining 60, затем выполнил ровно один локальный Ollama вызов и остановился на bounded `target-test-malformed-status-level-bool` до verifier/stage. Observer cursor 76, `completeness=partial`; `external_write=false`; approval/publication не выполнялись. Обе сохранённые SQLite DB имеют mode 0600 и `quick_check=ok`; owned Ollama daemon остановлен. EXP-1427 выяснила, что обработчик принимает `dict`, поэтому JSON boolean остаётся boolean; FastAPI параметрической coercion здесь нет. EXP-1428 уточнила подсказку модели про `bool` как подкласс `int`, но остановилась до snapshot/model после провала отдельного ручного Python default-context TLS probe; это не было проверкой runner transport. EXP-1429 нашла установленный certifi bundle, а EXP-1430 успешно выполнила через него анонимный TLS-verified GitHub quota GET. EXP-1432 подтвердила, что runner transport уже загружает certifi и требует hostname/CERT_REQUIRED; его runtime отдельно не вызывался. EXP-1433 зафиксировала quota reset на 2026-10-17 23:29:10 UTC при remaining 35. EXP-1434 зарегистрировала новый Worker-профиль с уточнённой bool-инструкцией; focused (51) и полный (1,868/25 skipped) suites прошли, локальные image pins и чистые пути БД проверены, но двухчасовое разрешение истекло до quota gate и runtime не запускался. Для нового запуска нужны свежая карточка/авторизация и quota check в допустимом окне. Полный offline suite 2026-10-19 прошёл: 1,868 tests, 25 skipped — только regression evidence. EXP-1436 обновила Mac/testdev fingerprint comparison; artifact находится в `REVIEW`, не принят и не доказывает deployment/runtime/isolation. Это не меняет последний успешный Worker→target→same-host verifier→stage evidence EXP-1269; независимый verifier, approval, PR и MVP открыты.
+   **Обновление 2026-10-19 (EXP-1438—1441):** проверка модели остановилась на
+   сравнении несовместимых форматов: Ollama возвращает bare-hex digest, а
+   прежний predicate ожидал `sha256:` prefix. EXP-1440 подтвердил, что
+   `qwen2.5-coder:7b` имеет digest
+   `dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`, который
+   совпадает с code pin после снятия prefix. Это metadata-only свидетельство;
+   inference, snapshot и Worker не запускались. EXP-1442 добавила в local-ollama
+   CLI обязательную exact version/model/digest проверку после quota permit и до
+   snapshot/Worker runtime; подтверждены только synthetic tests. EXP-1441 —
+   DRAFT для одной новой live-попытки с корректным форматом pin, свежей
+   одноразовой авторизацией и quota preflight. Независимый verifier, approval,
+   PR и MVP остаются OPEN.
+   **Уточнение 2026-10-19 (EXP-1447—1448):** чтение pinned target source
+   установило, что `/save-session` заранее применяет `int(data.get(...))` к
+   пяти числовым полям; поэтому JSON `true` превращается в `1` прежде, чем
+   Worker-код сможет проверить строгий тип. EXP-1447 уточнила требование:
+   удалить эти преобразования, проверить исходные значения через
+   `type(value) is int` и signed-64 границы до любого DB/cursor действия.
+   EXP-1441 и EXP-1448 superseded до запуска; EXP-1585 — DRAFT, runtime не разрешён.
+   Полный offline suite 2026-10-19: 1,876 тестов, 25 пропущено; это только
+   regression evidence. Пользователь выбрал для EXP-1383 ограниченное
+   in-process использование Keychain-ключа; явный pin публичного key-set и
+   acceptance fingerprint-only evidence всё ещё нужны до подписи. Последняя
+   подтверждённая Worker→target→same-host verifier→stage цепочка остаётся
+   EXP-1269; независимый verifier, approval, controlled PR и MVP открыты.
+   EXP-1450 и EXP-1451 добавили/зафиксировали TTY-only gates для approval
+   signing, publication и reconciliation: non-TTY попытки отказываются до
+   чтения seed или provider configuration/transport. Это synthetic/local
+   evidence; TTY не аутентифицирует человека и ни один provider request не
+   выполнялся.
+   **Уточнение EXP-1513 (2026-10-19):** Worker Ollama channel теперь передаёт
+   в chat endpoint локальный manifest digest reference `sha256-<64 hex>`, а не
+   mutable model tag после metadata preflight. Source audit Ollama v0.40.3
+   подтверждает разрешение reference в manifest resolver и общий chat route;
+   focused tests (9) и full offline suite (1,896 tests, 25 skipped) прошли.
+   Установленный CLI также сообщил version 0.40.3, но Ollama server был
+   остановлен, поэтому подтверждения реального digest-reference запроса или
+   inference нет. EXP-1585 остаётся DRAFT за точным gate `RUN EXP-1585 ONCE`;
+   независимый verifier, approval, controlled PR и MVP остаются OPEN.
+   EXP-1452 распространила TTY-presence gate на обычный Worker CLI до trust
+   artifact loading, Docker, credential lookup, readiness и model preflight;
+   synthetic exact-phrase pipe отказ откалиброван отдельным регрессионным
+   тестом. Полный suite: 1,877 tests, 25 skipped. EXP-1449 уточнила identity
+   boundary: подпись доказывает владение ключом и digest binding, но не
+   личность человека; `identity_authenticated` остаётся `false`, а
+   authenticated-human-approval criterion — OPEN. Локально проверены точные
+   EXP-1383 key-set digest
+   `sha256:470937c60340149438e97d9f08fff61e6e95d2cd3bf81fdb0b4f5399e6aa1e12`
+   и EXP-1436 evidence digest
+   `sha256:607a8dd219cfdc82f27e7a47fef84b63a1439fa14b05b47e068960c4c940b332`;
+   оба ждут явного пользовательского pin/acceptance. Подпись и verifier request
+   не выполнялись.
    EXP-1269 — последняя подтверждённая успешная цепочка restricted Worker →
    target tests → same-host pinned verifier → exact stage/readback; approval и
    publication в ней не запускались. EXP-1310 остановился до модели при
    readiness 31 (<36). Для независимого verifier локальная сборка и synthetic
-   container checks проходят, но удалённая image identity не подтверждена:
+   container checks проходят; следующие исторические попытки ещё не
+   подтверждали удалённую image identity:
    EXP-1314 и EXP-1330 сообщили load status 0, затем failed inspect; EXP-1315
    также не подтвердил образ. EXP-1318 подтвердил наличие Docker CLI и
    доступность daemon на testdev, но не образ. Свежая EXP-1320 exact-ID probe
@@ -75,14 +286,86 @@ trust boundaries. Наблюдатель и обучение через конт
    `REMOTE_CONFIG_IMAGE_TUPLE_MISMATCH` (exit 11), не раскрывая поле. По отдельной
    авторизации EXP-1349 один field-facts inspect вернул
    `id=match|platform=match|size=mismatch|layers=match` (exit 11): установлен
-   только факт несовпадения размера; сырые metadata не выдавались. Повтор и
-   диагностика запрещены. Текущий локальный offline suite:
-   1,801 тест, 25 пропусков, успешно.
+   только факт несовпадения размера; сырые metadata не выдавались. EXP-1350
+   локально подтвердил по одному `docker image save` цепочку OCI index → pinned
+   manifest → exact config digest → девять layer digests и ordered DiffIDs.
+   В сочетании с EXP-1349 это даёт bounded evidence совпадения переносимого
+   содержимого на testdev; `.Size` остаётся диагностикой хранения и не служит
+   криптографическим идентификатором образа. Причина различия размера не
+   измерена. Повтор удалённой диагностики запрещён. После этого EXP-1371
+   одной read-only strict-host-key SSH-командой запустил переданный launcher
+   только с `--help` и получил `VERIFIER_IMPORT_SMOKE_OK`. Это подтверждает
+   Python import readiness bundle на хосте, но не Docker/image readiness,
+   service/runtime readiness, bootstrap, verifier behavior или host trust.
+   Текущий локальный offline suite после EXP-1381: 1,859 тестов, 25 пропусков.
    Даже подтверждённый импорт
-   не докажет deployment/service или host trust. Для следующей Worker-попытки
-   EXP-1312 также нужна свежая авторизация.
-   Digest-bound authenticated approval, controlled real PR и provider-side
-   recovery не доказаны; ни один критерий MVP не закрыт этим checkpoint.
+   не докажет deployment/service или host trust. EXP-1312 истекла, а
+   EXP-1354 израсходована; следующий Worker-вызов не планируется, поскольку
+   успешный stage EXP-1269 сохранён.
+   EXP-1351 требует authority-signed enrollment ключа approver до входа в
+   GitHub App publication path; это закрывает локальный обход через
+   `operator_supplied_unverified` profile, но не подтверждает личность человека
+   и не разрешает публикацию. Digest-bound authenticated approval, controlled
+   real PR и provider-side recovery не доказаны; ни один критерий MVP не закрыт
+   этим checkpoint.
+   После подготовки профиля EXP-1352 одноразовая EXP-1354 получила quota 60 и
+   один локальный ответ модели, но остановилась на
+   `target-test-malformed-status-level-bool`: verifier/stage не достигнуты,
+   повтор запрещён. Для дальнейших downstream-проверок использовать уже
+   принятую успешную EXP-1269, а не наращивать Worker-повторы.
+   EXP-1353 выбрал для следующей независимой проверки одноразовый user-process
+   verifier на testdev через локальный SSH-forward и фиксированный
+   `https://testdev.local/v1/verify`. До запуска нужны отдельный digest-pinned
+   host bundle, управляемый вне verifier authority key set, подписанные
+   enrollment/host-decision и evidence разделения хостов; image identity сама
+   по себе этого не доказывает. Удалённая карточка пока не READY.
+   EXP-1356 добавил строгий локальный preflight публичного bootstrap с
+   caller-pinned digest, точным профилем, CA и ключом signer. Результат всегда
+   `trust=unestablished`: это не enrollment, не host decision и не удалённый
+   verifier-вызов.
+   EXP-1357 подтвердил два одинаковых локальных host-bundle build на 32 файлах;
+   digest EXP-1300 устарел. EXP-1358 проверил новую import-closure и manifest:
+   добавлен только публичный `verifier_image_pin.py`, concrete credential reader
+   не появился. EXP-1359 локально закрыл несовместимость адреса: one-shot
+   launcher требует exact config-ID inspect перед запуском контейнера,
+   запускает по этому ID и только после bound result возвращает идентичность
+   manifest из подписанного профиля. EXP-1361 заменил post-capture check на
+   потоковый лимит вывода 256/4,096 bytes и timeout 15 секунд с kill/reap.
+   Пять adapter-тестов, семь launcher-тестов и 16 bundle-тестов прошли; полный
+   suite — 1,826/25 skipped. Сборщик включает import launcher, извлечённый
+   архив импортируется. Новый локальный архив: 33 файла, digest
+   `sha256:63813cbc6666e543c6b15250631f94689242fd04113c0a544126d2d868b03a86`,
+   545,795 байт исходников. Это dirty-worktree evidence, не deployment pin.
+   EXP-1360 сверил два byte-identical in-memory build,
+   все 33 manifest hash/size и полный набор имён: к принятому набору EXP-1301
+   добавлены только публичный pin-модуль EXP-1358 и fixed adapter EXP-1359.
+   Конкретного нового credential reader, secret path или динамического alias
+   нет. EXP-1361 пересобрал архив после output-bound hardening; его новый digest
+   выше заменяет значение EXP-1360. Это всё ещё не разрешение на deployment.
+   EXP-1362 добавил локально протестированный streamer для ровно этого
+   digest с безопасным receiver. По отдельной карточке и свежему подтверждению
+   EXP-1363 один раз передала архив на `alex@192.168.88.101`; получен только
+   маркер `BUNDLE_TRANSFER_CONFIRMED`, означающий проверку digest/manifest и
+   создание target-каталога. Docker, verifier-сервис и verifier-запрос не
+   запускались; runtime readiness, host trust и enrollment не доказаны.
+   EXP-1365 добавил detached-signature API для authority trust records без
+   передачи закрытого ключа в эти модули; 19 focused tests passed. Изменение
+   исходников потребовало отдельного локального обновления bundle pin в
+   EXP-1366. После обновления pin полный suite прошёл: 1,841 тест, 25
+   пропусков. Новый local-only bundle digest —
+   `sha256:5536709798de2a5756a62be351b839598b763025ac4c45635a6f7f272cbdaacd`
+   (33 файла, 552,056 source bytes, архив 593,920 байт). Это dirty-worktree
+   source identity, не новая deployment authorization. Реального authority
+   signer-а, enrollment и host-trust decision пока нет. После этого изменения
+   EXP-1367 подготовил новую уникальную target path. После свежего точного
+   подтверждения EXP-1368 один раз передала обновлённый bundle с digest
+   `sha256:5536709798de2a5756a62be351b839598b763025ac4c45635a6f7f272cbdaacd`;
+   получен `BUNDLE_TRANSFER_CONFIRMED` после receiver-side проверки архива,
+   manifest и файлов. Это только факт передачи файлов: удалённый import smoke,
+   service/runtime readiness, независимое доверие и verifier-запрос не
+   подтверждены; Docker и сервис не запускались. Позднейший EXP-1371 подтвердил
+   только импорт launcher на удалённом хосте, не запуская Docker, сервис,
+   tunnel или verifier request. Ни один критерий MVP не закрыт этими шагами.
    Срез на 2026-10-07: этап R2 не завершён. На checkpoint до DI—DL было 70 батчей: 63 приняты и семь заблокированы (CN, CO, CS, CT, CW, CZ, CX). После него приняты DI / EXP-518 (71-й), DJ / EXP-519 (72-й) и DL / EXP-521 (74-й); DK / EXP-520 (73-й) на том checkpoint ещё оставался DRAFT. Тогда нумерация дошла до 74-го батча: 66 приняты, 7 исторически заблокированы, 1 DRAFT. CX / EXP-507 остановлен до readiness после первого preflight miss; отдельные Batch DC / EXP-512 и DD / EXP-513 подтвердили точный image в активном `desktop-linux` context. DE / EXP-514 принят 67-м: fresh readiness HTTP 200 / 60, exact-pin pipeline и stage-to-mock receipt прошли; это не live Worker. DF / EXP-515 принят 68-м: добавлен profile helper с injected `CredentialSource`; он не читает ключ. DG / EXP-516 принят 69-м: добавлен импортируемый runtime entrypoint, собирающий pinned Docker sandbox, verifier и SQLite stage для CLI; он пока не вызывался. DH / EXP-517 принят 70-м: remote CLI теперь требует свежий одноразовый permit и explicit Control Plane provider-call approval; live readiness запрос не выполнялся. CY / EXP-508 принят 61-м (поздний возврат callback блокирует HTTP), CZ / EXP-509 заблокирован 62-м (Docker verifier PASS, stage persistence отказал из-за verifier ID contract mismatch), DA / EXP-510 принят 63-м (exact Docker identity проходит через synthetic stage/readback/preview/mock receipt, не live Worker), DB / EXP-511 принят 64-м. CP, CQ, CR, CU, CV, CY, DA, DB, DC, DD, DE, DF, DG, DH и DL приняты:
    AO—BI (21), BK (22-й), BL (23-й), BM (24-й), BN (25-й), BO (26-й), BP (27-й), BQ (28-й), BR (29-й), BS (30-й), BT (31-й), BU (32-й), BV (33-й), BW (34-й), BX (35-й), BY (36-й), BZ (37-й), CB (38-й), CC (39-й), CD (40-й), CE (41-й, post-reset readiness принята: HTTP 200 / 60), CF (42-й, one-shot pipeline остановился до target execution на claim mismatch), CG (43-й, локальная коррекция mode preservation принята), CH (44-й, readiness после коррекции: HTTP 200 / 60), CI (45-й, повторный one-shot остановился на том же claim mismatch), CJ (46-й, локальная синтетическая диагностика executor claim/replay прошла), CK (47-й, metadata-only CLI исправлен и проверен fake tests), CL (48-й, readiness + metadata-only size diagnostic принят), CM (49-й, verifier snapshot per-file bound выровнен с source reader), CP (52-й, exact fixed rejection marker classified safely), CQ (53-й, child-side allowlisted failure categories added), CR (54-й, bounded child exit status exposed), CU (57-й, verifier startup stderr safely classified as python-import), CV (58-й, lazy remote imports allow the minimal verifier image to load; 220064-byte synthetic file gets bound PASS; full suite 927 tests, 921 passed, 6 skipped);
    Последующее обновление после EXP-544: нумерация дошла до R2 execution batch
@@ -676,6 +959,47 @@ signer key set не подтвердил подпись точного raw commi
 повтора. Полный offline suite: 1172 теста (1163 прошли, 9 пропущены);
 `git diff --check` чист. Это отрицательное provenance evidence, а не основание
 доверять snapshot; R2/MVP остаются OPEN.
+**Актуализация R2 checkpoint (EXP-1562—1573, 2026-10-19):** EXP-1562 прошёл
+только на локально конвертированном verifier-кандидате `f935…`, не на
+configured pin `4bc…`; локальный Docker daemon доступен, но наличие exact
+configured ID не подтверждено (EXP-1563—1565). Отдельный offline-built
+кандидат `b2bf…` присутствует как `linux/amd64`; после закрепления
+`--platform=linux/amd64` в фиксированном verifier argv три явно названных
+synthetic container-теста прошли (EXP-1566—1568). Это same-host regression
+evidence, не independent verifier. EXP-1569 обновила воспроизводимый local
+verifier-host bundle pin до `6e2e…` (33 members, 566543 source bytes,
+604160 archive bytes); transfer не выполнялся. Batch-end full offline suite:
+1947 tests, 26 skipped. Последний успешный Worker→target→same-host verifier→stage
+остаётся EXP-1269; свежего Worker, independent remote verifier, authenticated
+human approval, provider receipt и controlled real PR evidence нет. R2/MVP
+остаются OPEN. EXP-1571 не проверила namespace Docker CLI plugins. EXP-1572
+уточнила: `docker buildx v0.27.0-desktop.1` доступен, два локальных builder
+работают; официальный Docker exporter поддерживает одно-платформенный Docker
+archive output. Это ещё не artifact evidence: нужен bounded offline export и
+проверка точного результата. Поэтому config `b2bf…` нельзя объявлять portable
+production pin по имеющимся фактам, тем более что EXP-1540—1543 выявили отличие
+OCI config от Docker config. EXP-1573 реализовала bounded exporter, но единственная
+попытка вернула `EXPORT_FAILED`; retry/diagnostics не выполнялись. Cleanup
+временного container был вызван, но его итог не попал в первоначальный marker,
+поэтому остаточное состояние не подтверждено. Pin не менялся.
+Добавлены девять synthetic tests exporter/validator и cleanup-marker path;
+полный offline suite прошёл (1956 tests, 26 skipped).
+
+**Обновление R2 checkpoint (EXP-1574—1577, 2026-10-19):** EXP-1574 добавила
+`run_finished(failed)` только после успешно записанного `agent_finished(failed)`
+для известных отказов локальных mock CLI; pending/unknown истории остаются
+открытыми, а production GitHub publisher не затронут. Это не завершает
+Observer completeness. EXP-1575/1576 не классифицировали установленный Buildx
+capability; более раннее принятое EXP-1572 evidence о версии и driver остаётся
+действующим. EXP-1577 повторно попыталась один bounded offline export с
+allowlisted error classification, но вернула `EXPORT_FAILED|reason=unknown`;
+archive identity не подтверждена, image не загружен/тегирован, pin не менялся.
+Cleanup только созданного временного container не сообщил ошибку. Последний
+успешный Worker→target→same-host verifier→stage остаётся EXP-1269. Новый Worker,
+independent verifier runtime/trust, authenticated approval, provider receipt и
+controlled PR evidence отсутствуют. Критерии остаются OPEN/PARTIAL, R2/MVP —
+OPEN. Batch-end full offline suite прошёл: 1,965 tests, 26 skipped; это
+regression evidence, не end-to-end acceptance.
 4. **R3 — наблюдатель и исторический отчёт.** Отчёты сейчас/на момент T,
    причинные ссылки, отделение фактов от оснований и интерпретаций; проверки
    неполной истории, поздних ответов и отказов. Детерминированный отчёт допустим
@@ -973,6 +1297,52 @@ Evidence Bundle, Verification Report и Staged Change. Path traversal, пров�
 Выход: два пользовательских режима работают на одной модели контрактов.
 
 ## 10. Критерии завершения исследовательского среза
+
+### Control Plane decision record — human approver identity (2026-10-19)
+
+Keep the protocol claim `identity_authenticated=false` until an independently
+verifiable identity binding exists. The current Ed25519 approval signature can
+prove possession of an enrolled signing key and bind its canonical request to
+one exact staged digest, repository, operation and validity window. The
+`approver_id` in that request is a declared key label; enrollment alone does
+not prove which natural person controls the key. A TTY gate proves only that
+stdin is attached to a terminal. A fresh user decision in the Control Plane
+may authorize one precisely described operation operationally, but the current
+application protocol has no signed assertion from that channel and therefore
+cannot treat it as independently verifiable identity evidence.
+
+Keep the three principals distinct:
+
+- **Enrollment authority:** the Control Plane authority key-set that signs an
+  approver-key enrollment. Pinning that public set establishes which key may
+  enroll keys; it does not identify the human approver.
+- **Digest approver:** the holder of the enrolled Ed25519 key who signs an
+  exact approval request. Current evidence establishes key possession and
+  request integrity only, not a human-to-key mapping.
+- **Provider account:** a GitHub App installation/token identity may establish
+  which installation performs a provider operation. It does not establish
+  which human approved that operation unless an independently trusted mapping
+  links the provider principal to the approved person and exact digest.
+
+No currently configured, supported identity provider or signed Control Plane
+assertion independently binds a human subject to `approver_id` in the runtime.
+Do not add such a provider, claim a user mapping, or set
+`identity_authenticated=true` by inference. A future claim would require a
+separately reviewed trust source that signs a subject-to-approver binding for a
+specific audience, exact staged digest, operation and single-use nonce, with
+bounded issue/expiry times and a defined revocation/key-rotation check before
+publication. Expiry/revocation of the approval, enrollment, authority pin and
+provider installation must independently stop the write; none may be inferred
+from a valid signature alone.
+
+For the present MVP, exact-digest signatures and fresh Control Plane consent
+remain separate gates. They may support a narrowly user-authorized operation
+only after its own exact task card and fresh confirmation; the resulting
+evidence and receipt must continue to say `identity_authenticated=false`.
+Because the plan's current publication criterion requires authenticated human
+approval, that criterion remains OPEN until a supported identity binding is
+implemented and verified. This decision is a boundary clarification, not an
+MVP scope reduction or publication authorization.
 
 Инженерный срез завершён только если:
 
@@ -3439,3 +3809,98 @@ image. The archive measured 48,868,864 bytes and both bounded helper tests and
 the offline suite passed (1,744 tests, 25 skipped). This only prepares an exact
 transfer path: no SSH/import or remote verifier check occurred; EXP-1314/1315
 remain DRAFT pending separate fresh authorizations. R2/MVP remain OPEN.
+
+**Обновление 2026-10-19 (EXP-1383 trust inputs):** пользователь закрепил
+публичный v2 authority key-set digest
+`sha256:470937c60340149438e97d9f08fff61e6e95d2cd3bf81fdb0b4f5399e6aa1e12`
+и принял EXP-1436 только как свидетельство различия хэшированных fingerprints
+Worker Mac/testdev с точностью наблюдения до даты
+(`sha256:607a8dd219cfdc82f27e7a47fef84b63a1439fa14b05b47e068960c4c940b332`).
+Это не доказывает идентичность текущего deployment, работу verifier runtime
+или изоляцию хостов. Подпись host-decision и запрос к verifier не выполнялись
+и не разрешены этой фиксацией. EXP-1383 остаётся DRAFT до получения подходящего
+актуального evidence для этих утверждений и отдельной точной карточки/разрешения
+на последующие операции; R2/MVP остаются OPEN.
+
+**Проверка публичного snapshot HEAD (EXP-1454, 2026-10-19):** один анонимный
+read-only вызов `git ls-remote
+https://github.com/SoldatovAlexander/brainbooster_full_v11.git HEAD` вернул
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`, совпадающий с закреплённым snapshot
+commit. Это подтверждает совпадение объявленного HEAD только на момент
+наблюдения; не доказывает authorship/signature commit, доступность всех
+content-addressed объектов или доверие к исходному коду. Worker и прочие этапы
+runtime не запускались; R2/MVP остаются OPEN.
+
+**Control Plane update (Batch AIE/AIF, 2026-10-19):** lifecycle-завершение
+Observer интегрировано в локальные Worker, replay, executor, R5, stage-approval
+и mock-publication пути; незавершённые/неизвестные эффекты остаются открытыми.
+Текущий локальный verifier pin:
+`sha256:59468457bb9a2ec5e6857e3a413df1e480481d832280027ecfd1f227517bdaa2`,
+code digest
+`sha256:a1ca1bf92f8dff1197814be3b6702c4a028763a6e9735165e304b0d59d0fad9e`;
+bundle pin:
+`sha256:3d7c9c30b2afc53c53b9a1427e95e113d684111209979ee5e7fbce2fe437dad4`.
+Единственный финальный offline suite прошёл: 1 886 тестов, 25 пропущено;
+`git diff --check` прошёл. Это локальные regression/synthetic проверки, а не
+доказательство независимого доверия к хосту, deployment, аутентифицированного
+approval или реальной публикации провайдера. Критерии 13/14 остаются PARTIAL,
+R2/MVP — OPEN.
+
+**Локальный R2 checkpoint (EXP-1580—1583, 2026-10-19):** новый маршрут
+Buildx `--load` → bounded `docker image save` не подтвердил portable archive:
+единственный запуск EXP-1580 вернул `CLEANUP_FAILED`. EXP-1581 доказала только
+отсутствие точного временного image tag; состояние dependency-copy container
+неизвестно, и повторного запроса/cleanup не было. EXP-1583 улучшила будущий
+фиксированный marker, чтобы при cleanup failure различать собственные
+container/tag и включать только точный сгенерированный ID контейнера; это не
+восстанавливает ID прошлой попытки. Latest successful Worker→target→same-host
+verifier→stage остаётся EXP-1269. Критерии остаются OPEN/PARTIAL, R2/MVP —
+OPEN.
+
+**Подготовка следующего локального Worker (EXP-1584/1585, 2026-10-19):**
+EXP-1584 усилила prompt конкретным helper-шаблоном, который отклоняет bool через
+`type(value) is not int`, и тестами контракта prompt. Старый неиспользованный
+gate EXP-1448 отозван; EXP-1585 зарегистрирован как новая credential-free
+локальная попытка, но остаётся DRAFT до точного свежего gate. Worker, snapshot,
+Ollama, Docker и сеть в этой подготовке не запускались. Это не подтверждает,
+что модель исправит target; последняя успешная Worker→target→same-host
+verifier→stage цепочка остаётся EXP-1269. R2/MVP остаются OPEN.
+
+**Локальная попытка экспорта verifier-образа (EXP-1586—1588, 2026-10-19):**
+EXP-1586 остановилась при импорте wrapper-а до Docker. EXP-1587 исправила
+запускной путь, но один offline запуск вернул
+`CLEANUP_FAILED|resources=verifier_tag`. Read-only запрос EXP-1588 подтвердил
+отсутствие точного tag; наличие untagged image и успешность archive validation
+не установлены. Повторов, диагностики image metadata или cleanup не было.
+Portable candidate не принят, production pin и проверка verifier не менялись.
+R2/MVP остаются OPEN.
+
+**Обновление локального verifier-export (Batch AKBK, EXP-1590/1591,
+2026-10-19):** новый одноразовый wrapper прошёл focused tests. Единственная
+offline Buildx попытка прошла exact local preflight, но вернула фиксированный
+`BUILD_FAILED` (exit 14); task-specific tag отсутствовал на bounded cleanup
+query, dependency-copy container был удалён штатно. Ошибка не диагностировалась,
+повтора не было. Portable archive всё ещё не подтверждён; latest successful
+Worker→target→same-host verifier→stage остаётся EXP-1269. Следующий шаг — не
+повторять тот же эксперимент, а пересмотреть способ offline export или
+классификацию существующих synthetic evidence отдельной карточкой. Independent
+verifier trust, digest-bound approval, controlled PR, критерии 13/14 и R2/MVP
+остаются OPEN/PARTIAL. Batch-end full offline suite: 1,992 теста, 26 skipped;
+`git diff --check` прошёл.
+
+**EXP-1592/1593:** дальнейшая попытка под новым tag использовала bounded
+allowlisted Buildx-failure classification, не раскрывая stderr. Результат:
+`BUILD_FAILED|reason=unknown|exit=125|stderr_bytes=109`; no retry or diagnostic.
+Batch-end suite: 1,995 tests, 26 skipped. Portable verifier archive and
+independent verifier/approval/publication evidence remain unconfirmed; the
+earlier same-host EXP-1269 evidence remains the latest successful run. R2/MVP
+remain OPEN.
+
+**EXP-1585/1594/1595:** точное разрешение на один credential-free Worker run
+получено, но preflight exact target/verifier image ID/platform завершился
+`PINNED_IMAGES_FAILED`; до quota request, Ollama, snapshot, DB или inference
+карточка остановилась. Повтор не выполнялся. EXP-1594 добавила и синтетически
+проверила ограниченный inspector этих двух exact pins; EXP-1595 остаётся DRAFT
+до отдельного разрешения на read-only inspect. Worker, независимый verifier,
+approval и PR evidence не изменились. Batch-end full suite: 2,000 tests,
+26 skipped; `git diff --check` прошёл. R2/MVP остаются OPEN.

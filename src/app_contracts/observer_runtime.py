@@ -164,6 +164,10 @@ class JournaledProposalWorker:
         "_clock",
         "_used",
         "_start_event_id",
+        "_invocation_id",
+        "_agent_finished",
+        "_run_finished",
+        "_legacy_lifecycle_gap",
         "_sequence",
         "_last_event_id",
         "_last_event_cursor",
@@ -217,6 +221,10 @@ class JournaledProposalWorker:
         self._branch_id = "branch-main"
         self._used = False
         self._start_event_id: str | None = None
+        self._invocation_id: str | None = None
+        self._agent_finished = False
+        self._run_finished = False
+        self._legacy_lifecycle_gap = False
         self._sequence = 0
         self._last_event_id: str | None = None
         self._last_event_cursor: int | None = None
@@ -245,9 +253,9 @@ class JournaledProposalWorker:
     ) -> JournaledProposalWorker:
         """Attach to one complete, non-ambiguous run without starting a new one.
 
-        Resume is read-only. It rejects any pending/unknown invocation and any
-        run that already entered the publication path, so this adapter never
-        interprets uncertainty as permission to repeat an action.
+        Resume validates a completed, non-ambiguous prefix and appends a fresh
+        invocation start in the same durable run. It rejects pending/unknown
+        work and publication history, so uncertainty never grants retry permission.
         """
         if (
             not callable(getattr(worker, "propose", None))
@@ -288,15 +296,15 @@ class JournaledProposalWorker:
                 or not branch_id.startswith("branch-")
             ):
                 raise ValueError
-            matching_starts = [
-                event
-                for event in all_events
-                if event.get("process_id") == process_id
-                and event.get("task_id") == task_id
-                and event.get("event_type") == "agent_started"
-            ]
-            if len(matching_starts) != 1 or matching_starts[0]["event_id"] != start["event_id"]:
+            if any(
+                event.get("event_type") == "run_finished"
+                for _, event in selected
+            ):
                 raise ValueError
+            intent_types = {"decision_proposed", "tool_requested"}
+            terminal_types = {
+                "decision_applied", "tool_completed", "tool_failed", "tool_denied"
+            }
             for expected_sequence, (cursor, event) in enumerate(selected):
                 if (
                     event.get("process_id") != process_id
@@ -304,16 +312,18 @@ class JournaledProposalWorker:
                     or event.get("branch_id") != branch_id
                     or event.get("sequence") != expected_sequence
                     or (expected_sequence == 0 and cursor != start_cursor)
-                    or event.get("event_type") in {"agent_finished", "outcome_unknown"}
-                    or event.get("status") == "unknown"
+                    or event.get("event_type") == "run_finished"
+                    or event.get("event_type") == "outcome_unknown"
+                    or (
+                        event.get("event_type") in terminal_types
+                        and event.get("status") in {"pending", "unknown"}
+                    )
                 ):
                     raise ValueError
 
-            intent_types = {"decision_proposed", "tool_requested"}
-            terminal_types = {
-                "decision_applied", "tool_completed", "tool_failed", "tool_denied"
-            }
             invocations: dict[str, list[dict]] = {}
+            agent_lifecycles: dict[str, dict[str, list[tuple[int, dict]]]] = {}
+            event_positions = {event["event_id"]: cursor for cursor, event in selected}
             publication_labels = {
                 "ControlledPublication.local-mock",
                 "Approval.validate",
@@ -326,11 +336,53 @@ class JournaledProposalWorker:
                 label = event.get("decision_or_tool")
                 if label in publication_labels:
                     raise ValueError
+            for cursor, event in selected:
+                event_type = event.get("event_type")
+                if event_type in {"agent_started", "agent_finished"}:
+                    invocation_id = event.get("invocation_id")
+                    if event_type == "agent_finished" and type(invocation_id) is not str:
+                        raise ValueError
+                    if type(invocation_id) is str:
+                        lifecycle = agent_lifecycles.setdefault(
+                            invocation_id, {"started": [], "finished": []}
+                        )
+                        lifecycle[
+                            "started" if event_type == "agent_started" else "finished"
+                        ].append((cursor, event))
                 if event.get("event_type") in intent_types | terminal_types:
                     invocation_id = event.get("invocation_id")
                     if type(invocation_id) is not str:
                         raise ValueError
                     invocations.setdefault(invocation_id, []).append(event)
+            for invocation_id, lifecycle in agent_lifecycles.items():
+                starts = lifecycle["started"]
+                finishes = lifecycle["finished"]
+                if len(starts) != 1 or len(finishes) != 1:
+                    raise ValueError
+                if (
+                    starts[0][0] >= finishes[0][0]
+                    or starts[0][1].get("event_id")
+                    not in finishes[0][1].get("causal_event_ids", ())
+                    or finishes[0][1].get("status") not in {"ok", "failed", "denied"}
+                ):
+                    raise ValueError
+            legacy_starts = [
+                event for _, event in selected
+                if event.get("event_type") == "agent_started"
+                and "invocation_id" not in event
+            ]
+            if len(legacy_starts) > 1 or (
+                legacy_starts
+                and legacy_starts[0].get("event_id") != selected[0][1].get("event_id")
+            ):
+                raise ValueError
+            # A modern invocation cannot be resumed until its explicit finish.
+            starts_without_terminal = [
+                invocation_id for invocation_id, lifecycle in agent_lifecycles.items()
+                if len(lifecycle["started"]) == 1 and not lifecycle["finished"]
+            ]
+            if starts_without_terminal:
+                raise ValueError
             for invocation_id, pair in invocations.items():
                 if len(pair) != 2 or pair[0].get("event_type") not in intent_types:
                     raise ValueError
@@ -340,7 +392,46 @@ class JournaledProposalWorker:
                     "causal_event_ids"
                 ) != [pair[0].get("event_id")]:
                     raise ValueError
-                store.check_result_causality(pair[1])
+                if store.check_result_causality(pair[1]) != event_positions.get(
+                    pair[0].get("event_id")
+                ):
+                    raise ValueError
+            checkpoints_method = getattr(store, "checkpoints", None)
+            if not callable(checkpoints_method):
+                raise ValueError
+            checkpoints = {
+                checkpoint.get("checkpoint_id"): checkpoint
+                for checkpoint in checkpoints_method()
+            }
+            for cursor, event in selected:
+                if event.get("event_type") not in intent_types:
+                    continue
+                checkpoint_id = event.get("checkpoint_id")
+                checkpoint = checkpoints.get(checkpoint_id)
+                causal_ids = event.get("causal_event_ids")
+                if (
+                    type(checkpoint_id) is not str
+                    or checkpoint is None
+                    or type(causal_ids) is not list
+                    or len(causal_ids) != 1
+                    or checkpoint.get("trigger_event_id") != causal_ids[0]
+                    or checkpoint.get("event_cursor") != event_positions.get(causal_ids[0])
+                    or event_positions.get(causal_ids[0], cursor) >= cursor
+                    or any(
+                        checkpoint.get(field) != event.get(field)
+                        for field in ("process_id", "run_id", "branch_id")
+                    )
+                ):
+                    raise ValueError
+            if any(
+                event.get("event_type") in intent_types
+                and event.get("event_id") not in {
+                    terminal.get("causal_event_ids", [None])[0]
+                    for terminal in (pair[1] for pair in invocations.values())
+                }
+                for _, event in selected
+            ):
+                raise ValueError
 
             instance = cls.__new__(cls)
             instance._worker = worker
@@ -364,6 +455,10 @@ class JournaledProposalWorker:
             instance._sequence = selected[-1][1]["sequence"] + 1
             instance._last_event_id = selected[-1][1]["event_id"]
             instance._last_event_cursor = selected[-1][0]
+            instance._invocation_id = None
+            instance._agent_finished = False
+            instance._run_finished = False
+            instance._legacy_lifecycle_gap = bool(legacy_starts)
             instance._verifier_used = any(
                 event.get("decision_or_tool") == "IndependentVerifier.verify"
                 for _, event in selected
@@ -398,6 +493,9 @@ class JournaledProposalWorker:
                 if event.get("decision_or_tool") in controlled_steps
                 and event.get("event_type") in intent_types | terminal_types
             }
+            # Continuation is represented by a new invocation in the same run;
+            # old lifecycle gaps remain visible and are never backfilled.
+            instance._start_run(causal_event_ids=[instance._last_event_id])
             return instance
         except WorkerJournalError:
             raise
@@ -437,11 +535,35 @@ class JournaledProposalWorker:
         if prior_intents:
             raise WorkerJournalError("worker journal: attempt already recorded")
 
-    def _start_run(self) -> None:
-        start_id = f"event-{self._next_id()}"
+    def _start_run(self, *, causal_event_ids: list[str] | None = None) -> None:
+        known_events = self._store.events()
+        used_event_ids = {event.get("event_id") for event in known_events}
+        used_invocation_ids = {
+            event.get("invocation_id")
+            for event in known_events
+            if type(event.get("invocation_id")) is str
+        }
+        start_id = None
+        for _ in range(10_000):
+            candidate = f"event-{self._next_id()}"
+            if candidate not in used_event_ids:
+                start_id = candidate
+                break
+        invocation_id = None
+        for _ in range(10_000):
+            candidate = f"invocation-{self._next_id()}"
+            if candidate not in used_invocation_ids:
+                invocation_id = candidate
+                break
+        if start_id is None or invocation_id is None:
+            raise WorkerJournalError("worker journal: invocation identifier unavailable")
+        self._invocation_id = invocation_id
         start = self._base_event(
-            event_type="agent_started", sequence=0, event_id=start_id
+            event_type="agent_started", sequence=self._sequence, event_id=start_id
         )
+        start["invocation_id"] = self._invocation_id
+        if causal_event_ids is not None:
+            start["causal_event_ids"] = list(causal_event_ids)
         try:
             cursor = self._store.append(start)
         except Exception:
@@ -449,7 +571,157 @@ class JournaledProposalWorker:
         self._start_event_id = start_id
         self._last_event_id = start_id
         self._last_event_cursor = cursor
-        self._sequence = 1
+        self._sequence += 1
+
+    def _all_work_terminal(self) -> bool:
+        events = self._store.events()
+        if any(
+            event.get("run_id") == self._run_id
+            and (
+                event.get("event_type") == "outcome_unknown"
+                or event.get("status") == "unknown"
+            )
+            for event in events
+        ):
+            return False
+        intents: dict[str, dict] = {}
+        terminals: dict[str, list[dict]] = {}
+        for event in events:
+            if event.get("run_id") != self._run_id:
+                continue
+            if event.get("event_type") in {"decision_proposed", "tool_requested"}:
+                invocation_id = event.get("invocation_id")
+                if type(invocation_id) is not str or invocation_id in intents:
+                    return False
+                intents[invocation_id] = event
+            elif event.get("event_type") in {
+                "decision_applied", "tool_completed", "tool_failed", "tool_denied"
+            }:
+                terminals.setdefault(event.get("invocation_id"), []).append(event)
+        for invocation_id, intent in intents.items():
+            results = terminals.get(invocation_id, [])
+            if (
+                len(results) != 1
+                or results[0].get("causal_event_ids") != [intent.get("event_id")]
+            ):
+                return False
+            try:
+                self._store.check_result_causality(results[0])
+            except Exception:
+                return False
+        return all(key in intents for key in terminals)
+
+    def _all_agent_invocations_terminal(self) -> bool:
+        try:
+            events = [
+                event for event in self._store.events()
+                if event.get("run_id") == self._run_id
+            ]
+            lifecycle: dict[str, dict[str, list[dict]]] = {}
+            for event in events:
+                event_type = event.get("event_type")
+                if event_type not in {"agent_started", "agent_finished"}:
+                    continue
+                invocation_id = event.get("invocation_id")
+                if type(invocation_id) is not str:
+                    if event_type == "agent_finished":
+                        return False
+                    continue  # preserve an unobserved legacy lifecycle gap
+                record = lifecycle.setdefault(
+                    invocation_id, {"started": [], "finished": []}
+                )
+                record[
+                    "started" if event_type == "agent_started" else "finished"
+                ].append(event)
+            for record in lifecycle.values():
+                starts = record["started"]
+                finishes = record["finished"]
+                if (
+                    len(starts) != 1
+                    or len(finishes) != 1
+                    or starts[0].get("sequence", -1) >= finishes[0].get("sequence", -1)
+                    or starts[0].get("event_id")
+                    not in finishes[0].get("causal_event_ids", ())
+                    or finishes[0].get("status") not in {"ok", "failed", "denied"}
+                ):
+                    return False
+            return True
+        except Exception:
+            return False
+
+    def finish_agent_invocation(self, *, status: str) -> dict[str, object]:
+        """Append the one explicit terminal event for this runtime invocation."""
+        try:
+            work_terminal = self._all_work_terminal()
+        except Exception:
+            work_terminal = False
+        if (
+            self._agent_finished
+            or self._run_finished
+            or type(status) is not str
+            or status not in {"ok", "failed", "denied"}
+            or self._invocation_id is None
+            or self._start_event_id is None
+            or not work_terminal
+        ):
+            raise WorkerJournalError("worker journal: invocation cannot be finished")
+        self._agent_finished = True
+        event = self._base_event(
+            event_type="agent_finished",
+            sequence=self._sequence,
+            event_id=f"event-{self._next_id()}",
+        )
+        event.update(
+            {
+                "invocation_id": self._invocation_id,
+                "causal_event_ids": [self._start_event_id],
+                "status": status,
+            }
+        )
+        try:
+            cursor = self._store.append(event)
+        except Exception:
+            raise WorkerJournalError("worker journal: invocation outcome unavailable") from None
+        self._last_event_id = event["event_id"]
+        self._last_event_cursor = cursor
+        self._sequence += 1
+        return self.observer_reference()
+
+    def finish_run(self, *, status: str = "ok") -> dict[str, object]:
+        """Mark this durable run terminal without implying approval or capability."""
+        try:
+            work_terminal = self._all_work_terminal()
+            invocations_terminal = self._all_agent_invocations_terminal()
+        except Exception:
+            work_terminal = False
+            invocations_terminal = False
+        if (
+            self._run_finished
+            or not self._agent_finished
+            or type(status) is not str
+            or status not in {"ok", "failed", "denied"}
+            or not work_terminal
+            or not invocations_terminal
+            or self._last_event_id is None
+        ):
+            raise WorkerJournalError("worker journal: run cannot be finished")
+        self._run_finished = True
+        event = self._base_event(
+            event_type="run_finished",
+            sequence=self._sequence,
+            event_id=f"event-{self._next_id()}",
+        )
+        event.update(
+            {"causal_event_ids": [self._last_event_id], "status": status}
+        )
+        try:
+            cursor = self._store.append(event)
+        except Exception:
+            raise WorkerJournalError("worker journal: run outcome unavailable") from None
+        self._last_event_id = event["event_id"]
+        self._last_event_cursor = cursor
+        self._sequence += 1
+        return self.observer_reference()
 
     def matches(self, store: object, *, process_id: str, task_id: str) -> bool:
         """Return whether this run is bound to the supplied executor context."""
@@ -468,6 +740,39 @@ class JournaledProposalWorker:
             "as_of_cursor": self._last_event_cursor,
             "completeness": "partial",
         }
+
+    def publication_dispatch_completed_cleanly(self) -> bool:
+        """Return whether this run has one clean publication-dispatch terminal.
+
+        This bounded lifecycle predicate is not evidence of authorization or
+        external commitment. Missing, duplicate, failed, and unknown terminals
+        all return false.
+        """
+        try:
+            events = [
+                event for event in self._store.events()
+                if event.get("run_id") == self._run_id
+                and event.get("decision_or_tool") == "Publication.dispatch"
+            ]
+            intents = [
+                event for event in events
+                if event.get("event_type") == "tool_requested"
+            ]
+            terminals = [
+                event for event in events
+                if event.get("event_type") in {
+                    "tool_completed", "tool_failed", "tool_denied", "outcome_unknown"
+                }
+            ]
+            return (
+                len(intents) == 1
+                and len(terminals) == 1
+                and terminals[0].get("event_type") == "tool_completed"
+                and terminals[0].get("status") == "ok"
+                and terminals[0].get("causal_event_ids") == [intents[0].get("event_id")]
+            )
+        except Exception:
+            return False
 
     def record_snapshot_pin_decision(self, accepted: bool) -> bool:
         """Journal one fixed pin-comparison result without retaining pin data."""
@@ -934,9 +1239,14 @@ class JournaledProposalWorker:
             self._last_event_cursor = cursor
             self._sequence += 1
             failed = result is failure
+            unknown = is_publication and failed
             if is_tool:
-                event_type = "tool_failed" if failed else "tool_completed"
-                status = "failed" if failed else "ok"
+                event_type = (
+                    "outcome_unknown"
+                    if unknown
+                    else "tool_failed" if failed else "tool_completed"
+                )
+                status = "unknown" if unknown else "failed" if failed else "ok"
             else:
                 event_type = "decision_applied"
                 status = "denied" if failed else "ok"
@@ -954,7 +1264,7 @@ class JournaledProposalWorker:
                     "status": status,
                 }
             )
-            if failed:
+            if failed and not unknown:
                 terminal["error_code"] = {
                     "GitHubReadiness.fetch": "readiness-fetch-failed",
                     "RemoteExecutionPermit.issue": "readiness-ineligible",
@@ -994,6 +1304,10 @@ class JournaledProposalWorker:
         self, *, event_type: str, sequence: int, event_id: str,
         agent_id: str = "service-worker",
     ) -> dict:
+        if self._run_finished and event_type != "run_finished":
+            raise WorkerJournalError("worker journal: run is terminal")
+        if self._agent_finished and event_type not in {"agent_finished", "run_finished"}:
+            raise WorkerJournalError("worker journal: invocation is terminal")
         timestamp = self._timestamp()
         return {
             "schema_version": 1,

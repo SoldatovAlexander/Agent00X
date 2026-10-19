@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -53,6 +55,58 @@ class FakeServer:
 
 
 class EphemeralVerifierBootstrapTests(unittest.TestCase):
+    def test_help_exits_before_verifier_signer_tls_or_server_factories(self):
+        def fail_if_called(name):
+            def factory(*_args, **_kwargs):
+                self.fail(f"{name} factory ran during --help")
+
+            return factory
+
+        output, errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(errors):
+            code = main(
+                ["--help"],
+                verifier_factory=fail_if_called("verifier"),
+                tls_identity_factory=fail_if_called("TLS identity"),
+                signer_factory=fail_if_called("signer"),
+                server_factory=fail_if_called("server"),
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("--port", output.getvalue())
+        self.assertEqual(errors.getvalue(), "")
+
+    def test_actual_help_entrypoint_has_usage_only_and_no_startup(self):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "serve_ephemeral_signed_verifier_https.py"),
+                "--help",
+            ],
+            cwd=ROOT,
+            env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(b"--port", completed.stdout)
+        self.assertNotIn(b"\"status\":\"ready\"", completed.stdout)
+        self.assertNotIn(b"startup or request failed", completed.stderr)
+        self.assertEqual(completed.stderr, b"")
+
+    def test_default_factory_selects_only_classic_config_address_adapter(self):
+        selected = object()
+        with (
+            patch.object(launcher.shutil, "which", return_value="/usr/bin/docker"),
+            patch.object(
+                launcher, "create_brainbooster_classic_store_verifier_runner",
+                return_value=selected,
+            ) as factory,
+        ):
+            self.assertIs(launcher._default_verifier_factory(), selected)
+        factory.assert_called_once_with("/usr/bin/docker")
+
     def test_bootstrap_emits_only_public_trust_data_and_handles_once(self):
         signing_key = Ed25519PrivateKey.from_private_bytes(b"s" * 32)
         ca_certificate = b"-----BEGIN CERTIFICATE-----\nsynthetic public CA\n-----END CERTIFICATE-----\n"

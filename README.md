@@ -104,12 +104,227 @@ python3 -m pip install -e .
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
-Последний принятый полный offline suite (2026-10-16, EXP-1345): 1,789 тестов,
-1,764 прошли, 25 пропущено. Это локальное regression evidence, не подтверждение
-полного MVP; сведения о запуске — в `.opencode/tasks/WORK_QUEUE.md`. EXP-856
+Полный offline suite после EXP-1393 и актуализации checkpoint (2026-10-17):
+1,859 тестов, 1,834 успешно, 25 пропущено; 75.262 секунды. Это локальное
+regression evidence, не подтверждение полного MVP. Последующая одноразовая EXP-1354 достигла локального Worker, но
+остановилась на `target-test-malformed-status-level-bool` до verifier/stage;
+повтора по ней не будет. Для downstream-проверок сохранён успешный stage
+EXP-1269. Сведения о запусках — в `.opencode/tasks/WORK_QUEUE.md`. EXP-856
 подтвердил fail-closed отказ approval request без caller-pinned verifier trust;
 EXP-857 лишь уточнил диагностику при SQLite WAL/SHM sidecars. Это локальное
 regression evidence; MVP и R2 остаются OPEN.
+
+Последний полный offline suite после Batch AJI на 2026-10-19: 1,896 тестов,
+25 пропущено; 77.443 секунды. Это regression evidence, не сквозное
+подтверждение MVP. EXP-1503 также прошёл один локальный synthetic
+REST-to-mock-receipt composition test с synthetic transport, verifier,
+authority/approver keys и mock publisher; receipt сохраняет
+`external_write=false` и `identity_authenticated=false`. Это не реальный
+verifier, approval, provider write или публикация; independent verifier trust
+и MVP остаются OPEN. EXP-1505 подтверждает только synthetic fail-closed guard:
+при `identity_authenticated=true` GitHub publication отказывает до provider
+configuration; это не доказывает человеческую identity. EXP-1440 подтвердил
+установленный `qwen2.5-coder:7b` digest
+`dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364` (bare hex),
+совпадающий с pin после снятия `sha256:` prefix. EXP-1447 уточнил Worker
+инструкцию: удалить исходные `int(data.get(...))` преобразования пяти полей и
+валидировать raw JSON значения до обращения к БД, чтобы `true` не становился
+`1`. EXP-1441/EXP-1448 superseded до запуска; EXP-1585 — DRAFT для одной
+локальной попытки с новым точным gate. Полный suite не запускал Worker/model и
+не доказывает live inference, независимый verifier, approval или публикацию.
+EXP-1450/1451 закрепили fake-tested TTY-gates для signer, publication и
+reconciliation CLI; они не аутентифицируют личность и не выполняли provider I/O.
+EXP-1459 получил от публичного GitHub API `verified=True`, `reason=valid` и
+наличие подписи для pinned commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`.
+Это не доказывает, что signing key принадлежит владельцу репозитория, и не
+закрывает source trust, verifier trust или MVP.
+
+EXP-1363 отдельно передала предыдущий закреплённый verifier-host bundle.
+EXP-1368 затем один раз передала обновлённый bundle
+`sha256:5536709798de2a5756a62be351b839598b763025ac4c45635a6f7f272cbdaacd`
+на `alex@192.168.88.101`; `BUNDLE_TRANSFER_CONFIRMED` означает, что receiver
+проверил archive digest, manifest и файловые хеши, затем создал точный каталог
+`/home/alex/.local/share/agent00x/verifier-host/exp-1367`. Сам факт передачи не
+подтверждает runtime/service readiness, независимый host trust, approval или
+публикацию; сервисы и Docker-контейнеры не запускались. EXP-1371 одним отдельно
+подтверждённым read-only вызовом запустила переданный
+launcher только с `--help` и получила `VERIFIER_IMPORT_SMOKE_OK`, подтвердив
+Python imports на удалённом хосте. Это не доказывает Docker/image или
+runtime/service readiness, независимый host trust, approval или публикацию.
+EXP-1380 отдельным подтверждённым запуском получила один публичный bootstrap и
+оставила одноразовый loopback listener ждать запрос; сессия завершилась кодом 2
+без HTTP 200, verifier request не отправлялся. EXP-1394 позже отдельным
+подтверждённым strict-host-key запуском получила новый публичный bootstrap на
+`https://testdev.local/v1/verify` (port 49231, profile
+`sha256:603f0e674e131ef795f115f099cdeb514452a82def41e5b5853f84f62d7ff281`, CA
+`sha256:405c545a5f927036a1cb6a93de9121e06590d18abaace6dbe7887122acf462cc`,
+verifier key `sha256:f7e44e01375646c11d9d5203204a883f862b59c32d26f6c4c6df02133b58c7ec`).
+Локальный строгий parser принял byte-pinned запись, но явно оставил
+`trust=unestablished`; verifier HTTP request/response не было. EXP-1453 позже
+выполнила один ограниченный read-only inventory: matching systemd units,
+Docker-контейнеры и listener на TCP 49231 не найдены. Это не исключает иные
+механизмы развертывания и не доказывает deployment identity или isolation.
+EXP-1391 локально создала
+одноразовый in-memory Control Plane signer и проверила enrollment/host-decision;
+записи истекли 2026-10-17 18:54 UTC и не заменяют authority source или
+доказательство разделения хостов. EXP-1410 добавила отдельный локальный
+EXP-1383-only signer с ключом в назначенном пользователем macOS Keychain этого
+Mac. Исторический public key-set EXP-1410 имел digest
+`sha256:6e1491662c6e108ff8952f6d42cd15e2f69259a91975aee920471c6edb8701b8`;
+он заменён отдельным EXP-1435 v2 key-set с digest
+`sha256:470937c60340149438e97d9f08fff61e6e95d2cd3bf81fdb0b4f5399e6aa1e12`.
+Пользователь разрешил bounded signer-process memory use, закрепил v2 digest
+и принял EXP-1436 только как evidence различия хэшированных fingerprints с
+точностью наблюдения до даты. Это не доказывает deployment, runtime или
+isolation; реальные trust-записи не подписаны.
+EXP-1392/1393 заново
+сверили pinned GitHub commit/tree и полный 23-файловый snapshot с точными
+content digest; authorship не подтверждён. Verifier request, approval и PR не
+проводились. EXP-1385 сохранила reviewable fingerprint-only host evidence
+`verifier-host-separation-exp1385.json` с digest
+`sha256:82a1c8915d819c5c71fa395a411575a1268b72ecb96efeaed8c235305e6fb941`:
+Worker Mac и verifier testdev имели разные hashed host fingerprints на момент
+наблюдения 2026-10-17T18:33:56Z. Артефакт ссылается на старый disposable
+EXP-1386 key-set и не подтверждает deployment, runtime, isolation или текущий
+host state. Обновлённый EXP-1436 fingerprint-only artifact имеет digest
+`sha256:607a8dd219cfdc82f27e7a47fef84b63a1439fa14b05b47e068960c4c940b332`,
+и доказывает лишь различие наблюдённых отпечатков. Текущий EXP-1383 key-set
+закреплён, а EXP-1436 принят только в указанной ограниченной области; EXP-1383
+остаётся DRAFT до появления текущего evidence deployment/runtime/isolation и
+отдельных карточек/разрешений на последующие операции. R2/MVP остаются OPEN.
+
+EXP-1365 добавил локальные API для канонических signing messages и сборки
+authority-signed verifier enrollment/host-decision из detached signature.
+EXP-1369 добавил CLI, который формирует публичный domain-separated signing
+request для внешнего signer-а; он не читает ключи и всегда помечает результат
+`trust=unestablished`. Тесты используют только синтетический signer; закрытый
+ключ не поступает в новые API. EXP-1366 обновил локальный verifier-host bundle pin; полный suite
+после обновления прошёл: 1,845 тестов, 25 пропусков. EXP-1372 добавил локальный
+CLI для сборки и проверки detached signature по caller-pinned authority key set,
+его внешнему digest и точным deployment bindings. Результат всегда сохраняет
+`independent_host_trust_established=false`: подпись не доказывает реальность
+deployment или host-separation evidence. Новый digest
+`sha256:5536709798de2a5756a62be351b839598b763025ac4c45635a6f7f272cbdaacd`
+описывает dirty worktree, не deployment. Это пока не trusted enrollment и не
+подтверждение host trust. Полный offline suite на текущем дереве: 1,850 тестов,
+25 пропусков; authority key в CLI-тестах синтетический. EXP-1377 отдельно
+проверил, что launcher `--help` не запускает локальный verifier/TLS/server
+startup. EXP-1381 добавил локальную сборку signing request из закреплённого
+публичного bootstrap: synthetic tests проверяют точный message binding, а
+результат остаётся `trust=unestablished`. Полный suite на текущем worktree после
+EXP-1381: 1,859 тестов, 1,834 успешно, 25 пропусков. Bootstrap digest,
+вычисленный из того же SSH-ответа, подтверждает целостность байтов, но не
+независимое доверие; readiness за пределами одноразового запуска и verifier
+behavior не доказаны.
+
+### Detached verifier-trust signature: локальный операторский поток
+
+Чтобы исключить ручное копирование verifier key/profile между публичным
+bootstrap и enrollment signing request, локальный helper принимает из stdin две
+канонические строки: bootstrap JSON и отдельный bindings JSON. Bootstrap
+проверяется против точного digest и fixed verifier profile; `verifier_id`
+берётся из локального pinned image/code tuple. Вторая строка содержит только
+`enrollment_id`, `authority_key_id`, `worker_host_id`, `verifier_host_id`,
+`host_separation_evidence_digest`, `issued_at`, `expires_at`. Пример запуска:
+
+```bash
+cat verifier-bootstrap.json enrollment-bindings.json | \
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/prepare_pinned_verifier_enrollment_request.py \
+  --expected-bootstrap-sha256 'sha256:<digest первой строки вместе с LF>'
+```
+
+Digest защищает от случайной подмены входных байтов, но если его вычислили из
+того же SSH-ответа, это не independent/OOB trust. `trust=unestablished` остаётся
+обязательным; сведения о host identity, authority key и разделении хостов
+должны поступить из отдельно проверенного канала.
+
+Для enrollment или host-decision сначала сформируйте публичный signing request:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/prepare_verifier_trust_signing_message.py \
+  --kind enrollment < enrollment-fields.json
+```
+
+Передайте `message_base64`/байты сообщения отдельно управляемому signer-у и
+получите detached Ed25519 signature. Для EXP-1383 существует
+`scripts/exp1383_macos_keychain_signer.swift`: он ограничен двумя форматами
+trust-сообщений и фиксированным testdev binding, использует только назначенный
+Keychain item и выдаёт bounded response без приватного ключа. Это временный
+Mac-only authority source, не универсальное хранилище credentials. До
+пользовательского pin exact key-set digest и появления проверяемого
+host-separation evidence реальные сообщения подписывать нельзя. Сформируйте
+bounded JSON response без дополнительных полей:
+
+Новый EXP-1383-only Keychain item создан по отдельному разрешению пользователя;
+его public key-set лежит в `control-plane-authority-keys-exp1383-v2.json` и
+ожидает явного pin: `sha256:470937c60340149438e97d9f08fff61e6e95d2cd3bf81fdb0b4f5399e6aa1e12`.
+Старый item и его key-set не менялись. Generic-password реализация transiently
+использует raw representation в памяти локального процесса; это не аппаратная
+non-exportable защита. Приватные байты не выводились и не сохранялись в проект.
+
+Техническая граница этого прототипа: ключ хранится как Keychain generic-password,
+а `--sign` по текущей реализации должен читать его raw representation в память
+процесса для CryptoKit. Сам `--sign` пока не запускался; это не Secure Enclave и
+не доказательство аппаратной/non-exportable защиты. Приватные байты не должны
+попадать в файлы, вывод, журналы или сетевые запросы.
+
+`--sign` требует отдельно передать `--pinned-key-set-sha256` и
+`--reviewed-host-separation-sha256`; signer проверяет совпадение первого с
+закреплённым key-set, а второго — с digest в каноническом сообщении, причём
+валидирует запрос до обращения к Keychain. Эти аргументы не доказывают, что
+пользователь действительно проверил внешний источник или host evidence: их
+можно передавать только после такого review и явного pin.
+
+EXP-1418/1420 проверили native Security `SecKey` alternatives на этом Mac:
+Ed25519 key generation returned OSStatus `-4`; importing a synthetic key through
+`SecKeyCreateWithData` allowed sign/verify but reported `extractable=true`, and
+`SecItemImport` rejected the tested raw/PKCS#8 forms as `errSecUnknownFormat`
+without a Keychain target. No real Keychain key was accessed or signature made.
+EXP-1419 fixes CLI argument dispatch only. A strict non-exporting Ed25519 path
+therefore remains unproven; the existing CryptoKit path reads key bytes into
+process memory and must not be described as non-extractable.
+
+```json
+{
+  "schema": "agent00x-detached-trust-signature-response/v1",
+  "kind": "enrollment",
+  "message_base64": "<точное значение из signing request>",
+  "message_sha256": "sha256:<digest из signing request>",
+  "signature_hex": "<128 lowercase hex characters: 64-byte detached signature>"
+}
+```
+
+Затем передайте его через stdin в локальный verifier. Замените все placeholders
+на значения из проверенного deployment record и независимого канала pinning;
+пример намеренно не запускаемый без подстановки:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify_detached_verifier_trust_signature.py \
+  --kind enrollment \
+  --authority-key-set /path/to/caller-pinned-authority-keys.json \
+  --authority-key-set-digest 'sha256:<pinned-key-set-digest>' \
+  --expected-authority-key-id '<authority-key-id>' \
+  --expected-endpoint-url 'https://<verifier-host>.local/v1/verify' \
+  --expected-verifier-id '<pinned-verifier-id>' \
+  --expected-verifier-profile-digest 'sha256:<profile-digest>' \
+  --expected-verifier-key-id '<verifier-key-id>' \
+  --expected-worker-host-id '<worker-host-id>' \
+  --expected-verifier-host-id '<verifier-host-id>' \
+  --expected-host-separation-evidence-digest 'sha256:<evidence-digest>' \
+  < detached-response.json
+```
+
+Для `host-decision` замените `--kind`, добавьте
+`--enrollment-artifact /path/to/verified-enrollment.json` и
+`--expected-enrollment-digest 'sha256:<verified-enrollment-digest>'`. CLI сам
+проверяет enrollment тем же authority key set, сравнивает его полную binding
+tuple и вычисляет digest; host-decision принимается только если он подписан для
+этого exact enrollment. Это локально связывает два signed artifacts, но не
+доказывает истинность host-separation claim.
+Успешный output содержит проверенный artifact и публичную binding tuple, но
+всегда сообщает `independent_host_trust_established=false`: криптографическая
+проверка не заменяет OOB-проверку deployment и разделения хостов. Все значения
+в этом примере — placeholders, не действующие credentials или evidence.
 После Batch KJ / EXP-703: 1300 тестов, 1289 прошли, 11 пропущено.
 Это подтверждает только покрытые тестами локальные свойства на текущей машине,
 не безопасность всей цепочки, live Worker, независимость verifier или реальную
@@ -124,8 +339,10 @@ enrollment и host-trust decision для `https://testdev.local/v1/verify`; Batc
 `--verifier-backend trusted-https`. Для него обязательны caller-pinned SHA-256
 authority-key-set, enrollment, host-decision и CA bundle; остальные endpoint
 не принимаются. Синтетические тесты доказывают только local wiring, не удалённый
-вызов. `testdev.local` не разрешался и не настраивался; TLS proxy, verifier
-service, signer credential и out-of-band host-separation evidence отсутствуют.
+вызов. `testdev.local` не разрешался и не настраивался; TLS proxy and a
+production verifier service are absent. EXP-1410's local EXP-1383-only Keychain
+signer exists, but no real trust artifact or out-of-band host-separation
+evidence has been created.
 Read-only SSH checks EXP-996/997 confirmed that the pinned verifier image ID
 and expected tag are not listed on `testdev`; no import or host setup followed.
 EXP-999 remains DRAFT pending fresh, exact authorization for the SSH identity
@@ -195,11 +412,20 @@ batch не загружались, snapshot origin остаётся `github_rest
 Для повторного прогона уже сохранённого verified candidate есть отдельная
 безсекретная команда `scripts/replay_staged_candidate.py`. Ей нужны существующая
 SQLite-стадия, её точный digest и новый абсолютный путь для output DB; output не
-перезаписывается. Команда ограничена закреплённым публичным snapshot, target и
-verifier, требует явный `RUN_DOCKER_SANDBOX_TESTS=1`, делает только anonymous
-read-only GitHub запросы и Docker verification. Она не вызывает модель, не
-читает credentials, не создаёт approval и не публикует изменения. Повторно
-полученный stage остаётся same-host evidence, а snapshot — GitHub API claim.
+перезаписывается. По умолчанию команда использует закреплённый Docker verifier;
+опция `--verifier-backend trusted-https` использует фиксированный
+`https://testdev.local/v1/verify` через caller-pinned authority key set,
+enrollment, host-decision и CA bundle с явными SHA-256 pins и ожидаемыми host
+IDs. Для forwarded loopback можно задать `--verifier-connect-address` и
+`--verifier-connect-port`; TLS при этом продолжает проверять фиксированную
+личность `testdev.local`. В обоих режимах закреплённый Docker target sandbox
+остаётся обязательным, поэтому требуется явный
+`RUN_DOCKER_SANDBOX_TESTS=1`. CLI делает только anonymous read-only GitHub
+запросы, не вызывает Worker/model, не читает credentials, не создаёт approval
+и не публикует изменения. Replay evidence сохраняет pins trust-артефактов,
+endpoint/profile и host IDs; это caller-pinned signed claim, а не независимая
+аттестация управления authority, разделения хостов или deployment. Повторно
+полученный stage остаётся replay evidence, а snapshot — GitHub API claim.
 Необязательный `--observer-database <new-absolute-path>` включает отдельный
 SQLite-журнал частичного replay: от readiness/quota и snapshot intake до
 сохранения и exact-digest readback. Он не перезаписывает базу; отчёт строится
@@ -508,3 +734,29 @@ excludes those unused readers. Two in-memory builds matched at
 `sha256:261fce4785b2b0fd17c369d3faf9c53873a8319af66d7ec03abacc32eda3e791`
 (533,249 source bytes). Full offline suite: 1,723 tests, 25 skipped. No
 credential or external operation was used; R2/MVP remain OPEN.
+
+Control Plane update (2026-10-19, Batches AIE/AIF): Observer invocation
+finalization is now wired through the local Worker, replay, executor, R5,
+stage-approval, and mock-publication paths; pending/unknown work remains open.
+The final local verifier pin is
+`sha256:59468457bb9a2ec5e6857e3a413df1e480481d832280027ecfd1f227517bdaa2`
+with code digest
+`sha256:a1ca1bf92f8dff1197814be3b6702c4a028763a6e9735165e304b0d59d0fad9e`;
+the verifier-host bundle pin is
+`sha256:3d7c9c30b2afc53c53b9a1427e95e113d684111209979ee5e7fbce2fe437dad4`.
+The single corrective batch-end suite passed (1,886 tests, 25 skipped), as did
+`git diff --check`. These local results do not prove independent host trust,
+deployment, authenticated approval, or real provider publication; criteria
+13/14 remain PARTIAL and R2/MVP remain OPEN.
+
+Последний полный offline suite после Batch AKBF (2026-10-19): 1,978 тестов,
+26 пропущено; 77.808 секунды. Это regression evidence: Ollama, Worker, snapshot,
+Docker verifier, approval и публикация в batch не запускались. Prompt для
+следующей credential-free локальной попытки уточнён; EXP-1585 остаётся DRAFT
+до отдельного точного gate. MVP и R2 остаются OPEN.
+
+Последний полный offline suite после Batch AKBM (2026-10-19): 2,000 тестов,
+26 пропущено; 79.665 секунды. EXP-1585 остановилась на exact image preflight
+(`PINNED_IMAGES_FAILED`), до GitHub quota, Ollama, snapshot, DB и inference.
+EXP-1594 подготовила синтетически проверенный bounded inspector; EXP-1595
+остаётся DRAFT для отдельного read-only gate. MVP и R2 остаются OPEN.

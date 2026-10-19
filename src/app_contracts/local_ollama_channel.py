@@ -26,6 +26,10 @@ LOCAL_OLLAMA_HOST = "127.0.0.1"
 LOCAL_OLLAMA_PORT = 11434
 LOCAL_OLLAMA_PATH = "/v1/chat/completions"
 LOCAL_OLLAMA_MODEL = "qwen2.5-coder:7b"
+LOCAL_OLLAMA_MODEL_DIGEST = "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364"
+# Ollama resolves this local sha256-<hex> form directly to a manifest blob.
+# Do not send the mutable model tag after the metadata preflight.
+LOCAL_OLLAMA_MODEL_REFERENCE = f"sha256-{LOCAL_OLLAMA_MODEL_DIGEST}"
 LOCAL_OLLAMA_TEMPERATURE = 0.0
 LOCAL_OLLAMA_SEED = 42
 
@@ -66,7 +70,7 @@ class LocalOllamaChatCompletionsChannel:
             if len(encoded_request) > MAX_REQUEST_BYTES:
                 raise ValueError
             wire_payload = {
-                "model": LOCAL_OLLAMA_MODEL,
+                "model": LOCAL_OLLAMA_MODEL_REFERENCE,
                 "max_tokens": payload["max_tokens"],
                 "temperature": LOCAL_OLLAMA_TEMPERATURE,
                 "seed": LOCAL_OLLAMA_SEED,
@@ -165,7 +169,7 @@ def _decode_response(encoded: bytes) -> ChatCompletionsModelResult:
         value = json.loads(encoded.decode("utf-8"), parse_constant=reject_constant)
         if (
             type(value) is not dict
-            or value.get("model") != LOCAL_OLLAMA_MODEL
+            or value.get("model") != LOCAL_OLLAMA_MODEL_REFERENCE
             or type(value.get("choices")) is not list
             or len(value["choices"]) != 1
         ):

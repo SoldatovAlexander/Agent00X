@@ -33,7 +33,9 @@ from app_contracts.signed_verifier_service import (  # noqa: E402
     BRAINBOOSTER_VERIFIER_PROFILE,
     SignedVerifierServiceError,
     VerifierRunner,
-    create_brainbooster_verifier_runner,
+)
+from app_contracts.verifier_classic_store import (  # noqa: E402
+    create_brainbooster_classic_store_verifier_runner,
 )
 
 
@@ -52,7 +54,7 @@ def _default_verifier_factory() -> VerifierRunner:
         raise SignedVerifierServiceError(
             "signed verifier HTTPS service: verifier unavailable"
         )
-    return create_brainbooster_verifier_runner(docker_executable)
+    return create_brainbooster_classic_store_verifier_runner(docker_executable)
 
 
 class _SanitizedArgumentParser(argparse.ArgumentParser):

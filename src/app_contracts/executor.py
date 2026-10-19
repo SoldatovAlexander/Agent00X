@@ -362,6 +362,7 @@ def run_local_execution(
         raise ExecutionError("execution verifier: collaborator is aliased")
     active_worker = worker
     active_verifier = verifier
+    invocation_terminal_status = "failed"
     if type(worker) is JournaledProposalWorker:
         if (
             observation_store is None
@@ -577,6 +578,8 @@ def run_local_execution(
                 failure_code="worker-failed",
             )
         if type(raw_proposal) is WorkerTerminalOutcome:
+            if raw_proposal.outcome == "denied":
+                invocation_terminal_status = "denied"
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
                 snapshot_tree_digest=_request_snapshot_tree_digest(request),
@@ -1074,6 +1077,7 @@ def run_local_execution(
             ),
         )
         if stage_sink is None:
+            invocation_terminal_status = "ok"
             return verified_result
         active_stage_sink = stage_sink
         if type(active_worker) is JournaledProposalWorker:
@@ -1169,11 +1173,23 @@ def run_local_execution(
                 snapshot_claim_digest=_request_snapshot_claim_digest(request),
                 failure_code="stage-persistence-failed",
             )
+        invocation_terminal_status = "ok"
         return verified_result
     finally:
         close = getattr(sandbox, "close", None)
         if callable(close):
             close()
+        if (
+            request.remote_snapshot is None
+            and type(active_worker) is JournaledProposalWorker
+        ):
+            try:
+                active_worker.finish_agent_invocation(
+                    status=invocation_terminal_status
+                )
+            except WorkerJournalError:
+                # Pending or unknown work stays visibly open; never infer a terminal.
+                pass
 
 
 def _staged_change_digest(staged: dict) -> str:

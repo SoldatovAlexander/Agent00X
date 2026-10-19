@@ -3,7 +3,8 @@
 The CLI is capable of an external write, but it never runs implicitly: it
 requires a verified exact-stage approval and a fresh terminal phrase containing
 that stage digest before reading provider configuration or opening the Broker.
-The trust profile is still operator-supplied and is not an identity proof.
+An authority-signed approver-key enrollment is mandatory. It binds the key,
+not the human identity.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from .github_app import (
     GitHubPullRequest,
 )
 from .publication import PublicationJournal
+from .observer_runtime import JournaledProposalWorker, WorkerJournalError
 from .publication_seed import (
     PublicationIntent,
     PublicationSeed,
@@ -62,10 +64,16 @@ def _load_approval(
     request_path: str | Path,
     signed_approval_path: str | Path,
     trust_profile_path: str | Path,
+    approver_enrollment_path: str | Path | None,
     *,
     now: datetime,
+    trusted_approver_authority_keys: object | None = None,
     trusted_verifier_authority_keys: object | None = None,
 ) -> VerifiedSignedApproval:
+    if approver_enrollment_path is None or trusted_approver_authority_keys is None:
+        raise SignedGitHubPublicationError(
+            "signed GitHub publication: approver enrollment trust is required"
+        )
     try:
         verified = load_verified_signed_approval(
             database_path,
@@ -73,6 +81,8 @@ def _load_approval(
             request_path,
             signed_approval_path,
             trust_profile_path,
+            approver_enrollment_path=approver_enrollment_path,
+            trusted_authority_keys=trusted_approver_authority_keys,
             trusted_verifier_authority_keys=trusted_verifier_authority_keys,
             now=now,
         )
@@ -83,6 +93,8 @@ def _load_approval(
     if (
         verified.result.get("decision") != "allow"
         or verified.binding.source_repository_id != TARGET_REPOSITORY
+        or verified.approver_enrollment is None
+        or verified.result.get("trust_profile_origin") != "authority_enrolled_approver_key"
         or verified.result.get("identity_authenticated") is not False
     ):
         raise SignedGitHubPublicationError(
@@ -155,9 +167,12 @@ def publish_signed_stage_github(
     journal_path: str | Path,
     operator_confirmation: str,
     *,
+    approver_enrollment_path: str | Path | None = None,
+    trusted_approver_authority_keys: object | None = None,
     now: datetime | None = None,
     environ: Mapping[str, str] | None = None,
     trusted_verifier_authority_keys: object | None = None,
+    observer: JournaledProposalWorker | None = None,
 ) -> dict[str, Any]:
     """Publish one exact signed stage after a fresh digest-bound terminal phrase.
 
@@ -170,6 +185,10 @@ def publish_signed_stage_github(
     moment = datetime.now(timezone.utc) if now is None else now
     if not isinstance(moment, datetime) or moment.tzinfo is None:
         raise SignedGitHubPublicationError("signed GitHub publication: clock is invalid")
+    if observer is not None and type(observer) is not JournaledProposalWorker:
+        raise SignedGitHubPublicationError(
+            "signed GitHub publication: observer is invalid"
+        )
     try:
         moment = moment.astimezone(timezone.utc)
     except Exception:
@@ -182,7 +201,9 @@ def publish_signed_stage_github(
         request_path,
         signed_approval_path,
         trust_profile_path,
+        approver_enrollment_path,
         now=moment,
+        trusted_approver_authority_keys=trusted_approver_authority_keys,
         trusted_verifier_authority_keys=trusted_verifier_authority_keys,
     )
     seed, intent, staged_change, verified_files = _validated_inputs(
@@ -283,6 +304,7 @@ def publish_signed_stage_github(
                 verified_files=verified_files,
                 actuator_id=ACTUATOR_ID,
                 now=moment,
+                observer=observer,
             )
             record = journal.get(intent.process_id)
         if (
@@ -297,7 +319,7 @@ def publish_signed_stage_github(
             or receipt.idempotency_key != intent.idempotency_key
         ):
             raise ValueError
-        return {
+        result = {
             "schema": "signed-stage-github-publication/v1",
             "status": "pull_request_confirmed",
             "staged_change_digest": staged_change_digest,
@@ -310,6 +332,20 @@ def publish_signed_stage_github(
             "trust_profile_origin": verified.result.get("trust_profile_origin"),
             "automatic_write_retry": False,
         }
+        if observer is not None:
+            observer_run_terminal = False
+            if observer.publication_dispatch_completed_cleanly():
+                try:
+                    observer.finish_agent_invocation(status="ok")
+                    observer.finish_run(status="ok")
+                    observer_run_terminal = True
+                except WorkerJournalError:
+                    # The provider receipt is already confirmed; preserve the
+                    # partial Observer history without inventing a terminal.
+                    pass
+            result["observer"] = observer.observer_reference()
+            result["observer_run_terminal"] = observer_run_terminal
+        return result
     except SignedGitHubPublicationError:
         raise
     except Exception:
@@ -325,6 +361,8 @@ def _load_preview(
     signed_approval_path: str | Path,
     trust_profile_path: str | Path,
     *,
+    approver_enrollment_path: str | Path | None,
+    trusted_approver_authority_keys: object | None = None,
     now: datetime,
     trusted_verifier_authority_keys: object | None = None,
 ) -> tuple[VerifiedSignedApproval, str]:
@@ -334,7 +372,9 @@ def _load_preview(
         request_path,
         signed_approval_path,
         trust_profile_path,
+        approver_enrollment_path,
         now=now,
+        trusted_approver_authority_keys=trusted_approver_authority_keys,
         trusted_verifier_authority_keys=trusted_verifier_authority_keys,
     )
     _validated_inputs(verified, staged_change_digest)
@@ -347,6 +387,7 @@ def main(
     now: datetime | None = None,
     environ: Mapping[str, str] | None = None,
     input_reader: Callable[[str], str] | None = None,
+    trusted_verifier_authority_keys: object | None = None,
     stdout=None,
     stderr=None,
 ) -> int:
@@ -364,6 +405,12 @@ def main(
     parser.add_argument("signed_approval")
     parser.add_argument("trust_profile")
     parser.add_argument("journal", help="new absolute persistent SQLite publication journal")
+    parser.add_argument("--approver-enrollment", required=True,
+                        help="authority-signed approver-key enrollment JSON")
+    parser.add_argument("--approver-authority-key-set", required=True,
+                        help="caller-pinned public approver authority key set JSON")
+    parser.add_argument("--approver-authority-key-set-digest", required=True,
+                        help="out-of-band pinned sha256 digest for the approver authority key set")
     parser.add_argument(
         "--verifier-authority-key-set",
         help="caller-pinned public verifier authority key set JSON",
@@ -375,6 +422,10 @@ def main(
     args = parser.parse_args(argv)
     moment = datetime.now(timezone.utc) if now is None else now
     try:
+        trusted_approver_authority_keys, _approver_key_set_digest = load_control_plane_authority_key_set(
+            args.approver_authority_key_set,
+            expected_digest=args.approver_authority_key_set_digest,
+        )
         key_set_inputs = (
             args.verifier_authority_key_set,
             args.verifier_authority_key_set_digest,
@@ -402,6 +453,8 @@ def main(
             args.request,
             args.signed_approval,
             args.trust_profile,
+            approver_enrollment_path=args.approver_enrollment,
+            trusted_approver_authority_keys=trusted_approver_authority_keys,
             now=moment,
             trusted_verifier_authority_keys=verifier_authority_keys,
         )
@@ -437,6 +490,8 @@ def main(
             args.trust_profile,
             args.journal,
             confirmation,
+            approver_enrollment_path=args.approver_enrollment,
+            trusted_approver_authority_keys=trusted_approver_authority_keys,
             now=moment,
             environ=environ,
             trusted_verifier_authority_keys=verifier_authority_keys,

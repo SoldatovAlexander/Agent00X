@@ -415,6 +415,7 @@ class StageApprovalTests(unittest.TestCase):
                     task_id="task-pinned-worker-001",
                 )
                 self.assertTrue(pinned_run.record_snapshot_pin_decision(True))
+                pinned_run.finish_agent_invocation(status="ok")
                 previous = pinned_run.observer_reference()
 
             stdout, stderr = io.StringIO(), io.StringIO()
@@ -455,6 +456,12 @@ class StageApprovalTests(unittest.TestCase):
                     for fact in report["facts"]
                 )
             )
+            with SQLiteObservationStore(observer_database) as observer_store:
+                events = observer_store.events()
+            self.assertEqual(events[-2]["event_type"], "agent_finished")
+            self.assertEqual(events[-2]["status"], "ok")
+            self.assertEqual(events[-1]["event_type"], "run_finished")
+            self.assertEqual(events[-1]["status"], "ok")
 
     def test_cli_rejects_missing_resume_run_before_publication(self):
         artifact = self.get_artifact()
@@ -529,6 +536,12 @@ class StageApprovalTests(unittest.TestCase):
                     for fact in reopened["facts"]
                 )
             )
+            with SQLiteObservationStore(observer_database) as observer_store:
+                events = observer_store.events()
+            self.assertEqual(events[-2]["event_type"], "agent_finished")
+            self.assertEqual(events[-2]["status"], "failed")
+            self.assertEqual(events[-1]["event_type"], "run_finished")
+            self.assertEqual(events[-1]["status"], "failed")
 
     def test_cli_rejects_observer_path_alias_and_relative_path(self):
         artifact = self.get_artifact()

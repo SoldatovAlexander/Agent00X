@@ -32,6 +32,7 @@ from .remote_snapshot_pipeline import run_remote_snapshot_execution
 from .remote_snapshot_workspace import RemoteSnapshotWorkspaceError
 from .repository_process import SAFE_TARGET_TEST_FAILURE_CODES
 from .validator import ContractValidationError
+from .observer_runtime import JournaledProposalWorker, WorkerJournalError
 from scripts.r5_batch_selection import select_r5_attempts
 
 
@@ -224,6 +225,43 @@ class R5ExecutionRecord:
 
 
 def run_r5_attempt(
+    selected_attempt: object,
+    snapshot: object,
+    *,
+    worker: object,
+    verifier: object,
+    sandbox_backend: object,
+    stage_sink: object,
+    observation_store: object | None = None,
+) -> R5ExecutionRecord:
+    try:
+        record = _run_r5_attempt_impl(
+            selected_attempt,
+            snapshot,
+            worker=worker,
+            verifier=verifier,
+            sandbox_backend=sandbox_backend,
+            stage_sink=stage_sink,
+            observation_store=observation_store,
+        )
+    except Exception:
+        _finish_r5_invocation(worker, status="failed")
+        raise
+    status = "ok" if record.result.status is ExecutionStatus.VERIFIED else "failed"
+    _finish_r5_invocation(worker, status=status)
+    return record
+
+
+def _finish_r5_invocation(worker: object, *, status: str) -> None:
+    if type(worker) is JournaledProposalWorker:
+        try:
+            worker.finish_agent_invocation(status=status)
+        except WorkerJournalError:
+            # Pending/unknown work is deliberately left open for Control Plane review.
+            pass
+
+
+def _run_r5_attempt_impl(
     selected_attempt: object,
     snapshot: object,
     *,

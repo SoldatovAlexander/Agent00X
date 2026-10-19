@@ -12,11 +12,12 @@ import sys
 from typing import Callable, Sequence, TextIO
 
 
-IMAGE_ID = "sha256:babefaa38e0e068f3af35b9f00d0ff0ea319a69e3a13697fe471b3e01a2cdf6a"
-IMAGE_CODE_DIGEST = "sha256:f63ecc2359fe0c9dcd51893d55d831bacb33daa0b289a3b87d0b6a65de1d660f"
-IMAGE_TAG = "agent00x-verifier-exp466:5865f817b97c4707857f50facce31a10"
-IMAGE_SIZE = 48854834
-STREAM_SIZE = 48868864
+IMAGE_ID = "sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f"
+REMOTE_CONFIG_IMAGE_ID = "sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9"
+IMAGE_CODE_DIGEST = "sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7"
+IMAGE_TAG = "agent00x-verifier:exp-1632"
+IMAGE_SIZE = 48857362
+STREAM_SIZE = 48871936
 OS = "linux"
 ARCH = "amd64"
 DIFF_IDS = (
@@ -24,11 +25,11 @@ DIFF_IDS = (
     "sha256:a5c84380b3657bb723a1f71fa963f1e3a3f01e2c6bcba12e3b9a0d336158c7a9",
     "sha256:4a01ba3ac604812ef31dab0006efecd1d572676f7a68afa169a9d57883025006",
     "sha256:d190d09d7bd91836f809045799a7024a54026b3da5de1ccb811627fcf9878b92",
-    "sha256:82fbc85959c7c97e6128123c0dcf2eb1430f74f4bf44ba52a48a120af0e4bfef",
-    "sha256:09732bfeb389acc269d5251449c0156efe4d9a97bbfd0de62efc3b2b4a928307",
-    "sha256:0a244a13dd659992bed00879b1f895d049647277cc4a5ff551afdf8fc9bd46a2",
-    "sha256:7933242f7cd01d766983c0bdf67e33fd0ab8e75bc820f5a29d44dc8d30d10dc2",
-    "sha256:adc78fa730d3fd4699887333f54b31c5cba046ee6b8b07d0922a399b760a31e0",
+    "sha256:beabc7f2b008356b23800eefa4ad544e11ddb9f695c47f9dbd740c59319dc536",
+    "sha256:76f9902e37cc68c835261cdc39fbdd622d98b1c9ed7a4ee694ea790a67ff1c2e",
+    "sha256:859663757df2684787c235e4147f7d5eaee82007cd1487471e0ebae693c4ad68",
+    "sha256:ccb686397a568101cf51993a97d32c193065a46031942a21b8a676fa066cf991",
+    "sha256:e21f3a32238e1146d1176cc62b3a78cbb23ff17b5fa40b62178ad9f75184325d",
 )
 _DIFF_ID_LIST = "[" + ",".join(f'"{item}"' for item in DIFF_IDS) + "]"
 # Local preflight keeps binding the exact image identity to its sole RepoTag, so a
@@ -37,14 +38,17 @@ _EXPECTED_INSPECT = (
     f"{IMAGE_ID}|{OS}|{ARCH}|{IMAGE_SIZE}|{_DIFF_ID_LIST}|"
     f'["{IMAGE_TAG}"]'
 )
-# The archive is saved by immutable image ID, so Docker's archive manifest carries
-# `RepoTags: null` and `docker image load` reports an untagged image. The remote
-# acceptance tuple therefore requires the same ID/platform/size/ordered DiffIDs
-# together with an empty RepoTags list; the previously observed conflicting
-# remote tag `agent00x-verifier-exp466:8e26180bde4749438988170f85b395da` is never
-# rewritten.
+# The OCI manifest pin and classic-store config ID are distinct. The archive's
+# manifest carries `RepoTags: null`; a classic Docker store addresses the loaded
+# image by the exact config digest. Storage `.Size` is deliberately not compared
+# remotely because it can vary by image-store implementation and is not content
+# identity. The previously observed conflicting tag is never rewritten.
+_REMOTE_INSPECT_FORMAT = (
+    "{{.Id}}|{{.Os}}|{{.Architecture}}|"
+    "{{json .RootFS.Layers}}|{{json .RepoTags}}"
+)
 _EXPECTED_REMOTE_INSPECT = (
-    f"{IMAGE_ID}|{OS}|{ARCH}|{IMAGE_SIZE}|{_DIFF_ID_LIST}|[]"
+    f"{REMOTE_CONFIG_IMAGE_ID}|{OS}|{ARCH}|{_DIFF_ID_LIST}|[]"
 )
 _INSPECT_FORMAT = (
     "{{.Id}}|{{.Os}}|{{.Architecture}}|{{.Size}}|"
@@ -73,7 +77,7 @@ _REMOTE_COMMAND = (
     "docker image load >/dev/null 2>&1; load_status=$?; "
     "if [ \"$load_status\" -ne 0 ]; then "
     "printf '%s\\n' REMOTE_LOAD_FAILED; exit 41; fi; "
-    f"if ! result=\"$(docker image inspect {IMAGE_ID} --format '{_INSPECT_FORMAT}' 2>/dev/null)\"; then "
+    f"if ! result=\"$(docker image inspect {REMOTE_CONFIG_IMAGE_ID} --format '{_REMOTE_INSPECT_FORMAT}' 2>/dev/null)\"; then "
     "printf '%s\\n' REMOTE_INSPECT_FAILED; exit 42; fi; "
     "printf '%s\\n' \"$result\""
 )
@@ -173,9 +177,9 @@ def run_transfer(
 
 
 def main() -> int:
-    sys.stderr.write("Type RUN EXP-1314 ONCE to continue: ")
+    sys.stderr.write("Type RUN EXP-1637 ONCE to continue: ")
     sys.stderr.flush()
-    if sys.stdin.readline().rstrip("\r\n") != "RUN EXP-1314 ONCE":
+    if sys.stdin.readline().rstrip("\r\n") != "RUN EXP-1637 ONCE":
         return _emit("RUN_NOT_CONFIRMED", sys.stdout)
     return run_transfer()
 

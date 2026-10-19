@@ -132,6 +132,7 @@ class ReplayStagedCandidateTests(unittest.TestCase):
         verifier=None,
         observation_store=None,
         record_snapshot_sources=False,
+        verifier_trust_evidence=None,
     ):
         transport = transport or FakeTransport()
         snapshot = snapshot or self._snapshot()
@@ -168,6 +169,7 @@ class ReplayStagedCandidateTests(unittest.TestCase):
             test_command=("python3", "-c", "pass"),
             snapshot_reader=reader,
             observation_store=observation_store,
+            verifier_trust_evidence=verifier_trust_evidence,
         )
 
     def test_historical_source_verifier_is_rechecked_by_current_verifier(self):
@@ -235,6 +237,18 @@ class ReplayStagedCandidateTests(unittest.TestCase):
             self.assertEqual(
                 [event["sequence"] for event in events], list(range(len(events)))
             )
+            lifecycle = [
+                event for event in events
+                if event.get("event_type") in {"agent_started", "agent_finished"}
+            ]
+            self.assertEqual(
+                [event["event_type"] for event in lifecycle],
+                ["agent_started", "agent_finished"],
+            )
+            self.assertEqual(
+                lifecycle[0]["invocation_id"], lifecycle[1]["invocation_id"]
+            )
+            self.assertEqual(lifecycle[1]["status"], "ok")
             tools = [event.get("decision_or_tool") for event in events]
             self.assertLess(
                 tools.index("GitHubReadiness.fetch"),
@@ -296,6 +310,40 @@ class ReplayStagedCandidateTests(unittest.TestCase):
             source_content = artifact.payload_copy()["verified_contents"]
             self.assertEqual(payload["verified_contents"], source_content)
             self.assertEqual(payload["declared_change_paths"], ["calculator.py"])
+
+    def test_trusted_https_evidence_retains_pinned_host_and_record_bindings(self):
+        with tempfile.TemporaryDirectory(prefix="replay-trusted-https-evidence-") as directory:
+            root = Path(directory)
+            source = root / "source.sqlite3"
+            output = root / "output.sqlite3"
+            artifact = self._source_database(source)
+            trust_evidence = {
+                "endpoint_url": replay.PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+                "verifier_profile_digest": replay.BRAINBOOSTER_VERIFIER_PROFILE.profile_digest,
+                "worker_host_id": "worker-host",
+                "verifier_host_id": "testdev-host",
+                "digests": {
+                    "authority_key_set_sha256": "sha256:" + "a" * 64,
+                    "enrollment_sha256": "sha256:" + "b" * 64,
+                    "host_decision_sha256": "sha256:" + "c" * 64,
+                    "ca_bundle_sha256": "sha256:" + "d" * 64,
+                },
+                "host_trust_basis": "caller-pinned-signed-claim",
+            }
+
+            evidence = self._run(
+                source,
+                artifact,
+                output,
+                verifier_trust_evidence=trust_evidence,
+            )
+
+        self.assertEqual(evidence["verifier_backend"], "trusted-https")
+        self.assertEqual(evidence["verifier_trust"], trust_evidence)
+        self.assertIn(
+            "host-separation-trust-is-only-the-caller-pinned-signed-claim",
+            evidence["limitations"],
+        )
 
     def test_safe_failure_marker_reports_only_allowlisted_phase(self):
         marker = replay._safe_failure_marker(
@@ -592,6 +640,44 @@ class ReplayStagedCandidateTests(unittest.TestCase):
         self.assertEqual(result, 2)
         self.assertIn("explicit Docker opt-in is required", stderr.getvalue())
 
+    def test_cli_rejects_trust_material_with_default_docker_backend_before_runtime(self):
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, {"RUN_DOCKER_SANDBOX_TESTS": "1"}),
+            patch.object(replay, "_production_runtime", side_effect=AssertionError),
+            redirect_stderr(stderr),
+        ):
+            result = replay.main(
+                [
+                    "source.sqlite3",
+                    "sha256:" + "a" * 64,
+                    "out.sqlite3",
+                    "--verifier-authority-key-set",
+                    "/tmp/authority.json",
+                ]
+            )
+        self.assertEqual(result, 2)
+        self.assertIn("verifier-backend-configuration-invalid", stderr.getvalue())
+
+    def test_cli_requires_complete_trust_material_for_trusted_https_before_runtime(self):
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, {"RUN_DOCKER_SANDBOX_TESTS": "1"}),
+            patch.object(replay, "_production_runtime", side_effect=AssertionError),
+            redirect_stderr(stderr),
+        ):
+            result = replay.main(
+                [
+                    "source.sqlite3",
+                    "sha256:" + "a" * 64,
+                    "out.sqlite3",
+                    "--verifier-backend",
+                    "trusted-https",
+                ]
+            )
+        self.assertEqual(result, 2)
+        self.assertIn("verifier-trust-material-unavailable", stderr.getvalue())
+
     def test_cli_rejects_observer_stage_database_alias_before_runtime(self):
         with tempfile.TemporaryDirectory(prefix="replay-observer-paths-") as directory:
             root = Path(directory)
@@ -628,13 +714,59 @@ class ReplayStagedCandidateTests(unittest.TestCase):
         ):
             runtime = replay._production_runtime()
 
-        self.assertEqual(len(runtime), 4)
+        self.assertEqual(len(runtime), 5)
         commit_source.assert_called_once_with(
             "/usr/bin/git", timeout_seconds=15
         )
         self.assertIs(runtime[0], transport.return_value)
         self.assertIs(runtime[1], sandbox.return_value)
         self.assertIs(runtime[3], commit_source.return_value)
+        self.assertIsNone(runtime[4])
+
+    def test_production_runtime_uses_pinned_https_client_without_verifier_docker(self):
+        trust_values = {
+            name: "synthetic-pinned-value"
+            for name in replay.VERIFIER_TRUST_ARTIFACT_ARGUMENTS
+        }
+        args = SimpleNamespace(
+            verifier_backend="trusted-https",
+            verifier_connect_address="127.0.0.1",
+            verifier_connect_port=49232,
+            **trust_values,
+        )
+        client = object()
+        trust_digests = {"authority_key_set_sha256": "sha256:" + "a" * 64}
+        with (
+            patch.object(replay.shutil, "which", return_value="/usr/bin/docker"),
+            patch.object(replay, "load_pinned_signed_verifier_client", return_value=(
+                client, "worker-host", "verifier-host", trust_digests
+            )) as load_client,
+            patch.object(replay, "GitHubAnonymousSnapshotTransport") as transport,
+            patch.object(replay, "DockerSandboxBackend") as sandbox,
+            patch.object(replay, "DockerContainerVerifier") as verifier_docker,
+            patch.object(replay, "GitHubRawCommitObjectSource") as commit_source,
+        ):
+            runtime = replay._production_runtime(args)
+
+        load_client.assert_called_once_with(
+            args, expected_endpoint_url=replay.PINNED_SIGNED_VERIFIER_ENDPOINT_URL
+        )
+        verifier_docker.assert_not_called()
+        self.assertIs(runtime[0], transport.return_value)
+        self.assertIs(runtime[1], sandbox.return_value)
+        self.assertIs(runtime[2], client)
+        self.assertIs(runtime[3], commit_source.return_value)
+        self.assertEqual(
+            runtime[4],
+            {
+                "endpoint_url": replay.PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+                "verifier_profile_digest": replay.BRAINBOOSTER_VERIFIER_PROFILE.profile_digest,
+                "worker_host_id": "worker-host",
+                "verifier_host_id": "verifier-host",
+                "digests": trust_digests,
+                "host_trust_basis": "caller-pinned-signed-claim",
+            },
+        )
 
     def test_clean_cli_import_does_not_load_worker_credentials_or_publication_adapters(self):
         probe = (

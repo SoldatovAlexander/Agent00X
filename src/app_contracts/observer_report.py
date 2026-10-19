@@ -316,8 +316,10 @@ def build_history_report(
     artifact_reference_count = 0
     by_run: dict[tuple[str, str, str], list[tuple[int, dict]]] = {}
     invocations: dict[str, list[tuple[int, dict]]] = {}
-    started_agents: dict[tuple[str, str, str, str], list[str]] = {}
-    finished_agents: set[tuple[str, str, str, str]] = set()
+    agent_lifecycle: dict[
+        tuple[str, str, str, str, str],
+        dict[str, list[tuple[int, dict]]],
+    ] = {}
     for cursor, event in selected:
         fact: dict[str, Any] = {
             "cursor": cursor,
@@ -388,11 +390,38 @@ def build_history_report(
             invocations.setdefault(invocation_id, []).append((cursor, event))
         if event["event_type"] == "tool_requested" and not invocation_id:
             gaps.append({"code": "tool_invocation_id_missing", "event_ids": [event["event_id"]]})
-        agent_key = (event["process_id"], event["run_id"], event["branch_id"], event["agent_id"])
-        if event["event_type"] == "agent_started":
-            started_agents.setdefault(agent_key, []).append(event["event_id"])
-        if event["event_type"] == "agent_finished":
-            finished_agents.add(agent_key)
+        if event["event_type"] in {"agent_started", "agent_finished"}:
+            invocation_id = event.get("invocation_id")
+            if type(invocation_id) is not str:
+                gaps.append(
+                    {
+                        "code": "agent_invocation_id_missing",
+                        "event_ids": [event["event_id"]],
+                    }
+                )
+                if event["event_type"] == "agent_started":
+                    gaps.append(
+                        {
+                            "code": "agent_terminal_event_missing",
+                            "event_ids": [event["event_id"]],
+                        }
+                    )
+            else:
+                agent_key = (
+                    event["process_id"],
+                    event["run_id"],
+                    event["branch_id"],
+                    event["agent_id"],
+                    invocation_id,
+                )
+                lifecycle = agent_lifecycle.setdefault(
+                    agent_key, {"started": [], "finished": []}
+                )
+                lifecycle[
+                    "started"
+                    if event["event_type"] == "agent_started"
+                    else "finished"
+                ].append((cursor, event))
         if event["redaction_status"] == "redacted":
             gaps.append({"code": "event_content_redacted", "event_ids": [event["event_id"]]})
         if event["event_type"] == "outcome_unknown" or event.get("status") == "unknown":
@@ -596,9 +625,50 @@ def build_history_report(
                 }
             )
 
-    for agent_key, started_ids in started_agents.items():
-        if agent_key not in finished_agents:
-            gaps.append({"code": "agent_terminal_event_missing", "event_ids": started_ids})
+    for lifecycle in agent_lifecycle.values():
+        starts = lifecycle["started"]
+        finishes = lifecycle["finished"]
+        lifecycle_ids = [
+            event["event_id"] for _, event in sorted(starts + finishes)
+        ]
+        if len(starts) > 1 or len(finishes) > 1:
+            gaps.append(
+                {
+                    "code": "agent_lifecycle_pair_ambiguous",
+                    "event_ids": lifecycle_ids,
+                }
+            )
+        if starts and not finishes:
+            gaps.append(
+                {
+                    "code": "agent_terminal_event_missing",
+                    "event_ids": [event["event_id"] for _, event in starts],
+                }
+            )
+        if finishes and not starts:
+            gaps.append(
+                {
+                    "code": "agent_start_event_missing",
+                    "event_ids": [event["event_id"] for _, event in finishes],
+                }
+            )
+        if len(starts) == 1 and len(finishes) == 1:
+            start_cursor, start_event = starts[0]
+            finish_cursor, finish_event = finishes[0]
+            if (
+                start_cursor >= finish_cursor
+                or start_event["event_id"]
+                not in finish_event.get("causal_event_ids", ())
+            ):
+                gaps.append(
+                    {
+                        "code": "agent_lifecycle_causality_missing",
+                        "event_ids": [
+                            start_event["event_id"],
+                            finish_event["event_id"],
+                        ],
+                    }
+                )
 
     for invocation_id, invocation_events in invocations.items():
         requested = [event for _, event in invocation_events if event["event_type"] == "tool_requested"]

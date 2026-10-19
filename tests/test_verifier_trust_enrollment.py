@@ -17,7 +17,9 @@ from app_contracts.verifier_trust_enrollment import (
     ENROLLMENT_SCHEMA,
     MAX_ENROLLMENT_BYTES,
     VerifierTrustEnrollmentError,
+    assemble_signed_verifier_trust_enrollment,
     build_signed_verifier_trust_enrollment,
+    build_verifier_trust_enrollment_signing_message,
     verify_verifier_trust_enrollment,
 )
 
@@ -97,6 +99,61 @@ class VerifierTrustEnrollmentTests(unittest.TestCase):
         self.assertTrue(verified.authority_signature_valid)
         self.assertFalse(verified.independent_host_trust_established)
         self.assertNotIn(raw_public_key(self.verifier_key).hex(), repr(verified))
+
+    def test_detached_authority_signature_round_trips_through_existing_validator(self):
+        message = build_verifier_trust_enrollment_signing_message(
+            enrollment_id="enroll-exp680-001",
+            authority_key_id=AUTHORITY_KEY_ID,
+            endpoint_url=ENDPOINT,
+            verifier_id=VERIFIER_ID,
+            verifier_profile_digest=PROFILE_DIGEST,
+            verifier_key_id=VERIFIER_KEY_ID,
+            verifier_public_key=raw_public_key(self.verifier_key),
+            worker_host_id="worker-host-01",
+            verifier_host_id="verifier-host-02",
+            host_separation_evidence_digest=HOST_EVIDENCE_DIGEST,
+            issued_at=NOW - timedelta(minutes=1),
+            expires_at=NOW + timedelta(days=7),
+        )
+        detached_signature = self.authority_key.sign(message)
+        assembled = assemble_signed_verifier_trust_enrollment(
+            message, detached_signature
+        )
+        self.assertEqual(assembled, self.raw)
+        self.assertEqual(
+            verify_record(assembled, self.authority_key).enrollment_id,
+            "enroll-exp680-001",
+        )
+
+    def test_detached_assembler_rejects_wrong_domain_payload_shape_and_signature(self):
+        message = build_verifier_trust_enrollment_signing_message(
+            enrollment_id="enroll-exp680-001",
+            authority_key_id=AUTHORITY_KEY_ID,
+            endpoint_url=ENDPOINT,
+            verifier_id=VERIFIER_ID,
+            verifier_profile_digest=PROFILE_DIGEST,
+            verifier_key_id=VERIFIER_KEY_ID,
+            verifier_public_key=raw_public_key(self.verifier_key),
+            worker_host_id="worker-host-01",
+            verifier_host_id="verifier-host-02",
+            host_separation_evidence_digest=HOST_EVIDENCE_DIGEST,
+            issued_at=NOW - timedelta(minutes=1),
+            expires_at=NOW + timedelta(days=7),
+        )
+        signature = self.authority_key.sign(message)
+        invalid_messages = (
+            b"wrong-domain\0" + message,
+            message + b" ",
+            message[:-1] + b',"schema":"duplicate"}',
+        )
+        for invalid in invalid_messages:
+            with self.subTest(message=invalid[:24]):
+                with self.assertRaises(VerifierTrustEnrollmentError):
+                    assemble_signed_verifier_trust_enrollment(invalid, signature)
+        for invalid_signature in ("not-bytes", b"short", b"x" * 65):
+            with self.subTest(signature_type=type(invalid_signature).__name__):
+                with self.assertRaises(VerifierTrustEnrollmentError):
+                    assemble_signed_verifier_trust_enrollment(message, invalid_signature)
 
     def test_signed_record_matches_json_schema(self):
         schema_path = ROOT / "schemas" / "verifier-trust-enrollment.schema.json"

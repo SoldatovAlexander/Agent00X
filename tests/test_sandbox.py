@@ -19,6 +19,7 @@ from app_contracts.sandbox import (
     LocalProcessSandboxBackend,
     SandboxError,
 )
+from app_contracts.docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT
 
 
 class SandboxTests(unittest.TestCase):
@@ -157,18 +158,24 @@ class SandboxTests(unittest.TestCase):
                 return_value=subprocess.CompletedProcess(["docker"], 0, "ok\n", ""),
             ) as run:
                 result = sandbox.run(("python", "-c", "pass"))
-            self.assertEqual(result.returncode, 0)
-            argv = run.call_args.args[0]
-            env_values = [argv[index + 1] for index, part in enumerate(argv[:-1]) if part == "--env"]
-            self.assertEqual(
-                env_values,
-                [
-                    "PATH=/usr/local/bin:/usr/bin:/bin",
-                    "PYTHONDONTWRITEBYTECODE=1",
-                    "LANG=C.UTF-8",
-                ],
-            )
-            self.assertNotIn("AI_PROCESS_API", "\x00".join(argv))
+                self.assertEqual(result.returncode, 0)
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[:3], ["docker", LOCAL_DOCKER_HOST_ARGUMENT, "exec"])
+                env_values = [argv[index + 1] for index, part in enumerate(argv[:-1]) if part == "--env"]
+                self.assertEqual(
+                    env_values,
+                    [
+                        "PATH=/usr/local/bin:/usr/bin:/bin",
+                        "PYTHONDONTWRITEBYTECODE=1",
+                        "LANG=C.UTF-8",
+                    ],
+                )
+                self.assertNotIn("AI_PROCESS_API", "\x00".join(argv))
+                sandbox.close()
+                self.assertEqual(
+                    run.call_args_list[1].args[0][:4],
+                    ["docker", LOCAL_DOCKER_HOST_ARGUMENT, "rm", "--force"],
+                )
 
     def test_snapshot_and_workspace_are_separate(self):
         with self.backend.create(self.fixture, {"python3"}) as sandbox:
@@ -277,6 +284,7 @@ class SandboxTests(unittest.TestCase):
     def test_docker_profile_disables_network_and_limits_container(self):
         backend = DockerSandboxBackend("python:3.12-alpine")
         command = backend.build_run_command(Path("/tmp/snapshot"), Path("/tmp/workspace"))
+        self.assertEqual(command[:3], ["docker", LOCAL_DOCKER_HOST_ARGUMENT, "run"])
         self.assertIn("--network", command)
         self.assertEqual(command[command.index("--network") + 1], "none")
         self.assertIn("--read-only", command)
@@ -290,8 +298,15 @@ class SandboxTests(unittest.TestCase):
 
     def test_docker_backend_refuses_unavailable_daemon_or_image(self):
         backend = DockerSandboxBackend("agent-process-image-that-is-not-present")
-        with self.assertRaisesRegex(SandboxError, "not automatic"):
+        with patch(
+            "app_contracts.sandbox.subprocess.run",
+            return_value=subprocess.CompletedProcess(["docker"], 1, "", "hidden"),
+        ) as run, self.assertRaisesRegex(SandboxError, "not automatic"):
             backend._assert_image_available()
+        self.assertEqual(
+            run.call_args.args[0][:4],
+            ["docker", LOCAL_DOCKER_HOST_ARGUMENT, "image", "inspect"],
+        )
 
     @unittest.skipUnless(os.environ.get("RUN_DOCKER_SANDBOX_TESTS") == "1", "Docker integration test is opt-in")
     def test_docker_backend_enforces_network_mount_and_workspace_profile(self):

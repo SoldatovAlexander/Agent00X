@@ -25,6 +25,7 @@ from app_contracts.container_proposal_worker import (
     _status_category,
     _worker_input_frame,
 )
+from app_contracts.docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT
 from app_contracts.deepseek_worker import (
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -206,7 +207,7 @@ class ContainerProposalWorkerTests(unittest.TestCase):
         )
         with (
             patch("app_contracts.container_proposal_worker.tempfile.TemporaryDirectory", TrackedTemporaryDirectory),
-            patch("app_contracts.container_proposal_worker.subprocess.run", return_value=image_env),
+            patch("app_contracts.container_proposal_worker.subprocess.run", return_value=image_env) as docker_run,
             patch(
                 "app_contracts.container_proposal_worker.subprocess.Popen",
                 side_effect=OSError("synthetic raw launch diagnostic"),
@@ -215,6 +216,20 @@ class ContainerProposalWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(ExecutionError, "isolated worker unavailable") as first:
                 worker.propose(_task())
             self.assertNotIn("synthetic raw", str(first.exception))
+            self.assertEqual(
+                popen.call_args.args[0][:3],
+                ["/usr/local/bin/docker", LOCAL_DOCKER_HOST_ARGUMENT, "run"],
+            )
+            self.assertEqual(
+                docker_run.call_args_list[0].args[0][:4],
+                ["/usr/local/bin/docker", LOCAL_DOCKER_HOST_ARGUMENT, "image", "inspect"],
+            )
+            self.assertTrue(
+                all(
+                    call.args[0][1] == LOCAL_DOCKER_HOST_ARGUMENT
+                    for call in docker_run.call_args_list
+                )
+            )
             with self.assertRaisesRegex(ExecutionError, "isolated worker unavailable"):
                 worker.propose(_task())
             popen.assert_called_once()

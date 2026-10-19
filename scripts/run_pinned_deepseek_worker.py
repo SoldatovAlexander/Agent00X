@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
@@ -38,11 +36,10 @@ from app_contracts.brainbooster_target_profile import (  # noqa: E402
 from app_contracts.verifier_image_pin import (  # noqa: E402
     VERIFIER_RUNTIME_CODE_DIGEST,
     VERIFIER_RUNTIME_IMAGE_ID,
+    VERIFIER_RUNTIME_CONFIG_IMAGE_ID,
 )
 from app_contracts.container_proposal_worker import ContainerProposalWorker  # noqa: E402
-from app_contracts.authority_key_set import (  # noqa: E402
-    load_control_plane_authority_key_set,
-)
+from app_contracts.docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT  # noqa: E402
 from app_contracts.credential_source import (  # noqa: E402
     NativeKeyringCredentialSource,
     ProcessEnvironmentCredentialSource,
@@ -56,9 +53,15 @@ from app_contracts.deepseek_worker import (  # noqa: E402
 from app_contracts.local_ollama_channel import (  # noqa: E402
     LOCAL_OLLAMA_HOST,
     LOCAL_OLLAMA_MODEL,
+    LOCAL_OLLAMA_MODEL_DIGEST,
     LOCAL_OLLAMA_PATH,
     LOCAL_OLLAMA_PORT,
     LocalOllamaChatCompletionsChannel,
+)
+from app_contracts.r5_local_model_preflight import (  # noqa: E402
+    EXPECTED_OLLAMA_VERSION,
+    R5LocalOllamaMetadataPreflight,
+    R5LocalModelPreflightError,
 )
 from app_contracts.github_http_transport import (  # noqa: E402
     GITHUB_READINESS_FAILURE_CODES,
@@ -70,6 +73,9 @@ from app_contracts.observer_runtime import (  # noqa: E402
     JournaledModelChannel,
     JournaledProposalWorker,
 )
+from app_contracts.local_model_observer_gate import (  # noqa: E402
+    journal_local_model_preflight,
+)
 from app_contracts.verifier_container import (  # noqa: E402
     VerifierContainerConfig,
 )
@@ -79,18 +85,12 @@ from app_contracts.worker_cli import (  # noqa: E402
     issue_remote_execution_permit,
     run_remote_snapshot_with_runtime,
 )
-from app_contracts.signed_verifier_client import (  # noqa: E402
-    SignedVerifierClient,
-    SignedVerifierHTTPSTransport,
-)
 from app_contracts.signed_verifier_service import (  # noqa: E402
     BRAINBOOSTER_VERIFIER_PROFILE,
 )
-from app_contracts.verifier_host_trust_decision import (  # noqa: E402
-    MAX_DECISION_BYTES,
-)
-from app_contracts.verifier_trust_enrollment import (  # noqa: E402
-    MAX_ENROLLMENT_BYTES,
+from app_contracts.pinned_verifier_cli import (  # noqa: E402
+    VERIFIER_TRUST_ARTIFACT_ARGUMENTS as _VERIFIER_TRUST_ARTIFACT_ARGS,
+    load_pinned_signed_verifier_client,
 )
 
 CONFIRMATION_PHRASE = "RUN EXP-634 ONCE"
@@ -238,6 +238,11 @@ AUTHORIZATION_PROFILES = {
         "process-exp-1312-local-001",
         "task-exp-1312-local-001",
     ),
+    "EXP-1585": (
+        "RUN EXP-1585 ONCE",
+        "process-exp-1585-local-001",
+        "task-exp-1585-local-001",
+    ),
 }
 AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-634": "github_rest_api_claim",
@@ -269,6 +274,7 @@ AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-1303": "github_rest_api_claim",
     "EXP-1310": "github_rest_api_claim",
     "EXP-1312": "github_rest_api_claim",
+    "EXP-1585": "github_rest_api_claim",
 }
 AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-634": "deepseek",
@@ -300,40 +306,48 @@ AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-1303": "local-ollama",
     "EXP-1310": "local-ollama",
     "EXP-1312": "local-ollama",
+    "EXP-1585": "local-ollama",
 }
 TASK_INSTRUCTION = (
     "In backend/routes.py change only /save-session. Preserve its existing "
-    "defaults and valid insert/commit behavior. Before any database/cursor "
-    "access, validate level, correct, wrong, total, and time_ms. Implement and "
-    "use this helper in exactly this order: if type(value) is not int, raise "
+    "defaults and valid insert/commit behavior. The pinned baseline currently "
+    "uses int(data.get(...)) for all five fields; delete those five coercions. "
+    "First read raw decoded values using exactly these defaults: "
+    "raw_level = data.get('level', 1); raw_correct = data.get('correct', 0); "
+    "raw_wrong = data.get('wrong', 0); raw_total = data.get('total', 10); "
+    "raw_time_ms = data.get('time_ms', 0). Add/import HTTPException alongside "
+    "APIRouter. Before any database/cursor access, validate those raw values. "
+    "Implement and use this helper in exactly this order: if type(value) is not int, raise "
     "HTTPException(status_code=422); if value < -(2**63) or value > 2**63 - 1, "
     "raise HTTPException(status_code=422); otherwise return value unchanged. "
-    "Collect all five validated values before the first database call. Never "
-    "coerce with int(), use isinstance(value, int), or insert/commit early. "
+    "Use this literal implementation shape, adapting only the helper name if "
+    "needed: def strict_sqlite_integer(value):\n"
+    "    if type(value) is not int:\n"
+    "        raise HTTPException(status_code=422, detail=\"invalid integer\")\n"
+    "    if value < -(2**63) or value > 2**63 - 1:\n"
+    "        raise HTTPException(status_code=422, detail=\"invalid integer\")\n"
+    "    return value. Call it separately for raw_level, raw_correct, "
+    "raw_wrong, raw_total, and raw_time_ms before any database/cursor call. "
+    "Do not use isinstance for this check: type(True) is not int. "
+    "Assign level/correct/wrong/total/time_ms only from helper results. "
+    "Collect all five validated values before the first database call; "
+    "perform no cursor access before validation. "
+    "Do not retain any original int(data.get(...)) assignment or call int() "
+    "anywhere in the changed path. Never coerce with int(). Never use "
+    "isinstance(value, int) or "
+    "insert/commit early. "
     "Acceptance oracle: every boolean, float (including non-finite), string, "
     "malformed value, and signed-64 overflow case for each field returns HTTP "
     "422 and writes zero rows; the valid fixture returns HTTP 200 and exactly "
-    "one expected row. Latest diagnostic: target-test-malformed-status-level-bool; "
-    "JSON true for level must return HTTP 422. Use FastAPI HTTPException. "
+    "one expected row. Python bool is a subclass of int, so reject True and "
+    "False explicitly with type(value) is not int; isinstance(value, int) "
+    "incorrectly accepts booleans. Latest diagnostic: "
+    "target-test-malformed-status-level-bool; JSON true for level must return "
+    "HTTP 422. Use FastAPI HTTPException. "
     "Do not change other routes, files, or acceptance criteria."
 )
 DECLARED_CHANGE_PATHS = ("backend/routes.py",)
 ALLOWED_COMMANDS = frozenset({"python3"})
-_SHA256_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_VERIFIER_TRUST_ARTIFACT_ARGS = (
-    "verifier_authority_key_set",
-    "verifier_authority_key_set_sha256",
-    "verifier_enrollment",
-    "verifier_enrollment_sha256",
-    "verifier_host_decision",
-    "verifier_host_decision_sha256",
-    "verifier_ca_bundle",
-    "verifier_ca_bundle_sha256",
-    "expected_worker_host_id",
-    "expected_verifier_host_id",
-)
-
-
 def _validate_new_stage_path(value: str | Path) -> Path:
     try:
         path = Path(value)
@@ -380,7 +394,7 @@ def _preflight_docker_images(
 ) -> None:
     _preflight_target_docker_image(docker_executable, run=run)
     _preflight_pinned_docker_image(
-        docker_executable, VERIFIER_RUNTIME_IMAGE_ID, run=run
+        docker_executable, VERIFIER_RUNTIME_CONFIG_IMAGE_ID, run=run
     )
 
 
@@ -400,7 +414,7 @@ def _preflight_pinned_docker_image(
 ) -> None:
     try:
         result = run(
-            [docker_executable, "image", "inspect", "--format={{.Id}}", image],
+            [docker_executable, LOCAL_DOCKER_HOST_ARGUMENT, "image", "inspect", "--format={{.Id}}", image],
             check=True,
             capture_output=True,
             text=True,
@@ -412,93 +426,18 @@ def _preflight_pinned_docker_image(
         raise ValueError("pinned Worker CLI: pinned Docker image unavailable") from None
 
 
-def _read_pinned_public_record(
-    path_value: object,
-    expected_digest: object,
-    *,
-    max_bytes: int,
-) -> tuple[bytes, str]:
-    try:
-        if (
-            type(path_value) is not str
-            or not Path(path_value).is_absolute()
-            or type(expected_digest) is not str
-            or _SHA256_DIGEST.fullmatch(expected_digest) is None
-        ):
-            raise ValueError
-        path = Path(path_value)
-        if path.is_symlink() or not path.is_file():
-            raise ValueError
-        with path.open("rb") as stream:
-            raw = stream.read(max_bytes + 1)
-        if not raw or len(raw) > max_bytes:
-            raise ValueError
-        actual_digest = "sha256:" + hashlib.sha256(raw).hexdigest()
-        if not hmac.compare_digest(actual_digest, expected_digest):
-            raise ValueError
-        return raw, actual_digest
-    except Exception:
-        raise ValueError("pinned Worker CLI: verifier trust material unavailable") from None
-
-
 def _has_any_verifier_trust_artifact_args(args: argparse.Namespace) -> bool:
     return any(getattr(args, name, None) is not None for name in _VERIFIER_TRUST_ARTIFACT_ARGS)
 
 
 def _load_signed_verifier_client(args: argparse.Namespace):
     """Load only explicitly pinned public trust artifacts; never read a secret."""
-
     try:
-        if any(getattr(args, name, None) is None for name in _VERIFIER_TRUST_ARTIFACT_ARGS):
-            raise ValueError
-        authority_path = Path(args.verifier_authority_key_set)
-        if not authority_path.is_absolute() or authority_path.is_symlink():
-            raise ValueError
-        authority_keys, authority_digest = load_control_plane_authority_key_set(
-            authority_path,
-            expected_digest=args.verifier_authority_key_set_sha256,
-        )
-        enrollment_bytes, enrollment_digest = _read_pinned_public_record(
-            args.verifier_enrollment,
-            args.verifier_enrollment_sha256,
-            max_bytes=MAX_ENROLLMENT_BYTES,
-        )
-        decision_bytes, decision_digest = _read_pinned_public_record(
-            args.verifier_host_decision,
-            args.verifier_host_decision_sha256,
-            max_bytes=MAX_DECISION_BYTES,
-        )
-        _ca_bytes, ca_digest = _read_pinned_public_record(
-            args.verifier_ca_bundle,
-            args.verifier_ca_bundle_sha256,
-            max_bytes=SignedVerifierHTTPSTransport.MAX_CUSTOM_CA_BUNDLE_BYTES,
-        )
-        transport = SignedVerifierHTTPSTransport(
-            PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
-            custom_ca_bundle_path=args.verifier_ca_bundle,
-            custom_ca_bundle_sha256=ca_digest.removeprefix("sha256:"),
-            connect_address=getattr(args, "verifier_connect_address", None),
-            connect_port=getattr(args, "verifier_connect_port", None),
-        )
-        transport.validate_configuration()
-        client = SignedVerifierClient.from_trust_enrollment(
-            BRAINBOOSTER_VERIFIER_PROFILE,
-            transport,
-            enrollment_bytes,
-            trusted_authority_keys=authority_keys,
+        return load_pinned_signed_verifier_client(
+            args,
             expected_endpoint_url=PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
-            expected_worker_host_id=args.expected_worker_host_id,
-            expected_verifier_host_id=args.expected_verifier_host_id,
-            host_trust_decision_bytes=decision_bytes,
+            profile=BRAINBOOSTER_VERIFIER_PROFILE,
         )
-        if client.has_current_independent_host_trust() is not True:
-            raise ValueError
-        return client, args.expected_worker_host_id, args.expected_verifier_host_id, {
-            "authority_key_set_sha256": authority_digest,
-            "enrollment_sha256": enrollment_digest,
-            "host_decision_sha256": decision_digest,
-            "ca_bundle_sha256": ca_digest,
-        }
     except Exception:
         raise ValueError("pinned Worker CLI: verifier trust material unavailable") from None
 
@@ -515,6 +454,7 @@ def main(
     docker_which: Callable[[str], str | None] | None = None,
     docker_inspect: Callable[..., None] | None = None,
     native_keyring_source_factory: Callable[[], object] | None = None,
+    local_model_preflight_factory: Callable[[], object] | None = None,
 ) -> int:
     import sys as _sys
 
@@ -533,6 +473,11 @@ def main(
         NativeKeyringCredentialSource
         if native_keyring_source_factory is None
         else native_keyring_source_factory
+    )
+    model_preflight_factory = (
+        R5LocalOllamaMetadataPreflight
+        if local_model_preflight_factory is None
+        else local_model_preflight_factory
     )
 
     def readiness_failure_code(
@@ -670,6 +615,18 @@ def main(
             file=output,
         )
         return 2
+    if not args.check_credential_source:
+        try:
+            interactive_stdin = _sys.stdin.isatty() is True
+        except Exception:
+            interactive_stdin = False
+        if not interactive_stdin:
+            print(
+                '{"status":"cancelled","reason":"interactive-terminal-required",'
+                '"provider_attempts":0}',
+                file=output,
+            )
+            return 3
     verifier_client = None
     expected_worker_host_id = None
     expected_verifier_host_id = None
@@ -956,6 +913,11 @@ def main(
     def report_readiness_failure(payload):
         if execution_worker is not None:
             try:
+                execution_worker.finish_agent_invocation(status="failed")
+            except Exception:
+                # Keep unresolved or unknown work visibly open.
+                pass
+            try:
                 payload["observer"] = execution_worker.observer_reference()
             except Exception:
                 pass
@@ -1056,6 +1018,59 @@ def main(
                 }
             )
             return 2
+        if local_model:
+            try:
+                model_preflight = model_preflight_factory()
+                inspect_model = getattr(model_preflight, "inspect", None)
+                if not callable(inspect_model):
+                    raise R5LocalModelPreflightError("configuration_rejected")
+                def inspect_local_model_metadata():
+                    return inspect_model(
+                        expected_model_digest=LOCAL_OLLAMA_MODEL_DIGEST
+                    )
+
+                if execution_worker is None:
+                    metadata = inspect_local_model_metadata()
+                else:
+                    metadata = journal_local_model_preflight(
+                        execution_worker,
+                        inspect_local_model_metadata,
+                        process_id=process_id,
+                    )
+                if (
+                    getattr(metadata, "version", None) != EXPECTED_OLLAMA_VERSION
+                    or getattr(metadata, "model", None) != LOCAL_OLLAMA_MODEL
+                    or getattr(metadata, "model_digest", None)
+                    != LOCAL_OLLAMA_MODEL_DIGEST
+                ):
+                    raise R5LocalModelPreflightError("metadata_request_failed")
+            except Exception:
+                if execution_worker is not None:
+                    try:
+                        execution_worker.finish_agent_invocation(status="failed")
+                    except Exception:
+                        pass
+                print(
+                    '{"status":"stopped","reason":"local-model-preflight-failed",'
+                    '"snapshot_attempts":0,"external_model_attempts":0,'
+                    '"provider_attempts":0}',
+                    file=error_output,
+                )
+                return 2
+            print(
+                json.dumps(
+                    {
+                        "status": "matched",
+                        "local_model_preflight": "passed",
+                        "model": metadata.model,
+                        "model_digest": metadata.model_digest,
+                        "ollama_version": metadata.version,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=output,
+            )
         runtime_options = dict(
             process_id=process_id,
             task_id=task_id,
@@ -1095,6 +1110,10 @@ def main(
             "failure_code": "pinned-worker-runtime-failed",
         }
         if execution_worker is not None:
+            try:
+                execution_worker.finish_agent_invocation(status="failed")
+            except Exception:
+                pass
             try:
                 failure["observer"] = execution_worker.observer_reference()
             except Exception:

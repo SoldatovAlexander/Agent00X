@@ -30,7 +30,7 @@ from app_contracts.observation_store import (
     ObservationStoreError,
     SQLiteObservationStore,
 )
-from app_contracts.observer_report import report_from_sqlite
+from app_contracts.observer_report import build_history_report, report_from_sqlite
 from app_contracts.observer_runtime import (
     VerifierCallFailedError,
     VerifierJournalError,
@@ -67,6 +67,197 @@ def fixed_clock():
 
 
 class ObserverRuntimeTests(unittest.TestCase):
+    def test_invocation_and_run_finish_are_explicit_one_shot_events(self):
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-lifecycle-demo",
+            task_id="task-lifecycle-demo",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        started = store.events()[0]
+        self.assertTrue(started["invocation_id"].startswith("invocation-"))
+        with self.assertRaises(WorkerJournalError):
+            JournaledProposalWorker.resume_existing(
+                SimpleNamespace(propose=lambda _request: None),
+                store,
+                process_id="process-lifecycle-demo",
+                run_id=started["run_id"],
+                id_factory=fixed_ids(),
+                clock=fixed_clock(),
+            )
+
+        invocation_ref = run.finish_agent_invocation(status="ok")
+        with self.assertRaises(WorkerJournalError):
+            run.finish_agent_invocation(status="ok")
+        run_ref = run.finish_run(status="ok")
+        with self.assertRaises(WorkerJournalError):
+            run.finish_run(status="ok")
+        with self.assertRaises(WorkerJournalError):
+            run.record_snapshot_pin_decision(True)
+        with self.assertRaises(WorkerJournalError):
+            JournaledProposalWorker.resume_existing(
+                SimpleNamespace(propose=lambda _request: None),
+                store,
+                process_id="process-lifecycle-demo",
+                run_id=run_ref["run_id"],
+                id_factory=fixed_ids(),
+                clock=fixed_clock(),
+            )
+
+        events = store.events()
+        self.assertEqual(events[-2]["event_type"], "agent_finished")
+        self.assertEqual(events[-2]["invocation_id"], started["invocation_id"])
+        self.assertEqual(events[-2]["causal_event_ids"], [started["event_id"]])
+        self.assertEqual(events[-1]["event_type"], "run_finished")
+        self.assertEqual(events[-1]["status"], "ok")
+        self.assertEqual(invocation_ref["as_of_cursor"], len(events) - 2)
+        self.assertEqual(run_ref["as_of_cursor"], len(events) - 1)
+
+        report = build_history_report(
+            list(enumerate(events)), list(enumerate(store.checkpoints()))
+        )
+        self.assertEqual(report["facts"][-1]["event_type"], "run_finished")
+        self.assertFalse(any("approval" in str(fact).lower() for fact in report["facts"][-1:]))
+
+    def test_finish_refuses_unresolved_intent(self):
+        class TerminalFailureStore(ObservationStore):
+            def append(self, event):
+                if event.get("event_type") == "decision_applied":
+                    raise RuntimeError("synthetic append failure")
+                return super().append(event)
+
+        store = TerminalFailureStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-unresolved-demo",
+            task_id="task-unresolved-demo",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        with self.assertRaises(SnapshotPinDecisionOutcomeUnknownError):
+            run.record_snapshot_pin_decision(True)
+        with self.assertRaises(WorkerJournalError):
+            run.finish_agent_invocation(status="ok")
+        self.assertEqual(store.events()[-1]["event_type"], "decision_proposed")
+
+    def test_legacy_resume_preserves_missing_lifecycle_gap_and_links_new_start(self):
+        store = ObservationStore()
+        legacy_start = {
+            "schema_version": 1,
+            "event_id": "event-legacy-start",
+            "event_type": "agent_started",
+            "process_id": "process-legacy-demo",
+            "run_id": "run-legacy-demo",
+            "branch_id": "branch-main",
+            "task_id": "task-legacy-demo",
+            "agent_id": "service-worker",
+            "sequence": 0,
+            "occurred_at": "2026-10-19T00:00:00Z",
+            "recorded_at": "2026-10-19T00:00:00Z",
+            "classification": "internal",
+            "redaction_status": "complete",
+        }
+        store.append(legacy_start)
+        resumed = JournaledProposalWorker.resume_existing(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-legacy-demo",
+            run_id="run-legacy-demo",
+            id_factory=lambda values=iter(("legacy0001", "legacy0002")): next(values),
+            clock=fixed_clock(),
+        )
+        events = store.events()
+        self.assertNotIn("invocation_id", events[0])
+        self.assertEqual(events[1]["event_type"], "agent_started")
+        self.assertEqual(events[1]["sequence"], 1)
+        self.assertEqual(events[1]["causal_event_ids"], [legacy_start["event_id"]])
+        self.assertEqual(resumed.observer_reference()["as_of_cursor"], 1)
+        report = build_history_report(
+            list(enumerate(events)), list(enumerate(store.checkpoints()))
+        )
+        self.assertIn(
+            "agent_invocation_id_missing",
+            {gap["code"] for gap in report["gaps"]},
+        )
+
+    def test_resume_rejects_repeated_agent_invocation_id(self):
+        store = ObservationStore()
+        first = {
+            "schema_version": 1,
+            "event_id": "event-repeat-start-one",
+            "event_type": "agent_started",
+            "process_id": "process-repeat-demo",
+            "run_id": "run-repeat-demo",
+            "branch_id": "branch-main",
+            "task_id": "task-repeat-demo",
+            "agent_id": "service-worker",
+            "sequence": 0,
+            "occurred_at": "2026-10-19T00:00:00Z",
+            "recorded_at": "2026-10-19T00:00:00Z",
+            "invocation_id": "invocation-repeat-demo",
+            "classification": "internal",
+            "redaction_status": "complete",
+        }
+        second = dict(first)
+        second.update(
+            {
+                "event_id": "event-repeat-start-two",
+                "sequence": 1,
+                "causal_event_ids": [first["event_id"]],
+            }
+        )
+        store.append(first)
+        store.append(second)
+        with self.assertRaises(WorkerJournalError):
+            JournaledProposalWorker.resume_existing(
+                SimpleNamespace(propose=lambda _request: None),
+                store,
+                process_id="process-repeat-demo",
+                run_id="run-repeat-demo",
+                id_factory=fixed_ids(),
+                clock=fixed_clock(),
+            )
+        self.assertEqual(len(store.events()), 2)
+
+    def test_resume_rejects_tampered_event_and_checkpoint_causality(self):
+        for tamper in ("event", "checkpoint"):
+            with self.subTest(tamper=tamper):
+                store = ObservationStore()
+                run = JournaledProposalWorker(
+                    SimpleNamespace(propose=lambda _request: None),
+                    store,
+                    process_id=f"process-causality-{tamper}",
+                    task_id=f"task-causality-{tamper}",
+                    id_factory=fixed_ids(),
+                    clock=fixed_clock(),
+                )
+                run.record_snapshot_pin_decision(True)
+                run.finish_agent_invocation(status="ok")
+                run_id = run.observer_reference()["run_id"]
+                if tamper == "event":
+                    terminal_index = next(
+                        index for index, event in enumerate(store._events)
+                        if event.get("event_type") == "decision_applied"
+                    )
+                    store._events[terminal_index]["causal_event_ids"] = ["event-foreign"]
+                else:
+                    store._checkpoints[0]["trigger_event_id"] = "event-foreign"
+                before = len(store.events())
+                with self.assertRaises(WorkerJournalError):
+                    JournaledProposalWorker.resume_existing(
+                        SimpleNamespace(propose=lambda _request: None),
+                        store,
+                        process_id=f"process-causality-{tamper}",
+                        run_id=run_id,
+                        id_factory=fixed_ids(),
+                        clock=fixed_clock(),
+                    )
+                self.assertEqual(len(store.events()), before)
+
     def test_model_channel_is_checkpointed_without_retaining_request_or_response(self):
         store = ObservationStore()
         calls = []
@@ -116,6 +307,7 @@ class ObserverRuntimeTests(unittest.TestCase):
         with self.assertRaises(ControlledPublicationJournalError):
             channel.create_chat_completion(payload, timeout_seconds=17)
         self.assertEqual(len(calls), 1)
+        run.finish_agent_invocation(status="ok")
 
         resumed = JournaledProposalWorker.resume_existing(
             SimpleNamespace(propose=lambda _request: None),
@@ -215,6 +407,7 @@ class ObserverRuntimeTests(unittest.TestCase):
             clock=fixed_clock(),
         )
         self.assertTrue(original.record_snapshot_pin_decision(True))
+        original.finish_agent_invocation(status="ok")
         before = original.observer_reference()
         resumed = JournaledProposalWorker.resume_existing(
             SimpleNamespace(propose=lambda _request: None),
@@ -222,11 +415,12 @@ class ObserverRuntimeTests(unittest.TestCase):
             process_id="process-resume-001",
             run_id=before["run_id"],
             id_factory=(lambda values=iter(
-                ("resume0001", "resume0002", "resume0003", "resume0004")
+                tuple(f"resume{number:04d}" for number in range(1, 25))
             ): next(values)),
             clock=fixed_clock(),
         )
-        self.assertEqual(resumed.observer_reference(), before)
+        self.assertEqual(resumed.observer_reference()["run_id"], before["run_id"])
+        self.assertEqual(resumed.observer_reference()["as_of_cursor"], before["as_of_cursor"] + 1)
         with self.assertRaises(SnapshotPinDecisionError):
             resumed.record_snapshot_pin_decision(True)
         self.assertTrue(
@@ -320,6 +514,7 @@ class ObserverRuntimeTests(unittest.TestCase):
                     id_factory=fixed_ids(),
                     clock=fixed_clock(),
                 )
+                original.finish_agent_invocation(status="ok")
                 run_id = original.observer_reference()["run_id"]
 
             left_store = SQLiteObservationStore(path)
@@ -331,19 +526,20 @@ class ObserverRuntimeTests(unittest.TestCase):
                     process_id="process-resume-004",
                     run_id=run_id,
                 )
-                right = JournaledProposalWorker.resume_existing(
-                    SimpleNamespace(propose=lambda _request: None),
-                    right_store,
-                    process_id="process-resume-004",
-                    run_id=run_id,
-                )
+                with self.assertRaises(WorkerJournalError):
+                    JournaledProposalWorker.resume_existing(
+                        SimpleNamespace(propose=lambda _request: None),
+                        right_store,
+                        process_id="process-resume-004",
+                        run_id=run_id,
+                    )
                 calls = []
                 left.run_local_mock_publication(
                     lambda: calls.append("first") or "mock receipt",
                     process_id="process-resume-004",
                 )
                 with self.assertRaises(ControlledPublicationJournalError):
-                    right.run_local_mock_publication(
+                    left.run_local_mock_publication(
                         lambda: calls.append("duplicate") or "mock receipt",
                         process_id="process-resume-004",
                     )
@@ -412,6 +608,7 @@ class ObserverRuntimeTests(unittest.TestCase):
             lambda: True,
             process_id="process-proposal-validation-resume",
         )
+        run.finish_agent_invocation(status="ok")
         resumed = JournaledProposalWorker.resume_existing(
             SimpleNamespace(propose=lambda _request: None),
             store,
@@ -448,6 +645,7 @@ class ObserverRuntimeTests(unittest.TestCase):
             lambda: True,
             process_id="process-prepared-binding-resume",
         )
+        run.finish_agent_invocation(status="ok")
         resumed = JournaledProposalWorker.resume_existing(
             SimpleNamespace(propose=lambda _request: None),
             store,
@@ -485,6 +683,7 @@ class ObserverRuntimeTests(unittest.TestCase):
             lambda: True,
             process_id=process_id,
         )
+        run.finish_agent_invocation(status="ok")
         resumed = JournaledProposalWorker.resume_existing(
             SimpleNamespace(propose=lambda _request: None),
             store,
@@ -521,6 +720,7 @@ class ObserverRuntimeTests(unittest.TestCase):
             lambda: True,
             process_id="process-proposal-application-resume",
         )
+        run.finish_agent_invocation(status="ok")
         resumed = JournaledProposalWorker.resume_existing(
             SimpleNamespace(propose=lambda _request: None),
             store,
@@ -609,6 +809,32 @@ class ObserverRuntimeTests(unittest.TestCase):
                 process_id="process-publication-gate-003",
             )
         self.assertEqual(calls, ["published"])
+        self.assertFalse(run.publication_dispatch_completed_cleanly())
+
+    def test_publication_dispatch_exception_is_recorded_as_unknown(self):
+        store = ObservationStore()
+        run = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-publication-unknown-001",
+            task_id="task-publication-unknown-001",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        with self.assertRaisesRegex(OSError, "synthetic lost response"):
+            run.run_controlled_step(
+                "Publication.dispatch",
+                lambda: (_ for _ in ()).throw(OSError("synthetic lost response")),
+                process_id="process-publication-unknown-001",
+            )
+        publication_terminal = [
+            event for event in store.events()
+            if event.get("decision_or_tool") == "Publication.dispatch"
+            and event.get("event_type") == "outcome_unknown"
+        ]
+        self.assertEqual(len(publication_terminal), 1)
+        self.assertEqual(publication_terminal[0]["status"], "unknown")
+        self.assertFalse(run.publication_dispatch_completed_cleanly())
 
     def test_controlled_gate_denial_is_redacted_and_does_not_continue(self):
         store = ObservationStore()
@@ -935,9 +1161,14 @@ class ObserverRuntimeTests(unittest.TestCase):
                 "tool_completed",
                 "tool_requested",
                 "tool_completed",
+                "agent_finished",
             ],
         )
-        self.assertEqual([event["sequence"] for event in events], list(range(17)))
+        self.assertEqual([event["sequence"] for event in events], list(range(18)))
+        self.assertEqual(events[-1]["status"], "ok")
+        self.assertEqual(
+            events[-1]["invocation_id"], events[0]["invocation_id"]
+        )
         self.assertEqual(len({event["run_id"] for event in events}), 1)
         self.assertEqual(events[1]["decision_or_tool"], "SandboxBackend.create.target-execution")
         self.assertEqual(events[5]["decision_or_tool"], "WorkerProposal.validate")

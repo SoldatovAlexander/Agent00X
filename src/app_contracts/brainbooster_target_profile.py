@@ -22,6 +22,7 @@ EXPECTED_CANDIDATE_DIGEST = "sha256:6166fc4c2a73db910a064de140e71f7bfcbebe3b9984
 VERIFIER_CONTEXT_MODULES = (
     "__init__.py",
     "brainbooster_target_profile.py",
+    "docker_endpoint.py",
     "digests.py",
     "executor.py",
     "observer_runtime.py",

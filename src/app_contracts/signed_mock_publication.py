@@ -149,6 +149,8 @@ def publish_signed_stage_mock(
                 dispatch, process_id=process_id
             )
             result = dict(result)
+            observer.finish_agent_invocation(status="ok")
+            observer.finish_run(status="ok")
             result["observer"] = observer.observer_reference()
         except (
             ControlledPublicationJournalError,
@@ -156,6 +158,17 @@ def publish_signed_stage_mock(
             ControlledPublicationOutcomeUnknownError,
             WorkerJournalError,
         ):
+            try:
+                observer.finish_agent_invocation(status="failed")
+            except Exception:
+                # Unknown or pending publication work must remain open.
+                pass
+            else:
+                try:
+                    observer.finish_run(status="failed")
+                except Exception:
+                    # Preserve partial history if the run is not safely terminal.
+                    pass
             raise SignedMockPublicationError(
                 "signed mock publication: observer run rejected"
             ) from None

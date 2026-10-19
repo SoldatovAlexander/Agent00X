@@ -129,6 +129,11 @@ class VerifierContainerConfigTests(unittest.TestCase):
         )
         self.assertIn("--pull=never", command.argv)
         self.assertIn("--network=none", command.argv)
+        self.assertEqual(command.argv.count("--platform=linux/amd64"), 1)
+        self.assertLess(
+            command.argv.index("--platform=linux/amd64"),
+            command.argv.index(TEST_RUNTIME_IMAGE_ID),
+        )
         self.assertIn("--name=agent00x-verifier-test", command.argv)
         self.assertIn("--read-only", command.argv)
         self.assertIn("--user=65532:65532", command.argv)

@@ -17,6 +17,7 @@ import uuid
 
 from .brainbooster_target_profile import TARGET_RUNTIME_IMAGE_ID
 from .deepseek_worker import build_chat_completions_payload
+from .docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT
 from .executor import (
     ExecutionError,
     WorkerInput,
@@ -471,6 +472,7 @@ class ContainerProposalWorker:
             ] + [f"PYTHONPATH={CONTAINER_PYTHONPATH}"]
             command = [
                 self._docker,
+                LOCAL_DOCKER_HOST_ARGUMENT,
                 "run",
                 "--interactive",
                 "--rm",
@@ -586,7 +588,7 @@ class ContainerProposalWorker:
             if process is not None:
                 try:
                     subprocess.run(
-                        [self._docker, "rm", "--force", container_name],
+                        [self._docker, LOCAL_DOCKER_HOST_ARGUMENT, "rm", "--force", container_name],
                         capture_output=True,
                         timeout=10,
                         check=False,
@@ -595,7 +597,7 @@ class ContainerProposalWorker:
                     cleanup_unconfirmed = True
                 try:
                     remaining = subprocess.run(
-                        [self._docker, "inspect", INSPECT_ID, container_name],
+                        [self._docker, LOCAL_DOCKER_HOST_ARGUMENT, "inspect", INSPECT_ID, container_name],
                         capture_output=True,
                         timeout=5,
                         check=False,
@@ -620,7 +622,7 @@ class ContainerProposalWorker:
     def _image_environment(self) -> list[str]:
         try:
             result = subprocess.run(
-                [self._docker, "image", "inspect", "--format={{json .Config.Env}}", TARGET_RUNTIME_IMAGE_ID],
+                [self._docker, LOCAL_DOCKER_HOST_ARGUMENT, "image", "inspect", "--format={{json .Config.Env}}", TARGET_RUNTIME_IMAGE_ID],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -659,7 +661,7 @@ class ContainerProposalWorker:
     ) -> None:
         try:
             result = subprocess.run(
-                [self._docker, "inspect", INSPECT_JSON, container_name],
+                [self._docker, LOCAL_DOCKER_HOST_ARGUMENT, "inspect", INSPECT_JSON, container_name],
                 capture_output=True,
                 text=True,
                 timeout=10,

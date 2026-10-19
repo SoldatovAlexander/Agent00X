@@ -10,7 +10,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app_contracts.verifier_host_trust_decision import (
     VerifierHostTrustDecisionError,
+    assemble_signed_verifier_host_trust_decision,
     build_signed_verifier_host_trust_decision,
+    build_verifier_host_trust_decision_signing_message,
     is_verified_verifier_host_trust_decision,
     verify_verifier_host_trust_decision,
 )
@@ -75,6 +77,79 @@ class VerifierHostTrustDecisionTests(unittest.TestCase):
         self.assertTrue(is_verified_verifier_host_trust_decision(verified))
         self.assertEqual(verified.enrollment_digest, ENROLLMENT_DIGEST)
         self.assertTrue(verified.decision_digest.startswith("sha256:"))
+
+    def test_detached_authority_signature_round_trips_through_existing_validator(self) -> None:
+        message = build_verifier_host_trust_decision_signing_message(
+            decision_id="synthetic-decision-1",
+            authority_key_id=AUTHORITY_KEY_ID,
+            enrollment_digest=ENROLLMENT_DIGEST,
+            endpoint_url=ENDPOINT,
+            verifier_id=VERIFIER_ID,
+            verifier_profile_digest=PROFILE_DIGEST,
+            verifier_key_id=VERIFIER_KEY_ID,
+            worker_host_id=WORKER_HOST_ID,
+            verifier_host_id=VERIFIER_HOST_ID,
+            host_separation_evidence_digest=EVIDENCE_DIGEST,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(hours=1),
+        )
+        assembled = assemble_signed_verifier_host_trust_decision(
+            message, self.authority_key.sign(message)
+        )
+        self.assertEqual(assembled, self.decision)
+        self.assertEqual(self.verify(assembled).decision_digest,
+                         self.verify().decision_digest)
+
+    def test_detached_assembler_rejects_wrong_domain_payload_shape_and_signature(self) -> None:
+        message = build_verifier_host_trust_decision_signing_message(
+            decision_id="synthetic-decision-1",
+            authority_key_id=AUTHORITY_KEY_ID,
+            enrollment_digest=ENROLLMENT_DIGEST,
+            endpoint_url=ENDPOINT,
+            verifier_id=VERIFIER_ID,
+            verifier_profile_digest=PROFILE_DIGEST,
+            verifier_key_id=VERIFIER_KEY_ID,
+            worker_host_id=WORKER_HOST_ID,
+            verifier_host_id=VERIFIER_HOST_ID,
+            host_separation_evidence_digest=EVIDENCE_DIGEST,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(hours=1),
+        )
+        signature = self.authority_key.sign(message)
+        invalid_messages = (
+            b"wrong-domain\0" + message,
+            message + b" ",
+            message[:-1] + b',"schema":"duplicate"}',
+        )
+        for invalid in invalid_messages:
+            with self.subTest(message=invalid[:24]):
+                with self.assertRaises(VerifierHostTrustDecisionError):
+                    assemble_signed_verifier_host_trust_decision(invalid, signature)
+        for invalid_signature in ("not-bytes", b"short", b"x" * 65):
+            with self.subTest(signature_type=type(invalid_signature).__name__):
+                with self.assertRaises(VerifierHostTrustDecisionError):
+                    assemble_signed_verifier_host_trust_decision(message, invalid_signature)
+
+    def test_detached_but_invalid_signature_is_rejected_by_existing_validator(self) -> None:
+        message = build_verifier_host_trust_decision_signing_message(
+            decision_id="synthetic-decision-1",
+            authority_key_id=AUTHORITY_KEY_ID,
+            enrollment_digest=ENROLLMENT_DIGEST,
+            endpoint_url=ENDPOINT,
+            verifier_id=VERIFIER_ID,
+            verifier_profile_digest=PROFILE_DIGEST,
+            verifier_key_id=VERIFIER_KEY_ID,
+            worker_host_id=WORKER_HOST_ID,
+            verifier_host_id=VERIFIER_HOST_ID,
+            host_separation_evidence_digest=EVIDENCE_DIGEST,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(hours=1),
+        )
+        assembled = assemble_signed_verifier_host_trust_decision(
+            message, b"x" * 64
+        )
+        with self.assertRaises(VerifierHostTrustDecisionError):
+            self.verify(assembled)
 
     def test_copied_claim_without_verifier_provenance_is_not_trusted(self) -> None:
         verified = self.verify()

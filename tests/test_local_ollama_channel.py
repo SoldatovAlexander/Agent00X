@@ -12,6 +12,8 @@ from app_contracts.deepseek_worker import MODEL_NAME, REASONING_EFFORT
 from app_contracts.local_ollama_channel import (
     LOCAL_OLLAMA_HOST,
     LOCAL_OLLAMA_MODEL,
+    LOCAL_OLLAMA_MODEL_DIGEST,
+    LOCAL_OLLAMA_MODEL_REFERENCE,
     LOCAL_OLLAMA_PATH,
     LOCAL_OLLAMA_PORT,
     LOCAL_OLLAMA_SEED,
@@ -36,7 +38,7 @@ def model_request() -> dict:
     }
 
 
-def response_bytes(*, model: str = LOCAL_OLLAMA_MODEL, finish_reason: str = "stop") -> bytes:
+def response_bytes(*, model: str = LOCAL_OLLAMA_MODEL_REFERENCE, finish_reason: str = "stop") -> bytes:
     return json.dumps(
         {
             "id": "chatcmpl-local-fixture",
@@ -117,7 +119,10 @@ class LocalOllamaChannelTests(unittest.TestCase):
         headers = options["headers"]
         self.assertNotIn("Authorization", headers)
         wire_request = json.loads(options["body"])
-        self.assertEqual(wire_request["model"], LOCAL_OLLAMA_MODEL)
+        self.assertEqual(
+            wire_request["model"],
+            f"sha256-{LOCAL_OLLAMA_MODEL_DIGEST}",
+        )
         self.assertEqual(wire_request["messages"], model_request()["messages"])
         self.assertEqual(wire_request["temperature"], LOCAL_OLLAMA_TEMPERATURE)
         self.assertEqual(wire_request["seed"], LOCAL_OLLAMA_SEED)
@@ -184,7 +189,7 @@ class LocalOllamaChannelTests(unittest.TestCase):
         invalid = (
             FakeResponse(b"not-json"),
             FakeResponse(b"x" * (MAX_RESPONSE_BYTES + 1), length=str(MAX_RESPONSE_BYTES + 1)),
-            FakeResponse(response_bytes(model="qwen2.5-coder:14b")),
+            FakeResponse(response_bytes(model=LOCAL_OLLAMA_MODEL)),
             FakeResponse(response_bytes(finish_reason="length")),
         )
         for response in invalid:

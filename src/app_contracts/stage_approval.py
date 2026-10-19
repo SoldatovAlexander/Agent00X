@@ -354,6 +354,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise OperatorConfirmationStoreError(
                     "operator confirmation: completed readback mismatch"
                 )
+        if observer is not None:
+            observer.finish_agent_invocation(status="ok")
+            observer.finish_run(status="ok")
+            observer_locator = observer.observer_reference()
     except (
         DurableStageStoreError,
         OperatorConfirmationStoreError,
@@ -367,6 +371,19 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
         else:
             if observer is not None:
+                invocation_finished = False
+                try:
+                    observer.finish_agent_invocation(status="failed")
+                    invocation_finished = True
+                except Exception:
+                    # Do not close an invocation with an unresolved outcome.
+                    pass
+                if invocation_finished:
+                    try:
+                        observer.finish_run(status="failed")
+                    except Exception:
+                        # An unsafe or incomplete run remains visibly partial.
+                        pass
                 try:
                     observer_locator = observer.observer_reference()
                 except Exception:

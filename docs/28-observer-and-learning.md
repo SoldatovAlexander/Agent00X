@@ -503,3 +503,116 @@ EXP-1289's failure. EXP-1292 prepared fresh profile EXP-1293, but its sole
 readiness result was `READINESS|200|35|1792090084` (<36), so the card is BLOCKED
 before snapshot/Ollama/model and must not be retried. No second model request
 occurred; a fresh profile/card is needed after reset.
+
+EXP-1444 adds a Worker-only journal adapter for the local Ollama metadata
+preflight. It persists the fixed `LocalOllamaMetadataPreflight.inspect`
+checkpoint and intent before dispatch, then records only bounded success/failure
+metadata; model version, name, digest and exception text are not copied into the
+journal. Stable one-shot event identity prevents another dispatch after resume
+or an adapter race; a failed atomic intent write prevents the metadata request.
+The adapter is intentionally outside `observer_runtime.py` and is absent from
+the verifier runtime context and verifier-host source bundle, preserving their
+independent artifact pins. Synthetic journal/CLI tests passed; no live Ollama,
+Worker, model, network or verifier call occurred. This is a narrow local
+instrumentation hook, not a complete collector or trusted audit backend.
+
+## 9. Decision record — invocation versus run lifecycle (2026-10-19)
+
+`agent_started` and `agent_finished` describe one runtime invocation, not the
+whole durable workflow. A workflow may pause after staging while a human reviews
+the exact digest; that invocation is finished, but the run is not terminal. A
+later authorized continuation starts another invocation in the same `run_id`,
+preserving the causal event chain and one-shot claims.
+
+The event schema includes a distinct `run_finished` terminal event. The local
+Observer core exposes explicit one-shot `finish_agent_invocation(status=...)`
+and `finish_run(status=...)` APIs. An invocation finish is refused while any
+recorded intent is pending or unknown; a run finish additionally requires the
+current invocation to be explicitly finished. A pending/unknown external effect
+still requires reconciliation before any resume; neither `agent_finished` nor a
+process exit proves that the external effect succeeded. `run_finished` is
+reported as a journal fact, not approval, authority, or capability.
+
+Legacy journal rows remain immutable and readable. Missing `agent_finished` or
+`run_finished` facts are reported as lifecycle gaps; migration must not invent
+them from process exit, stage presence, or later events. The implementation must
+apply this deterministic resume rule: permit an explicit continuation only when
+every recorded tool/decision intent has exactly one causal terminal result, no
+`outcome_unknown` exists, and no publication history is present; preserve the
+`legacy_agent_lifecycle_unobserved` report gap and append a fresh invocation
+start without backfilling a finish for the old invocation. The implemented local
+resume path validates event sequence, intent/terminal pairing, checkpoint and
+causal references, publication history, lifecycle pairing, and one-shot claims;
+it appends the new `agent_started` in the same run with a fresh unique
+`invocation_id` and a causal link to the prior event. It preserves legacy report
+gaps without inventing old lifecycle facts. Pending or unknown external effects
+require a separately linked reconciliation action and cannot be retried by
+resume. Link its new run by putting the prior `outcome_unknown` event ID in
+the new run's first `agent_started.causal_event_ids`; this uses the existing
+field and prior-event rule, so no parent-run schema field is required. A report
+scoped only to the new run should expose `causal_reference_out_of_view`; a report
+containing both runs can establish the link if both events are present and
+ordered. Reconciliation must be read-only until its own exact operation card
+authorizes any state-changing action. EXP-1472 wires bounded invocation endings
+into the Worker CLI, replay, local executor, R5 attempt, stage-approval, and
+mock-publication paths. EXP-1516 additionally appends `run_finished` only after
+the local signed-mock-publication wrapper or stage-approval CLI has a known
+successful mock receipt and its invocation finish has been recorded. Failure or
+pending/unknown publication work is not run-terminalized. The real GitHub
+publication path is not covered by this addition. The remote snapshot pipeline
+leaves invocation finalization to its outer operation owner, so the lower-level
+executor cannot close a lifecycle before replay/R5 post-processing completes.
+This is still partial instrumentation;
+local journal integrity/durability,
+collector completeness, and trusted audit storage remain unproven. Criterion
+13/14 remain PARTIAL until that integration is separately implemented and
+verified.
+
+EXP-1518 extends the optional Observer boundary to the signed GitHub
+publication API when callers explicitly supply an existing
+`JournaledProposalWorker`. This changes instrumentation only; existing approval,
+policy, Gateway, broker, digest, and terminal receipt checks remain in force.
+A dispatch exception is represented as `outcome_unknown`, because the provider
+effect may have occurred; neither it nor an Observer journal failure permits a
+terminal run claim. The run is closed only when `Publication.dispatch` has one
+causally linked `tool_completed(ok)` event and the validated publication
+receipt/journal readback succeeds. If the existing publication path recovers a
+receipt after a dispatch error, the failed/unknown Observer event still blocks
+run closure because this integration does not record a separate recovery fact.
+Evidence is limited to synthetic fake-transport tests and temporary SQLite;
+there was no live GitHub call, credential use, or external write. Full
+collector completeness and durable/trusted audit storage remain unproven.
+
+## 10. Later readiness-instrumentation correction (2026-10-19)
+
+The initial scope statements above predate two narrow Worker-CLI hooks and must
+not be read as saying that every readiness boundary is still wholly outside the
+collector. EXP-989 wires the optional pinned DeepSeek Worker CLI through
+`JournaledProposalWorker.run_controlled_step` for `GitHubReadiness.fetch` and
+`RemoteExecutionPermit.issue`. It records pre-dispatch checkpoint/intent and a
+bounded terminal outcome on the same run; readiness counters, reset time,
+permit/card fields, response data and exception text are not journaled. Tests
+use a fake transport and temporary SQLite to verify one dispatch, pre-dispatch
+refusal before transport, and unknown terminal state without retry. EXP-1310's
+historical run still correctly records that its readiness gate stopped before
+Observer startup; EXP-989 later fixed the selected-profile identity mismatch.
+
+EXP-1444 is a separate Worker-only hook for local Ollama model metadata
+preflight; it also records only bounded outcome metadata and does not include
+model identity or details. Neither addition makes instrumentation mandatory,
+complete, externally attested, durable against privileged modification, or
+independently trusted. Readiness values themselves remain supplied to policy
+from outside the journal, and criteria 13/14 remain PARTIAL.
+
+## 11. Known-terminal local mock failures (EXP-1574, 2026-10-19)
+
+The signed-mock-approval and local stage-approval CLIs now append
+`run_finished(failed)` after `agent_finished(failed)` has been successfully
+persisted for a known local refusal/failure. This pairs the invocation and run
+terminal facts without treating the failure as success. If invocation finish
+cannot be persisted because an intent remains pending/unknown, the run remains
+open; no terminal fact is inferred from process exit. The change does not cover
+the real GitHub publication path and does not establish collector completeness,
+durability against privileged modification, or independent trust. Evidence is
+from focused local tests and the batch-end offline suite; criteria 13/14 remain
+PARTIAL.

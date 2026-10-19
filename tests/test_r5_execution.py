@@ -24,6 +24,8 @@ from app_contracts.github_snapshot import (
     GitHubSnapshotContents,
 )
 from app_contracts.pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
+from app_contracts.observation_store import SQLiteObservationStore
+from app_contracts.observer_runtime import JournaledProposalWorker
 from app_contracts.r5_execution import R5ExecutionError, run_r5_attempt
 from app_contracts.remote_snapshot_workspace import RemoteSnapshotWorkspaceError
 from app_contracts.validator import ContractValidationError
@@ -115,6 +117,52 @@ class R5ExecutionTests(unittest.TestCase):
             load=lambda *_args, **_kwargs: None,
         )
         return worker, verifier, sandbox, stage
+
+    def test_known_failed_pipeline_finishes_exact_worker_invocation(self) -> None:
+        snapshot, content_digest = _snapshot()
+        selected = _selected(content_digest)
+        underlying, verifier, sandbox, stage = self._collaborators()
+        with SQLiteObservationStore(":memory:") as store:
+            worker = JournaledProposalWorker(
+                underlying,
+                store,
+                process_id=selected.worker_input.process_id,
+                task_id=selected.worker_input.task_id,
+            )
+            patches = self._profile_patches(content_digest)
+            with (
+                patches[0], patches[1], patches[2], patches[3], patches[4], patches[5],
+                patch(
+                    "app_contracts.r5_execution.select_r5_attempts",
+                    return_value=(selected,),
+                ),
+                patch(
+                    "app_contracts.r5_execution.run_remote_snapshot_execution",
+                    return_value=ExecutionResult(status=ExecutionStatus.FAILED),
+                ),
+            ):
+                record = run_r5_attempt(
+                    selected,
+                    snapshot,
+                    worker=worker,
+                    verifier=verifier,
+                    sandbox_backend=sandbox,
+                    stage_sink=stage,
+                    observation_store=store,
+                )
+            self.assertEqual(record.result.status, ExecutionStatus.FAILED)
+            lifecycle = [
+                event for event in store.events()
+                if event.get("event_type") in {"agent_started", "agent_finished"}
+            ]
+            self.assertEqual(
+                [event["event_type"] for event in lifecycle],
+                ["agent_started", "agent_finished"],
+            )
+            self.assertEqual(lifecycle[1]["status"], "failed")
+            self.assertEqual(
+                lifecycle[0]["invocation_id"], lifecycle[1]["invocation_id"]
+            )
 
     def _profile_patches(self, snapshot_digest: str):
         return (

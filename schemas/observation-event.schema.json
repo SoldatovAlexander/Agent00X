@@ -9,7 +9,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "event_id": {"type": "string", "pattern": "^event-[a-z0-9-]+$"},
-    "event_type": {"enum": ["decision_proposed", "decision_applied", "tool_requested", "tool_completed", "tool_failed", "tool_denied", "outcome_unknown", "agent_started", "agent_finished", "correction_proposed", "branch_created"]},
+    "event_type": {"enum": ["decision_proposed", "decision_applied", "tool_requested", "tool_completed", "tool_failed", "tool_denied", "outcome_unknown", "agent_started", "agent_finished", "run_finished", "correction_proposed", "branch_created"]},
     "process_id": {"type": "string", "pattern": "^process-[a-z0-9-]+$"},
     "run_id": {"type": "string", "pattern": "^run-[a-z0-9-]+$"},
     "branch_id": {"type": "string", "pattern": "^branch-[a-z0-9-]+$"},

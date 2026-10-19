@@ -47,7 +47,10 @@ from app_contracts.verifier_image_pin import (  # noqa: E402
 )
 from app_contracts.executor import ExecutionStatus, WorkerProposal  # noqa: E402
 from app_contracts.observation_store import SQLiteObservationStore  # noqa: E402
-from app_contracts.observer_runtime import JournaledProposalWorker  # noqa: E402
+from app_contracts.observer_runtime import (  # noqa: E402
+    JournaledProposalWorker,
+    WorkerJournalError,
+)
 from app_contracts.github_http_transport import (  # noqa: E402
     GitHubAnonymousSnapshotTransport,
     GitHubHTTPTransportError,
@@ -67,6 +70,13 @@ from app_contracts.verifier_container import (  # noqa: E402
     DockerContainerVerifier,
     VerifierContainerConfig,
 )
+from app_contracts.pinned_verifier_cli import (  # noqa: E402
+    PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+    VERIFIER_TRUST_ARTIFACT_ARGUMENTS,
+    has_any_verifier_trust_artifact_args,
+    load_pinned_signed_verifier_client,
+)
+from app_contracts.signed_verifier_service import BRAINBOOSTER_VERIFIER_PROFILE  # noqa: E402
 from app_contracts.remote_snapshot_pipeline import run_remote_snapshot_execution  # noqa: E402
 from app_contracts.repository_process import _safe_test_failure_category  # noqa: E402
 from app_contracts.validator import ContractValidationError  # noqa: E402
@@ -94,6 +104,8 @@ _REPLAY_FAILURE_CODES = {
     "replay: source digest is invalid": "source-digest-invalid",
     "replay: runtime is unavailable": "runtime-unavailable",
     "replay: docker is unavailable": "runtime-unavailable",
+    "replay: verifier trust material unavailable": "verifier-trust-material-unavailable",
+    "replay: verifier backend configuration is invalid": "verifier-backend-configuration-invalid",
     "replay: readiness request failed": "readiness-request-failed",
     "replay: readiness HTTP status failed": "readiness-http-status-failed",
     "replay: readiness metadata is invalid": "readiness-metadata-invalid",
@@ -175,7 +187,59 @@ def replay_staged_candidate(
     test_command: tuple[str, ...] = PINNED_HTTP_DB_TEST_COMMAND,
     snapshot_reader: Callable = read_github_snapshot_contents,
     observation_store: object | None = None,
+    verifier_trust_evidence: dict | None = None,
     _commit_output: Callable[[Path, Path], None] | None = None,
+) -> dict:
+    invocation: list[object] = []
+    try:
+        evidence = _replay_staged_candidate_impl(
+            source_database,
+            source_digest,
+            output_database,
+            transport=transport,
+            sandbox_backend=sandbox_backend,
+            verifier=verifier,
+            commit_object_source=commit_object_source,
+            test_command=test_command,
+            snapshot_reader=snapshot_reader,
+            observation_store=observation_store,
+            verifier_trust_evidence=verifier_trust_evidence,
+            _commit_output=_commit_output,
+            _invocation_out=invocation,
+        )
+    except Exception:
+        _finish_replay_invocation(invocation, status="failed")
+        raise
+    _finish_replay_invocation(invocation, status="ok")
+    if invocation and type(invocation[0]) is JournaledProposalWorker:
+        evidence["observer"] = invocation[0].observer_reference()
+    return evidence
+
+
+def _finish_replay_invocation(invocation: list[object], *, status: str) -> None:
+    if invocation and type(invocation[0]) is JournaledProposalWorker:
+        try:
+            invocation[0].finish_agent_invocation(status=status)
+        except WorkerJournalError:
+            # Keep pending or unknown replay effects open for Control Plane review.
+            pass
+
+
+def _replay_staged_candidate_impl(
+    source_database: Path | str,
+    source_digest: str,
+    output_database: Path | str,
+    *,
+    transport: object,
+    sandbox_backend: object,
+    verifier: object,
+    commit_object_source: object,
+    test_command: tuple[str, ...] = PINNED_HTTP_DB_TEST_COMMAND,
+    snapshot_reader: Callable = read_github_snapshot_contents,
+    observation_store: object | None = None,
+    verifier_trust_evidence: dict | None = None,
+    _commit_output: Callable[[Path, Path], None] | None = None,
+    _invocation_out: list[object] | None = None,
 ) -> dict:
     """Verify a source stage, re-fetch its exact public pin, and persist replay.
 
@@ -198,6 +262,10 @@ def replay_staged_candidate(
         or not test_command
     ):
         raise ReplayError("replay: runtime is unavailable")
+    if verifier_trust_evidence is not None and not _valid_verifier_trust_evidence(
+        verifier_trust_evidence
+    ):
+        raise ReplayError("replay: evidence is invalid")
 
     artifact, candidate = _load_source_candidate(source_path, source_digest)
     process_id = f"process-replay-{source_digest[-12:]}"
@@ -213,6 +281,8 @@ def replay_staged_candidate(
             )
         except Exception:
             raise ReplayError("replay: observer is unavailable") from None
+        if _invocation_out is not None:
+            _invocation_out.append(execution_worker)
     try:
         readiness_dispatch = transport.read_rate_limit
         if type(execution_worker) is JournaledProposalWorker:
@@ -371,6 +441,9 @@ def replay_staged_candidate(
         evidence = {
             "schema": "stored-candidate-replay-evidence/v1",
             "status": "verified",
+            "verifier_backend": (
+                "trusted-https" if verifier_trust_evidence is not None else "pinned-docker"
+            ),
             "source_stage_digest": artifact.staged_change_digest,
             "source_database": str(source_path),
             "repository_id": f"{REMOTE_REPOSITORY_OWNER}/{REMOTE_REPOSITORY_NAME}",
@@ -397,9 +470,15 @@ def replay_staged_candidate(
                 "raw-commit-object-and-content-hashes-verified",
                 "github-tls-transport-provenance-not-independent",
                 "human-authorship-not-independently-verified",
-                "same-host-verifier-trust-not-independent",
+                (
+                    "host-separation-trust-is-only-the-caller-pinned-signed-claim"
+                    if verifier_trust_evidence is not None
+                    else "same-host-verifier-trust-not-independent"
+                ),
             ],
         }
+        if verifier_trust_evidence is not None:
+            evidence["verifier_trust"] = verifier_trust_evidence
         if type(execution_worker) is JournaledProposalWorker:
             evidence["observer"] = execution_worker.observer_reference()
         return evidence
@@ -511,26 +590,111 @@ def _remove_temporary_database(path: Path) -> None:
             pass
 
 
-def _production_runtime():
+def _production_runtime(args=None):
+    if args is not None:
+        _validate_verifier_backend_args(args)
     docker = shutil.which("docker")
     if docker is None:
         raise ReplayError("replay: docker is unavailable")
-    verifier = DockerContainerVerifier(
-        VerifierContainerConfig(
-            docker_executable=docker,
-            runtime_image_id=VERIFIER_RUNTIME_IMAGE_ID,
-            verifier_code_digest=VERIFIER_RUNTIME_CODE_DIGEST,
-            timeout_seconds=PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
-            max_stdout_bytes=65536,
-            max_stderr_bytes=16384,
+    verifier_backend = "pinned-docker" if args is None else args.verifier_backend
+    trust_evidence = None
+    if verifier_backend == "pinned-docker":
+        verifier = DockerContainerVerifier(
+            VerifierContainerConfig(
+                docker_executable=docker,
+                runtime_image_id=VERIFIER_RUNTIME_IMAGE_ID,
+                verifier_code_digest=VERIFIER_RUNTIME_CODE_DIGEST,
+                timeout_seconds=PINNED_VERIFIER_CONTAINER_TIMEOUT_SECONDS,
+                max_stdout_bytes=65536,
+                max_stderr_bytes=16384,
+            )
         )
-    )
+    elif verifier_backend == "trusted-https" and args is not None:
+        try:
+            verifier, worker_host_id, verifier_host_id, trust_digests = (
+                load_pinned_signed_verifier_client(
+                    args,
+                    expected_endpoint_url=PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+                )
+            )
+            trust_evidence = {
+                "endpoint_url": PINNED_SIGNED_VERIFIER_ENDPOINT_URL,
+                "verifier_profile_digest": BRAINBOOSTER_VERIFIER_PROFILE.profile_digest,
+                "worker_host_id": worker_host_id,
+                "verifier_host_id": verifier_host_id,
+                "digests": trust_digests,
+                "host_trust_basis": "caller-pinned-signed-claim",
+            }
+        except Exception:
+            raise ReplayError("replay: verifier trust material unavailable") from None
+    else:
+        raise ReplayError("replay: verifier backend configuration is invalid")
     return (
         GitHubAnonymousSnapshotTransport(timeout_seconds=15),
         DockerSandboxBackend(TARGET_RUNTIME_IMAGE_ID),
         verifier,
         GitHubRawCommitObjectSource("/usr/bin/git", timeout_seconds=15),
+        trust_evidence,
     )
+
+
+def _valid_verifier_trust_evidence(value: object) -> bool:
+    if type(value) is not dict or set(value) != {
+        "endpoint_url",
+        "verifier_profile_digest",
+        "worker_host_id",
+        "verifier_host_id",
+        "digests",
+        "host_trust_basis",
+    }:
+        return False
+    digests = value.get("digests")
+    worker_host_id = value.get("worker_host_id")
+    verifier_host_id = value.get("verifier_host_id")
+    return (
+        value.get("endpoint_url") == PINNED_SIGNED_VERIFIER_ENDPOINT_URL
+        and value.get("verifier_profile_digest")
+        == BRAINBOOSTER_VERIFIER_PROFILE.profile_digest
+        and type(worker_host_id) is str
+        and 1 <= len(worker_host_id) <= 128
+        and type(verifier_host_id) is str
+        and 1 <= len(verifier_host_id) <= 128
+        and worker_host_id != verifier_host_id
+        and value.get("host_trust_basis") == "caller-pinned-signed-claim"
+        and type(digests) is dict
+        and set(digests)
+        == {
+            "authority_key_set_sha256",
+            "enrollment_sha256",
+            "host_decision_sha256",
+            "ca_bundle_sha256",
+        }
+        and all(
+            type(digest) is str and _DIGEST_PATTERN.fullmatch(digest) is not None
+            for digest in digests.values()
+        )
+    )
+
+
+def _validate_verifier_backend_args(args: argparse.Namespace) -> None:
+    backend = getattr(args, "verifier_backend", None)
+    trust_values = tuple(
+        getattr(args, name, None) for name in VERIFIER_TRUST_ARTIFACT_ARGUMENTS
+    )
+    connect_address = getattr(args, "verifier_connect_address", None)
+    connect_port = getattr(args, "verifier_connect_port", None)
+    if backend == "pinned-docker":
+        if any(value is not None for value in trust_values) or any(
+            value is not None for value in (connect_address, connect_port)
+        ):
+            raise ReplayError("replay: verifier backend configuration is invalid")
+        return
+    if backend != "trusted-https":
+        raise ReplayError("replay: verifier backend configuration is invalid")
+    if any(value is None for value in trust_values):
+        raise ReplayError("replay: verifier trust material unavailable")
+    if (connect_address is None) != (connect_port is None):
+        raise ReplayError("replay: verifier backend configuration is invalid")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -544,7 +708,37 @@ def main(argv: list[str] | None = None) -> int:
         "--observer-database",
         help="optional new SQLite database for a partial replay observation run",
     )
+    parser.add_argument(
+        "--verifier-backend",
+        choices=("pinned-docker", "trusted-https"),
+        default="pinned-docker",
+        help="use the local pinned Docker verifier or caller-pinned HTTPS verifier",
+    )
+    parser.add_argument("--verifier-authority-key-set")
+    parser.add_argument("--verifier-authority-key-set-sha256")
+    parser.add_argument("--verifier-enrollment")
+    parser.add_argument("--verifier-enrollment-sha256")
+    parser.add_argument("--verifier-host-decision")
+    parser.add_argument("--verifier-host-decision-sha256")
+    parser.add_argument("--verifier-ca-bundle")
+    parser.add_argument("--verifier-ca-bundle-sha256")
+    parser.add_argument("--expected-worker-host-id")
+    parser.add_argument("--expected-verifier-host-id")
+    parser.add_argument(
+        "--verifier-connect-address",
+        help="optional IP-literal forward destination; TLS identity remains testdev.local",
+    )
+    parser.add_argument(
+        "--verifier-connect-port",
+        type=int,
+        help="optional forwarded TCP port; requires --verifier-connect-address",
+    )
     args = parser.parse_args(argv)
+    try:
+        _validate_verifier_backend_args(args)
+    except ReplayError as exc:
+        print(_safe_failure_marker(exc), file=sys.stderr)
+        return 2
     if os.environ.get("RUN_DOCKER_SANDBOX_TESTS") != "1":
         print("replay: explicit Docker opt-in is required", file=sys.stderr)
         return 2
@@ -563,7 +757,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise ReplayError("replay: observer and stage databases must differ")
         if _paths_alias(source_path, output_path):
             raise ReplayError("replay: source and output databases must differ")
-        transport, sandbox, verifier, commit_object_source = _production_runtime()
+        transport, sandbox, verifier, commit_object_source, trust_evidence = (
+            _production_runtime(args)
+        )
         if observer_path is None:
             evidence = replay_staged_candidate(
                 args.source_database,
@@ -573,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
                 sandbox_backend=sandbox,
                 verifier=verifier,
                 commit_object_source=commit_object_source,
+                verifier_trust_evidence=trust_evidence,
             )
         else:
             with SQLiteObservationStore(observer_path) as observation_store:
@@ -585,6 +782,7 @@ def main(argv: list[str] | None = None) -> int:
                     verifier=verifier,
                     commit_object_source=commit_object_source,
                     observation_store=observation_store,
+                    verifier_trust_evidence=trust_evidence,
                 )
     except (ReplayError, DurableStageStoreError, GitHubHTTPTransportError, GitHubSnapshotError) as exc:
         print(_safe_failure_marker(exc), file=sys.stderr)

@@ -1470,6 +1470,9 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                         profile,
                         execution_worker=worker,
                     )
+                worker.finish_agent_invocation(
+                    status="ok" if evidence.get("status") == "verified" else "failed"
+                )
 
         events = observer_store.events()
         run_ids = {event["run_id"] for event in events}
@@ -1773,12 +1776,13 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                     approval_database.read_bytes(), stage_before_publication
                 )
 
-                JournaledProposalWorker.resume_existing(
+                resume_check = JournaledProposalWorker.resume_existing(
                     FixedWorker(),
                     observer_store,
                     process_id=process_id,
                     run_id=run_id,
                 )
+                resume_check.finish_agent_invocation(status="ok")
                 observer_store.close()
                 observer_bytes_before_rejected_run = observer_database.read_bytes()
                 rejected_stdout, rejected_stderr = io.StringIO(), io.StringIO()
@@ -2464,7 +2468,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
 
         def fake_docker_run(command, **_kwargs):
             docker_commands.append(tuple(command))
-            stdout = "synthetic-container-id\n" if command[1:2] == ["run"] else ""
+            stdout = "synthetic-container-id\n" if command[2:3] == ["run"] else ""
             return subprocess.CompletedProcess(command, 0, stdout, "")
 
         python = sys.executable
@@ -2496,7 +2500,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
         self.assertEqual(len(backend.sessions), 2)
         self.assertEqual(backend.initial_workspace_digests, [claim_digest, claim_digest])
         self.assertEqual(
-            len([command for command in docker_commands if len(command) > 1 and command[1] == "run"]),
+            len([command for command in docker_commands if len(command) > 2 and command[2] == "run"]),
             2,
         )
         for index, session in enumerate(backend.sessions):
@@ -2760,7 +2764,7 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 lines[0][len(_OBSERVER_COPY_EVIDENCE_PREFIX) :]
             )
             self.assertEqual(evidence["schema"], "snapshot-retained-observer/v1")
-            self.assertEqual(evidence["event_count"], 59)
+            self.assertEqual(evidence["event_count"], 63)
             self.assertFalse(evidence["overwrite"])
             with SQLiteObservationStore(destination) as retained:
                 events = retained.events()
@@ -3756,20 +3760,25 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
                 ]
                 if not use_docker:
                     pinned_argv.extend(("--worker-backend", "host-process"))
-                pinned_code = pinned_worker_cli.main(
-                    pinned_argv,
-                    input_fn=lambda _prompt: pinned_worker_cli.CONFIRMATION_PHRASE,
-                    stdout=pinned_stdout,
-                    stderr=pinned_stderr,
-                    readiness_transport_factory=lambda: readiness_transport,
-                    runtime_runner=safe_fake_runtime,
-                    docker_which=lambda _name: (
-                        os.environ["AGENT00X_DOCKER_EXECUTABLE"]
-                        if use_docker
-                        else "/synthetic/docker"
-                    ),
-                    docker_inspect=lambda _path: None,
-                )
+                with patch.object(
+                    pinned_worker_cli.sys,
+                    "stdin",
+                    new=SimpleNamespace(isatty=lambda: True),
+                ):
+                    pinned_code = pinned_worker_cli.main(
+                        pinned_argv,
+                        input_fn=lambda _prompt: pinned_worker_cli.CONFIRMATION_PHRASE,
+                        stdout=pinned_stdout,
+                        stderr=pinned_stderr,
+                        readiness_transport_factory=lambda: readiness_transport,
+                        runtime_runner=safe_fake_runtime,
+                        docker_which=lambda _name: (
+                            os.environ["AGENT00X_DOCKER_EXECUTABLE"]
+                            if use_docker
+                            else "/synthetic/docker"
+                        ),
+                        docker_inspect=lambda _path: None,
+                    )
             self.assertEqual(
                 pinned_code,
                 0,
@@ -4139,9 +4148,13 @@ class RemoteSnapshotPipelineTests(unittest.TestCase):
             with SQLiteObservationStore(observer_database) as reopened_observer:
                 events_after_publication = reopened_observer.events()
             facts = list(events_after_publication)
-            self.assertEqual(report["snapshot"]["event_count"], len(initial_events) + 14)
+            self.assertEqual(report["snapshot"]["event_count"], len(initial_events) + 17)
             self.assertEqual([event["sequence"] for event in facts], list(range(len(facts))))
             self.assertEqual({event["run_id"] for event in facts}, {run_id})
+            self.assertEqual(facts[-2]["event_type"], "agent_finished")
+            self.assertEqual(facts[-2]["status"], "ok")
+            self.assertEqual(facts[-1]["event_type"], "run_finished")
+            self.assertEqual(facts[-1]["status"], "ok")
             self.assertEqual(
                 [
                     event.get("decision_or_tool")

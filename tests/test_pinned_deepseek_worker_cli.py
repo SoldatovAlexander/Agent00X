@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import redirect_stderr
 import getpass
 import hashlib
 import io
@@ -30,6 +31,7 @@ from app_contracts.credential_source import (
 from app_contracts.deepseek_http_channel import DeepSeekHTTPChannel
 from app_contracts.deepseek_worker import DeepSeekProposalWorker
 from app_contracts.local_ollama_channel import LocalOllamaChatCompletionsChannel
+from app_contracts.r5_local_model_preflight import EXPECTED_OLLAMA_VERSION
 from app_contracts.github_http_transport import GitHubRateLimitEvidence
 from app_contracts.digests import sha256_bytes
 from app_contracts.observer_report import report_from_sqlite
@@ -81,6 +83,77 @@ def fresh_readiness():
 
 
 class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
+    def setUp(self):
+        self._stdin_patch = patch.object(
+            cli.sys, "stdin", new=SimpleNamespace(isatty=lambda: True)
+        )
+        self._stdin_patch.start()
+        self.addCleanup(self._stdin_patch.stop)
+        # CLI composition tests use a synthetic successful model preflight by
+        # default; dedicated tests below assert its order and failure behavior.
+        self._model_preflight_patch = patch.object(
+            cli,
+            "R5LocalOllamaMetadataPreflight",
+            return_value=SimpleNamespace(
+                inspect=lambda **_kwargs: SimpleNamespace(
+                    version=EXPECTED_OLLAMA_VERSION,
+                    model=cli.LOCAL_OLLAMA_MODEL,
+                    model_digest=cli.LOCAL_OLLAMA_MODEL_DIGEST,
+                )
+            ),
+        )
+        self._model_preflight_patch.start()
+        self.addCleanup(self._model_preflight_patch.stop)
+
+    def test_non_tty_exact_gate_refuses_before_preflight_or_callbacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory) / "stage.sqlite3"
+            observer = Path(directory) / "observer.sqlite3"
+            events = []
+
+            class TrackingEnvironment(dict):
+                reads = []
+
+                def __contains__(self, key):
+                    self.reads.append(key)
+                    return super().__contains__(key)
+
+            environment = TrackingEnvironment({"AI_PROCESS_API": SECRET})
+            output, errors = io.StringIO(), io.StringIO()
+            with patch.object(
+                cli.sys, "stdin", new=SimpleNamespace(isatty=lambda: False)
+            ):
+                code = cli.main(
+                    [
+                        str(stage),
+                        "--credential-source", "process-environment",
+                        "--observation-database", str(observer),
+                    ],
+                    environ=environment,
+                    input_fn=lambda _prompt: events.append("input") or cli.CONFIRMATION_PHRASE,
+                    stdout=output,
+                    stderr=errors,
+                    docker_which=lambda _name: events.append("docker-which") or self.fail(
+                        "Docker discovery must not run"
+                    ),
+                    docker_inspect=lambda *_args, **_kwargs: events.append("docker-inspect"),
+                    readiness_transport_factory=lambda: events.append("readiness"),
+                    runtime_runner=lambda **_kwargs: events.append("runtime"),
+                    local_model_preflight_factory=lambda: events.append("model-preflight"),
+                )
+
+            self.assertEqual(code, 3)
+            self.assertEqual(
+                output.getvalue(),
+                '{"status":"cancelled","reason":"interactive-terminal-required",'
+                '"provider_attempts":0}\n',
+            )
+            self.assertEqual(errors.getvalue(), "")
+            self.assertEqual(events, [])
+            self.assertEqual(environment.reads, [])
+            self.assertFalse(stage.exists())
+            self.assertFalse(observer.exists())
+
     @staticmethod
     def _write_signed_verifier_material(root: Path):
         authority_id = "synthetic-cli-authority-exp798"
@@ -427,11 +500,11 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
                 captured["observation_store"].events()
             self.assertTrue(observer.is_file())
             report = report_from_sqlite(observer)
-            self.assertEqual(report["snapshot"]["event_count"], 9)
-            self.assertEqual(report["snapshot"]["checkpoint_count"], 4)
+            self.assertEqual(report["snapshot"]["event_count"], 11)
+            self.assertEqual(report["snapshot"]["checkpoint_count"], 5)
             with SQLiteObservationStore(observer) as reopened:
                 events = reopened.events()
-            self.assertEqual([event["sequence"] for event in events], list(range(9)))
+            self.assertEqual([event["sequence"] for event in events], list(range(11)))
             self.assertEqual(
                 [
                     event.get("decision_or_tool")
@@ -442,6 +515,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
                 [
                     "GitHubReadiness.fetch",
                     "RemoteExecutionPermit.issue",
+                    "LocalOllamaMetadataPreflight.inspect",
                     "RemoteExecutionPermit.consume",
                     "PinnedSnapshot.validate-fixed-pin",
                 ],
@@ -506,17 +580,20 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             self.assertNotIn("synthetic readiness transport detail", output.getvalue() + errors.getvalue())
             with SQLiteObservationStore(observer) as reopened:
                 events = reopened.events()
-            self.assertEqual([event["sequence"] for event in events], [0, 1, 2])
+            self.assertEqual([event["sequence"] for event in events], [0, 1, 2, 3])
             self.assertEqual(events[0]["event_type"], "agent_started")
             self.assertEqual(events[1]["decision_or_tool"], "GitHubReadiness.fetch")
             self.assertEqual(events[1]["event_type"], "tool_requested")
             self.assertEqual(events[2]["event_type"], "tool_failed")
             self.assertEqual(events[2]["status"], "failed")
             self.assertEqual(events[2]["error_code"], "readiness-fetch-failed")
+            self.assertEqual(events[3]["event_type"], "agent_finished")
+            self.assertEqual(events[3]["status"], "failed")
+            self.assertEqual(events[3]["invocation_id"], events[0]["invocation_id"])
             self.assertEqual(len({event["run_id"] for event in events}), 1)
             failure = json.loads(errors.getvalue())
             self.assertEqual(failure["observer"]["run_id"], events[-1]["run_id"])
-            self.assertEqual(failure["observer"]["as_of_cursor"], 2)
+            self.assertEqual(failure["observer"]["as_of_cursor"], 3)
             self.assertNotIn(SECRET, output.getvalue() + errors.getvalue())
 
     def test_readiness_transport_construction_failure_has_fixed_marker(self):
@@ -741,6 +818,9 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
                 docker_which=lambda _name: "/usr/bin/docker",
                 docker_inspect=lambda _path: events.append("images"),
                 native_keyring_source_factory=FakeKeyringSource,
+                local_model_preflight_factory=lambda: self.fail(
+                    "DeepSeek path must not preflight local Ollama"
+                ),
             )
         self.assertEqual(code, 0, errors.getvalue())
         self.assertEqual(events, ["images", "manager", "readiness", "runtime"])
@@ -924,9 +1004,14 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(
             [call[-1] for call in calls],
-            [cli.TARGET_RUNTIME_IMAGE_ID, cli.VERIFIER_RUNTIME_IMAGE_ID],
+            [cli.TARGET_RUNTIME_IMAGE_ID, cli.VERIFIER_RUNTIME_CONFIG_IMAGE_ID],
         )
-        self.assertTrue(all(call[1:3] == ["image", "inspect"] for call in calls))
+        self.assertTrue(
+            all(
+                call[1:4] == [cli.LOCAL_DOCKER_HOST_ARGUMENT, "image", "inspect"]
+                for call in calls
+            )
+        )
 
     def test_invalid_stage_path_stops_before_prompt_readiness_and_runtime(self):
         env = RecordingEnvironment({"AI_PROCESS_API": SECRET})
@@ -1043,14 +1128,30 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             self.assertIn(field, instruction)
         self.assertIn("change only /save-session", instruction)
         self.assertIn("Preserve its existing defaults", instruction)
+        self.assertIn("delete those five coercions", instruction)
+        self.assertIn("raw_level = data.get('level', 1)", instruction)
+        self.assertIn("raw_correct = data.get('correct', 0)", instruction)
+        self.assertIn("raw_wrong = data.get('wrong', 0)", instruction)
+        self.assertIn("raw_total = data.get('total', 10)", instruction)
+        self.assertIn("raw_time_ms = data.get('time_ms', 0)", instruction)
+        self.assertIn("Add/import HTTPException alongside APIRouter", instruction)
         self.assertIn("Before any database/cursor access", instruction)
         self.assertIn("type(value) is not int", instruction)
         self.assertIn("value < -(2**63) or value > 2**63 - 1", instruction)
+        self.assertIn("def strict_sqlite_integer(value):\n", instruction)
+        self.assertIn("if type(value) is not int:\n", instruction)
+        self.assertIn(
+            'raise HTTPException(status_code=422, detail="invalid integer")',
+            instruction,
+        )
+        self.assertIn("return value. Call it separately", instruction)
         self.assertIn("Collect all five validated values before the first database call", instruction)
         self.assertIn("Never coerce with int()", instruction)
         self.assertIn("Use FastAPI HTTPException", instruction)
         self.assertIn("target-test-malformed-status-level-bool", instruction)
         self.assertIn("JSON true for level must return HTTP 422", instruction)
+        self.assertIn("Python bool is a subclass of int", instruction)
+        self.assertIn("isinstance(value, int) incorrectly accepts booleans", instruction)
         self.assertIn("every boolean, float (including non-finite), string", instruction)
         self.assertIn("returns HTTP 422 and writes zero rows", instruction)
         self.assertIn("valid fixture returns HTTP 200 and exactly one expected row", instruction)
@@ -1206,11 +1307,20 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         instruction = captured["task_instruction"]
         for required_clause in (
             "change only /save-session",
+            "delete those five coercions",
+            "raw_level = data.get('level', 1)",
+            "raw_correct = data.get('correct', 0)",
+            "raw_wrong = data.get('wrong', 0)",
+            "raw_total = data.get('total', 10)",
+            "raw_time_ms = data.get('time_ms', 0)",
+            "Add/import HTTPException alongside APIRouter",
             "type(value) is not int",
             "value < -(2**63) or value > 2**63 - 1",
             "Collect all five validated values before the first database call",
             "target-test-malformed-status-level-bool",
             "JSON true for level must return HTTP 422",
+            "Python bool is a subclass of int",
+            "isinstance(value, int) incorrectly accepts booleans",
             "every boolean, float (including non-finite), string",
             "returns HTTP 422 and writes zero rows",
             "valid fixture returns HTTP 200 and exactly one expected row",
@@ -1227,6 +1337,96 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertEqual(payload["external_model_attempts"], 0)
         self.assertEqual(payload["max_provider_attempts"], 0)
         self.assertNotIn(SECRET, output.getvalue() + errors.getvalue())
+
+    def test_local_model_preflight_runs_after_readiness_and_before_runtime(self):
+        events = []
+        profile = cli.AUTHORIZATION_PROFILES["EXP-851"]
+        transport = ValidReadinessTransport(fresh_readiness())
+
+        class SyntheticPreflight:
+            def inspect(_self, *, expected_model_digest):
+                events.append("model-preflight")
+                self.assertEqual(
+                    expected_model_digest,
+                    cli.LOCAL_OLLAMA_MODEL_DIGEST,
+                )
+                return SimpleNamespace(
+                    version=EXPECTED_OLLAMA_VERSION,
+                    model=cli.LOCAL_OLLAMA_MODEL,
+                    model_digest=cli.LOCAL_OLLAMA_MODEL_DIGEST,
+                )
+
+        output, errors = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="local-model-preflight-success-") as root:
+            stage = Path(root) / "stage.sqlite3"
+            code = cli.main(
+                [
+                    "--authorization-card-id", "EXP-851",
+                    "--model-backend", "local-ollama",
+                    "--credential-source", "not-applicable",
+                    str(stage),
+                ],
+                input_fn=lambda _prompt: profile[0],
+                stdout=output,
+                stderr=errors,
+                readiness_transport_factory=lambda: events.append("readiness") or transport,
+                runtime_runner=lambda **_kwargs: events.append("runtime") or 0,
+                docker_which=lambda _name: "/usr/bin/docker",
+                docker_inspect=lambda _path: events.append("docker-inspect"),
+                local_model_preflight_factory=lambda: SyntheticPreflight(),
+            )
+        self.assertEqual(code, 0, errors.getvalue())
+        self.assertEqual(
+            events,
+            ["docker-inspect", "readiness", "model-preflight", "runtime"],
+        )
+        self.assertEqual(transport.calls, 1)
+        preflight_payload = json.loads(output.getvalue().splitlines()[1])
+        self.assertEqual(preflight_payload["local_model_preflight"], "passed")
+        self.assertEqual(preflight_payload["model_digest"], cli.LOCAL_OLLAMA_MODEL_DIGEST)
+        self.assertEqual(preflight_payload["ollama_version"], EXPECTED_OLLAMA_VERSION)
+
+    def test_local_model_preflight_mismatch_stops_before_snapshot_runtime(self):
+        events = []
+        profile = cli.AUTHORIZATION_PROFILES["EXP-851"]
+        transport = ValidReadinessTransport(fresh_readiness())
+
+        class MismatchingPreflight:
+            def inspect(_self, *, expected_model_digest):
+                events.append("model-preflight")
+                self.assertEqual(expected_model_digest, cli.LOCAL_OLLAMA_MODEL_DIGEST)
+                raise cli.R5LocalModelPreflightError("model_digest_mismatch")
+
+        output, errors = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory(prefix="local-model-preflight-mismatch-") as root:
+            stage = Path(root) / "stage.sqlite3"
+            code = cli.main(
+                [
+                    "--authorization-card-id", "EXP-851",
+                    "--model-backend", "local-ollama",
+                    "--credential-source", "not-applicable",
+                    str(stage),
+                ],
+                input_fn=lambda _prompt: profile[0],
+                stdout=output,
+                stderr=errors,
+                readiness_transport_factory=lambda: events.append("readiness") or transport,
+                runtime_runner=lambda **_kwargs: events.append("runtime") or 0,
+                docker_which=lambda _name: "/usr/bin/docker",
+                docker_inspect=lambda _path: events.append("docker-inspect"),
+                local_model_preflight_factory=lambda: MismatchingPreflight(),
+            )
+            self.assertFalse(stage.exists())
+        self.assertEqual(code, 2)
+        self.assertEqual(
+            events,
+            ["docker-inspect", "readiness", "model-preflight"],
+        )
+        self.assertIn('"reason":"local-model-preflight-failed"', errors.getvalue())
+        self.assertIn('"snapshot_attempts":0', errors.getvalue())
+        self.assertIn('"external_model_attempts":0', errors.getvalue())
+        self.assertNotIn("model_digest_mismatch", errors.getvalue())
+        self.assertNotIn("dae161e", output.getvalue() + errors.getvalue())
 
     def test_exp843_local_profile_uses_container_without_constructing_credentials(self):
         self._assert_local_profile_uses_container_without_constructing_credentials(
@@ -1644,6 +1844,21 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             "github_rest_api_claim",
         )
         self.assertEqual(cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1312"], "local-ollama")
+        self.assertNotIn("EXP-1354", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1354", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1354", cli.AUTHORIZATION_MODEL_BACKENDS)
+        self.assertNotIn("EXP-1425", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1425", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1425", cli.AUTHORIZATION_MODEL_BACKENDS)
+        self.assertNotIn("EXP-1438", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1438", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1438", cli.AUTHORIZATION_MODEL_BACKENDS)
+        self.assertNotIn("EXP-1434", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1434", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1434", cli.AUTHORIZATION_MODEL_BACKENDS)
+        self.assertNotIn("EXP-1428", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1428", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1428", cli.AUTHORIZATION_MODEL_BACKENDS)
         self.assertNotIn("EXP-990", cli.AUTHORIZATION_PROFILES)
         self.assertNotIn("EXP-990", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
         self.assertNotIn("EXP-990", cli.AUTHORIZATION_MODEL_BACKENDS)
@@ -1662,6 +1877,37 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertNotIn("EXP-960", cli.AUTHORIZATION_PROFILES)
         self.assertNotIn("EXP-960", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
         self.assertNotIn("EXP-960", cli.AUTHORIZATION_MODEL_BACKENDS)
+
+    def test_exp1585_profile_is_exact_local_ollama_one_shot(self):
+        self.assertEqual(
+            cli.AUTHORIZATION_PROFILES["EXP-1585"],
+            (
+                "RUN EXP-1585 ONCE",
+                "process-exp-1585-local-001",
+                "task-exp-1585-local-001",
+            ),
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_SNAPSHOT_ORIGINS["EXP-1585"],
+            "github_rest_api_claim",
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1585"], "local-ollama"
+        )
+        self.assertNotIn("EXP-1601", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1601", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1601", cli.AUTHORIZATION_MODEL_BACKENDS)
+        self.assertNotIn("EXP-1448", cli.AUTHORIZATION_PROFILES)
+        self.assertNotIn("EXP-1448", cli.AUTHORIZATION_SNAPSHOT_ORIGINS)
+        self.assertNotIn("EXP-1448", cli.AUTHORIZATION_MODEL_BACKENDS)
+        self.assertEqual(
+            set(cli.AUTHORIZATION_PROFILES),
+            set(cli.AUTHORIZATION_SNAPSHOT_ORIGINS),
+        )
+        self.assertEqual(
+            set(cli.AUTHORIZATION_PROFILES),
+            set(cli.AUTHORIZATION_MODEL_BACKENDS),
+        )
 
     def test_model_backend_card_mismatches_stop_before_all_side_effects(self):
         cases = (
@@ -1734,6 +1980,12 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
                 self.assertEqual(env.lookups, [])
                 self.assertFalse(stage_path.exists())
                 self.assertIn('"external_model_attempts":0', output.getvalue())
+
+    def test_spent_exp1354_profile_is_rejected_during_argument_parsing(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                cli.main(["--authorization-card-id", "EXP-1354"])
+        self.assertEqual(raised.exception.code, 2)
 
     def test_local_credential_status_check_is_not_applicable_without_lookup(self):
         env = RecordingEnvironment({"AI_PROCESS_API": SECRET})
@@ -1881,10 +2133,13 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             self.assertNotIn(SECRET, output.getvalue() + errors.getvalue())
             with SQLiteObservationStore(observer_path) as reopened:
                 events = reopened.events()
-        self.assertEqual([event["sequence"] for event in events], list(range(5)))
-        self.assertEqual(events[-1]["decision_or_tool"], "RemoteExecutionPermit.issue")
-        self.assertEqual(events[-1]["status"], "denied")
-        self.assertEqual(events[-1]["error_code"], "readiness-ineligible")
+        self.assertEqual([event["sequence"] for event in events], list(range(6)))
+        self.assertEqual(events[-2]["decision_or_tool"], "RemoteExecutionPermit.issue")
+        self.assertEqual(events[-2]["status"], "denied")
+        self.assertEqual(events[-2]["error_code"], "readiness-ineligible")
+        self.assertEqual(events[-1]["event_type"], "agent_finished")
+        self.assertEqual(events[-1]["status"], "failed")
+        self.assertEqual(events[-1]["invocation_id"], events[0]["invocation_id"])
 
     def test_observer_enabled_local_worker_binds_model_channel_to_same_run(self):
         transport = ValidReadinessTransport(fresh_readiness())
@@ -1935,6 +2190,24 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             self.assertEqual(
                 [event["sequence"] for event in events], list(range(len(events)))
             )
+            preflight_events = [
+                event
+                for event in events
+                if event.get("decision_or_tool")
+                == "LocalOllamaMetadataPreflight.inspect"
+            ]
+            self.assertEqual(
+                [event["event_type"] for event in preflight_events],
+                ["tool_requested", "tool_completed"],
+            )
+            self.assertEqual(
+                [event["status"] for event in preflight_events], ["pending", "ok"]
+            )
+            self.assertEqual(
+                preflight_events[1]["causal_event_ids"],
+                [preflight_events[0]["event_id"]],
+            )
+            self.assertNotIn(cli.LOCAL_OLLAMA_MODEL_DIGEST, repr(events))
 
     def test_unready_public_api_stops_before_hidden_terminal_credential_prompt(self):
         transport = ValidReadinessTransport(

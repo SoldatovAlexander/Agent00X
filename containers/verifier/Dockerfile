@@ -9,6 +9,7 @@ COPY requirements.lock /opt/agent00x/target-runtime-requirements.lock
 COPY target-python/ /usr/local/lib/python3.11/site-packages/
 COPY src/app_contracts/__init__.py \
      src/app_contracts/brainbooster_target_profile.py \
+     src/app_contracts/docker_endpoint.py \
      src/app_contracts/digests.py \
      src/app_contracts/executor.py \
      src/app_contracts/observer_runtime.py \

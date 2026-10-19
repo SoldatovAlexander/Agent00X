@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -34,6 +35,14 @@ METADATA = {
     "AGENT_GITHUB_INSTALLATION_ID": "456",
     "AGENT_GITHUB_REPOSITORY_ID": "1001",
 }
+
+
+class FakeStdin:
+    def __init__(self, interactive):
+        self.interactive = interactive
+
+    def isatty(self):
+        return self.interactive
 
 
 class ApprovalSignerTests(unittest.TestCase):
@@ -218,18 +227,19 @@ class ApprovalSignerTests(unittest.TestCase):
             + self.artifact.staged_change_digest
         )
         output, errors = io.StringIO(), io.StringIO()
-        code = main(
-            [
-                str(self.database),
-                self.artifact.staged_change_digest,
-                str(self.request_path),
-            ],
-            environ=metadata,
-            input_fn=lambda: phrase,
-            stdout=output,
-            stderr=errors,
-            now=NOW,
-        )
+        with patch("scripts.sign_approval_request.sys.stdin", new=FakeStdin(True)):
+            code = main(
+                [
+                    str(self.database),
+                    self.artifact.staged_change_digest,
+                    str(self.request_path),
+                ],
+                environ=metadata,
+                input_fn=lambda: phrase,
+                stdout=output,
+                stderr=errors,
+                now=NOW,
+            )
         envelope = json.loads(output.getvalue())
         self.assertEqual(code, 0)
         self.assertIn("requested_action", errors.getvalue())
@@ -255,22 +265,62 @@ class ApprovalSignerTests(unittest.TestCase):
             dict(METADATA, AGENT_APPROVER_SIGNING_SEED=self.seed)
         )
         output, errors = io.StringIO(), io.StringIO()
-        code = main(
-            [
-                str(self.database),
-                self.artifact.staged_change_digest,
-                str(self.request_path),
-            ],
-            environ=metadata,
-            input_fn=lambda: "wrong phrase",
-            stdout=output,
-            stderr=errors,
-            now=NOW,
-        )
+        with patch("scripts.sign_approval_request.sys.stdin", new=FakeStdin(True)):
+            code = main(
+                [
+                    str(self.database),
+                    self.artifact.staged_change_digest,
+                    str(self.request_path),
+                ],
+                environ=metadata,
+                input_fn=lambda: "wrong phrase",
+                stdout=output,
+                stderr=errors,
+                now=NOW,
+            )
         self.assertEqual(code, 2)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(metadata.secret_reads, 0)
         self.assertNotIn(self.seed, errors.getvalue())
+
+    def test_cli_non_tty_refuses_exact_phrase_before_prompt_or_seed_read(self):
+        class TrackingEnvironment(dict):
+            secret_reads = 0
+
+            def __getitem__(self, key):
+                if key == "AGENT_APPROVER_SIGNING_SEED":
+                    self.secret_reads += 1
+                return super().__getitem__(key)
+
+        metadata = TrackingEnvironment(
+            dict(METADATA, AGENT_APPROVER_SIGNING_SEED=self.seed)
+        )
+        phrase = (
+            "SIGN APPROVAL approval-signer-test-001 "
+            + self.artifact.staged_change_digest
+        )
+        prompts = []
+        output, errors = io.StringIO(), io.StringIO()
+        with patch("scripts.sign_approval_request.sys.stdin", new=FakeStdin(False)):
+            code = main(
+                [
+                    str(self.database),
+                    self.artifact.staged_change_digest,
+                    str(self.request_path),
+                ],
+                environ=metadata,
+                input_fn=lambda: prompts.append(phrase) or phrase,
+                stdout=output,
+                stderr=errors,
+                now=NOW,
+            )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "approval signer: interactive terminal required\n")
+        self.assertEqual(prompts, [])
+        self.assertEqual(metadata.secret_reads, 0)
+        self.assertEqual(self.database.read_bytes(), self.database_before)
 
 
 if __name__ == "__main__":

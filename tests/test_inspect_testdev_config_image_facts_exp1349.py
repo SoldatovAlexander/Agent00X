@@ -37,7 +37,8 @@ class TestdevConfigImageFactsTests(unittest.TestCase):
         runner.assert_called_once()
 
     def test_mismatch_and_failures_are_redacted(self):
-        mismatch = self.tuple_line.replace(b"|48854834|", b"|0|")
+        pinned_size = f"|{inspect.source_pin.IMAGE_SIZE}|".encode("ascii")
+        mismatch = self.tuple_line.replace(pinned_size, b"|0|")
         cases = (
             (subprocess.CompletedProcess((), 0, mismatch, b"secret"),
              "REMOTE_CONFIG_IMAGE_FACTS|id=match|platform=match|size=mismatch|layers=match\n", 11),

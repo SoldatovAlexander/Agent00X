@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -41,6 +43,7 @@ from app_contracts.repository_binding import RepositoryTargetBinding
 from app_contracts.validator import ContractValidationError
 from app_contracts.signed_github_reconciliation import (
     SignedGitHubReconciliationError,
+    main as reconciliation_main,
     reconcile_signed_stage_github,
 )
 from test_durable_stage import get_verified_artifact
@@ -58,6 +61,11 @@ class FakeMinter:
     def mint(self, grant):
         self.grants.append(dict(grant))
         return _InstallationToken("synthetic-token-never-used", "2026-10-08T13:00:00Z")
+
+
+class FakeStdin:
+    def isatty(self):
+        return False
 
 
 class SignedGitHubReconciliationTests(unittest.TestCase):
@@ -261,6 +269,39 @@ class SignedGitHubReconciliationTests(unittest.TestCase):
                 )
         config.assert_not_called()
         self.assertEqual(minter.grants, [])
+
+    def test_cli_non_tty_refuses_before_provider_configuration_or_input(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with PublicationJournal(self.journal_path, create_if_missing=False) as journal:
+            before = journal.get(self.intent.process_id)
+
+        with (
+            patch.object(reconciler, "TARGET_REPOSITORY", self.source_repository),
+            patch("app_contracts.signed_github_reconciliation.sys.stdin", new=FakeStdin()),
+            patch("builtins.input", side_effect=AssertionError("input must not run")) as input_call,
+            patch.object(GitHubAppBrokerConfig, "from_environment") as config,
+            patch.object(reconciler, "GitHubAppInstallationTokenMinter") as minter,
+        ):
+            code = reconciliation_main(
+                [
+                    str(self.database),
+                    self.digest,
+                    str(self.journal_path),
+                ],
+                now=NOW,
+                stdout=output,
+                stderr=errors,
+            )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertEqual(json.loads(output.getvalue())["status"], "attempting")
+        self.assertIn("safely refused", errors.getvalue())
+        input_call.assert_not_called()
+        config.assert_not_called()
+        minter.assert_not_called()
+        with PublicationJournal(self.journal_path, create_if_missing=False) as journal:
+            self.assertEqual(journal.get(self.intent.process_id), before)
 
     def test_completed_record_returns_local_receipt_without_token(self):
         with PublicationJournal(self.journal_path) as journal:

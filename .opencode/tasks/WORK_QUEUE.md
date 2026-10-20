@@ -58910,3 +58910,72 @@ named evidence DBs. Focused tests passed (58); local metadata preflight matched
 the pinned Ollama version/model digest and both exact Docker image IDs/platforms.
 One full offline suite passed at batch end (count recorded in the implementation
 status) and `git diff --check` passed. R2/MVP remain OPEN.
+
+### Batch AKDH — recheck current-stage approval eligibility (1 local task)
+
+#### EXP-1663 — classify the current EXP-1662 stage's fail-closed approval gate
+Статус: ACCEPTED 2026-10-20. The one gated probe emitted
+`APPROVAL_REFUSED|reason=verifier-provenance-trust-unavailable` for the exact
+current stage digest. The stage remained quiescent; no request/output file,
+signature, approval, or provider effect was created. Five focused tests passed.
+This reconfirms that current-stage approval is blocked until trusted verifier
+provenance is supplied; it does not establish such trust. The complete offline
+suite passed (2,130 tests, 26 skipped); `git diff --check` passed. The result is
+recorded in `docs/27-implementation-status.md`.
+
+Add a fixed-output, exact-TTY-gated probe for the current stage
+`EXP-1662-stage.sqlite3` and staged digest
+`sha256:b0b71bdfe8eff7df1e721cceabcc86c4c4e4a833d859e70ab0499197184cc008`.
+The probe may call `scripts/create_approval_request.py` in-process exactly once
+with only synthetic repository/installation metadata and no supplied verifier
+authority keys. Expected result is fail-closed refusal for unavailable verified
+verifier provenance before any request or output file is created. Capture both
+CLI streams and emit only an allowlisted fixed marker; if an unsigned request
+is returned or an unclassified output occurs, stop and report the marker without
+printing captured content. Require the exact TTY phrase `RUN EXP-1663 ONCE`.
+
+Allowed paths: the new probe and its focused test, this queue, and
+`docs/27-implementation-status.md`. Read the existing stage database only; do
+not alter or copy it. No trust artifacts, signer, Keychain, credentials,
+network/GitHub, Docker, Worker/model, SSH/testdev, approval file, provider
+transport/write, branch/PR, push, deployment or cleanup. Checks: focused test,
+one exact gated probe, `git diff --check`, then one full offline suite at batch
+end. This checks only current-stage fail-closed behavior; it cannot establish
+independent verifier trust, human identity, or publication readiness. R2/MVP
+remain OPEN.
+
+### Batch AKDI — surface bounded observer gap evidence in the pinned CLI (1 local task)
+
+#### EXP-1664 — add a redacted Observer summary to remote execution evidence
+Статус: ACCEPTED 2026-10-20. `worker_cli.py` now emits the existing 3-key
+`observer` locator unchanged and a separate allowlisted `observer_report` with
+event/checkpoint counts, partial completeness and sorted unique gap codes.
+Report construction failure degrades to the fixed unavailable marker; neither
+the Observer runtime nor verifier package closure changed. Focused Worker CLI
+tests passed (67, 2 skipped); EXP-1663 gate tests passed (5). The full offline
+suite passed (2,132 tests, 26 skipped); `git diff --check` passed. The change
+does not establish complete collection or independent trust; R2/MVP remain
+OPEN. Results are recorded in `docs/27-implementation-status.md`.
+
+Preserve the existing `observer` locator contract. Add a separate
+`observer_report` summary to successful remote execution evidence when a
+`JournaledProposalWorker` is available. Build it in the CLI layer from the selected run's
+verified journal rows using the existing structural history report, then
+project only `event_count`, `checkpoint_count`, `completeness`, and sorted
+unique fixed `gap_codes`. Never embed event/checkpoint facts, IDs, artifact
+references, free text, or payloads. Keep `completeness=partial` and
+`collector_coverage_unverified`; this is a navigation/evidence improvement, not
+proof of full collection or trust. On summary construction failure emit only
+`observer_report: {"status":"unavailable"}` without changing the Worker,
+verifier, stage, approval, or publication result.
+
+Add focused tests proving the summary matches the existing report's counts and
+gap codes, preserves the three-key `observer` locator, excludes a synthetic
+secret/payload canary, and degrades to the fixed unavailable marker on report
+failure. Do not modify `observer_runtime.py` or its verifier-packaged import
+closure. Allowed paths: `src/app_contracts/worker_cli.py`,
+`tests/test_worker_cli.py`, this queue, and `docs/27-implementation-status.md`.
+No live Worker/model, GitHub/network, Docker, credentials, trust artifacts,
+approval, provider write, branch/PR, push, deployment, cleanup, or experiment
+rerun. Run focused tests, `git diff --check`, and one full offline suite at
+batch end. R2/MVP remain OPEN.

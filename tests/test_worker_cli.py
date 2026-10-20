@@ -1477,6 +1477,22 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         )
         self.assertEqual(report["snapshot"]["completeness"], "partial")
         self.assertEqual(
+            evidence["observer_report"],
+            {
+                "event_count": report["snapshot"]["event_count"],
+                "checkpoint_count": report["snapshot"]["checkpoint_count"],
+                "completeness": "partial",
+                "gap_codes": sorted({gap["code"] for gap in report["gaps"]}),
+            },
+        )
+        self.assertIn(
+            "collector_coverage_unverified",
+            evidence["observer_report"]["gap_codes"],
+        )
+        self.assertEqual(
+            set(evidence["observer"]), {"run_id", "as_of_cursor", "completeness"}
+        )
+        self.assertEqual(
             [event["decision_or_tool"] for event in events if event["event_type"] == "tool_requested"],
             [
                 "GitHubReadiness.fetch",
@@ -1547,6 +1563,16 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                     "run_id": observer_store.events()[0]["run_id"],
                     "as_of_cursor": len(observer_store.events()) - 1,
                     "completeness": "partial",
+                },
+                "observer_report": {
+                    "event_count": 4,
+                    "checkpoint_count": 1,
+                    "completeness": "partial",
+                    "gap_codes": [
+                        "artifact_content_unresolved",
+                        "checkpoint_partial",
+                        "collector_coverage_unverified",
+                    ],
                 },
             },
         )
@@ -2043,6 +2069,16 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
                     "as_of_cursor": len(observer_store.events()) - 1,
                     "completeness": "partial",
                 },
+                "observer_report": {
+                    "event_count": 6,
+                    "checkpoint_count": 2,
+                    "completeness": "partial",
+                    "gap_codes": [
+                        "artifact_content_unresolved",
+                        "checkpoint_partial",
+                        "collector_coverage_unverified",
+                    ],
+                },
             },
         )
         self.assertEqual(err.getvalue(), "")
@@ -2219,6 +2255,47 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
         self.assertNotIn("stage_database_path", payload)
         self.assertNotIn("verified_contents_digest", payload)
         self.assertNotIn("staged_change_digest", payload)
+
+    def test_observer_report_cli_projection_is_allowlisted_and_partial(self):
+        summary = {
+            "event_count": 12,
+            "checkpoint_count": 4,
+            "completeness": "partial",
+            "gap_codes": ["collector_coverage_unverified", "event_sequence_gap"],
+        }
+        payload = cli._remote_execution_evidence(
+            self.verified_result(), observer_report=summary
+        )
+        self.assertEqual(payload["observer_report"], summary)
+        self.assertNotIn("facts", payload["observer_report"])
+
+        unavailable = cli._remote_execution_evidence(
+            self.verified_result(), observer_report={"status": "unavailable"}
+        )
+        self.assertEqual(unavailable["observer_report"], {"status": "unavailable"})
+
+        with self.assertRaisesRegex(ValueError, "^remote CLI observer report is invalid$"):
+            cli._remote_execution_evidence(
+                self.verified_result(),
+                observer_report={**summary, "prompt": "SYNTHETIC-PRIVATE-CANARY"},
+            )
+
+    def test_observer_report_failure_degrades_to_fixed_unavailable_marker(self):
+        store = ObservationStore()
+        worker = JournaledProposalWorker(
+            SimpleNamespace(propose=lambda _request: None),
+            store,
+            process_id="process-observer-report-failure",
+            task_id="task-observer-report-failure",
+        )
+        store.events = lambda: (_ for _ in ()).throw(
+            RuntimeError("SYNTHETIC-PRIVATE-CANARY")
+        )
+
+        summary = cli._observer_report_for_cli(worker, store)
+
+        self.assertEqual(summary, {"status": "unavailable"})
+        self.assertNotIn("SYNTHETIC-PRIVATE-CANARY", json.dumps(summary))
 
     def test_caller_supplied_host_trust_boolean_cannot_be_projected_as_verified(self):
         result = replace(

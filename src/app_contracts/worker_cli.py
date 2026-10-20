@@ -63,6 +63,7 @@ from .github_http_transport import (
 )
 from .remote_snapshot_pipeline import run_remote_snapshot_execution
 from .observer_runtime import JournaledProposalWorker, WorkerJournalError
+from .observer_report import build_history_report
 from .digests import sha256_bytes, sha256_digest
 from .pinned_snapshot import SNAPSHOT_DIGEST_CANONICALIZATION
 from .publication_seed import build_publication_seed, derive_publication_intent
@@ -1069,6 +1070,7 @@ def _remote_execution_evidence(
     stage_database_path: Path | None = None,
     snapshot: GitHubSnapshotContents | None = None,
     observer_reference: object | None = None,
+    observer_report: object | None = None,
 ) -> dict:
     if type(result) is not ExecutionResult:
         raise ValueError("remote CLI execution result is invalid")
@@ -1121,6 +1123,37 @@ def _remote_execution_evidence(
         ):
             raise ValueError("remote CLI observer reference is invalid")
         base["observer"] = dict(observer_reference)
+    if observer_report is not None:
+        if type(observer_report) is not dict:
+            raise ValueError("remote CLI observer report is invalid")
+        if observer_report == {"status": "unavailable"}:
+            base["observer_report"] = {"status": "unavailable"}
+        else:
+            codes = observer_report.get("gap_codes")
+            if (
+                set(observer_report)
+                != {"event_count", "checkpoint_count", "completeness", "gap_codes"}
+                or type(observer_report.get("event_count")) is not int
+                or observer_report["event_count"] < 0
+                or type(observer_report.get("checkpoint_count")) is not int
+                or observer_report["checkpoint_count"] < 0
+                or observer_report.get("completeness") != "partial"
+                or type(codes) is not list
+                or any(
+                    type(code) is not str
+                    or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None
+                    for code in codes
+                )
+                or codes != sorted(set(codes))
+                or "collector_coverage_unverified" not in codes
+            ):
+                raise ValueError("remote CLI observer report is invalid")
+            base["observer_report"] = {
+                "event_count": observer_report["event_count"],
+                "checkpoint_count": observer_report["checkpoint_count"],
+                "completeness": "partial",
+                "gap_codes": codes,
+            }
     terminal_result = _worker_terminal_cli_result(result)
     if terminal_result is not None:
         if terminal_result.get("status") == "failed":
@@ -1351,6 +1384,74 @@ def _observer_reference_for_cli(worker: object | None) -> dict | None:
     return None
 
 
+def _observer_report_for_cli(worker: object | None, store: object | None) -> dict | None:
+    if type(worker) is not JournaledProposalWorker or store is None:
+        return None
+    try:
+        reference = worker.observer_reference()
+        read_events = getattr(store, "events", None)
+        read_checkpoints = getattr(store, "checkpoints", None)
+        if (
+            type(reference) is not dict
+            or not callable(read_events)
+            or not callable(read_checkpoints)
+        ):
+            raise ValueError
+        events = read_events()
+        checkpoints = read_checkpoints()
+        if type(events) not in (tuple, list) or type(checkpoints) not in (tuple, list):
+            raise ValueError
+        report = build_history_report(
+            list(enumerate(events)),
+            list(enumerate(checkpoints)),
+            run_id=reference["run_id"],
+            as_of_cursor=reference["as_of_cursor"],
+        )
+        snapshot = report.get("snapshot")
+        gaps = report.get("gaps")
+        if type(snapshot) is not dict or type(gaps) is not list:
+            raise ValueError
+        codes = sorted(
+            {
+                gap["code"]
+                for gap in gaps
+                if type(gap) is dict and type(gap.get("code")) is str
+            }
+        )
+        summary = {
+            "event_count": snapshot.get("event_count"),
+            "checkpoint_count": snapshot.get("checkpoint_count"),
+            "completeness": snapshot.get("completeness"),
+            "gap_codes": codes,
+        }
+        if (
+            set(summary)
+            != {"event_count", "checkpoint_count", "completeness", "gap_codes"}
+            or type(summary.get("event_count")) is not int
+            or summary["event_count"] < 0
+            or type(summary.get("checkpoint_count")) is not int
+            or summary["checkpoint_count"] < 0
+            or summary.get("completeness") != "partial"
+            or type(codes) is not list
+            or any(
+                type(code) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code) is None
+                for code in codes
+            )
+            or codes != sorted(set(codes))
+            or "collector_coverage_unverified" not in codes
+        ):
+            return {"status": "unavailable"}
+        return {
+            "event_count": summary["event_count"],
+            "checkpoint_count": summary["checkpoint_count"],
+            "completeness": "partial",
+            "gap_codes": list(codes),
+        }
+    except Exception:
+        return {"status": "unavailable"}
+
+
 def main(
     argv=None,
     worker=None,
@@ -1446,6 +1547,11 @@ def main(
             observer_reference = _observer_reference_for_cli(execution_worker)
             if observer_reference is not None:
                 authorization_error["observer"] = observer_reference
+                observer_report = _observer_report_for_cli(
+                    execution_worker, remote_execution_profile.observation_store
+                )
+                if observer_report is not None:
+                    authorization_error["observer_report"] = observer_report
             stdout.write(
                 json.dumps(authorization_error, sort_keys=True, separators=(",", ":"))
                 + "\n"
@@ -1496,6 +1602,11 @@ def main(
         observer_reference = _observer_reference_for_cli(execution_worker)
         if observer_reference is not None:
             payload["observer"] = observer_reference
+            observer_report = _observer_report_for_cli(
+                execution_worker, remote_execution_profile.observation_store
+            )
+            if observer_report is not None:
+                payload["observer_report"] = observer_report
         stdout.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
         return 0 if payload.get("status") == "verified" else 1
     if argv == ["--remote-snapshot-metadata"]:

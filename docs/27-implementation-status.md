@@ -11,8 +11,16 @@
 Worker → restricted target tests → pinned same-host verifier → staged digest
 save/readback. Его redacted observer journal частичный и содержит
 `event_sequence_gap`; это не независимая verifier trust и не human approval.
-Следующий внешний узкий gate — EXP-1637 remote verifier image import, всё ещё
-DRAFT до отдельного свежего разрешения ровно на карточку и scope. Затем нужны
+EXP-1651 подтвердил, что фактический stage отвергается при подготовке approval
+из-за отсутствия caller-pinned verifier-provenance trust. EXP-1653 подготовила
+неисполнявшийся one-shot helper для передачи публичного image по временному
+HTTP на конкретный private IPv4 интерфейс: полный архив проверяется локально,
+а testdev command после загрузки сверяет config ID, platform, ordered DiffIDs
+и tags. Эта схема избегает SSH credentials, но не аутентифицирует transport
+host и не доказывает verifier trust. Единственный remote import — EXP-1654 —
+остаётся DRAFT и требует свежего exact gate до 2026-10-20 16:19:21 UTC
+(19:19:21 Europe/Moscow); после срока нужен новый card/gate. До него helper,
+listener и Docker load не запускать. Затем нужны
 актуальное remote verifier runtime/provenance evidence, signed digest-bound
 human approval и controlled real PR publication. Ни один из этих критериев не
 закрыт; R2/MVP остаются OPEN.
@@ -175,6 +183,48 @@ invocation; neither was repeated. Full offline suite: 2,098 tests, 26 skipped;
 `git diff --check` passed. This confirms fail-closed refusal for the actual
 local stage, not trusted verifier evidence or human approval. R2/MVP remain
 OPEN.
+
+**Batch AKCZ / EXP-1652 (2026-10-20):** static audit of the exact EXP-1637
+helper confirmed it invokes OpenSSH with `BatchMode=yes`, strict host-key
+checking, `PreferredAuthentications=publickey`, and password/kbd-interactive
+authentication disabled. The public-key path consumes ambient SSH key/agent
+credentials; it therefore cannot run under the active goal's no-credentials
+constraint. A bounded repository search found no checked-in credential-free
+remote image-import alternative. No SSH, Docker, network, credential lookup,
+remote mutation, approval, or provider action was performed. EXP-1637 remains
+DRAFT and must not be run merely on a one-shot gate; first design and validate
+a credential-free transport preserving exact image identity checks, or
+explicitly revise the goal constraint. The actual EXP-1647 approval request
+still fails closed without independently trusted verifier provenance. R2/MVP
+remain OPEN.
+
+**Batch AKDA / EXP-1653 preparation (2026-10-20):** added a one-shot local
+helper and eleven focused tests for credential-free, single-GET delivery of the
+exact public verifier archive. The helper is TTY-gated, validates the full
+in-memory Docker archive, binds to one explicit private IPv4 interface, allows
+only the fixed testdev source address, and emits one exact testdev-console
+command. That command downloads into a mode-0600 temporary file, checks the
+exact archive SHA-256 before the single image load, then checks config ID,
+platform, ordered DiffIDs and tags; an EXIT trap removes the temporary file on
+normal shell exit. This transport is
+unauthenticated/unencrypted; it is limited to public content and proves neither
+serving-host identity nor remote verifier trust. Local route discovery selected
+`en0` and address `192.168.88.5` for testdev `192.168.88.101`; no connection,
+Docker operation, listener, SSH, credential access or remote mutation ran.
+Focused helper tests passed (11), transfer/auditor tests passed (33), generated
+target command passed `bash -n`, and batch-end full offline suite passed (2,109
+tests, 26 skipped); `git diff --check` passed. EXP-1654 is a separate DRAFT
+one-shot remote import and has not run. R2/MVP remain OPEN.
+
+**Batch AKDB / EXP-1655 (2026-10-20):** executed the generated testdev-side
+command offline with isolated stub `curl`, `sha256sum` and `docker` programs.
+Four tests cover successful hash-before-load and exact inspect, hash mismatch
+refusal before Docker, import failure cleanup, and post-load tuple mismatch
+cleanup. Combined focused tests passed (37), generated command passed `bash -n`,
+and full offline suite passed (2,113 tests, 26 skipped). These tests do not
+prove remote transport or image-store behavior. No network/SSH/credentials,
+real Docker, testdev, listener or remote mutation occurred. EXP-1654 remains
+DRAFT and no import has run. R2/MVP remain OPEN.
 
 **Исторический checkpoint (Batch AKCC → EXP-1621, 2026-10-19):** последняя
 успешная цепочка с реальным локальным Worker — EXP-1269: pinned public

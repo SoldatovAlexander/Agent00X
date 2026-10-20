@@ -48,8 +48,25 @@ trust boundaries. Наблюдатель и обучение через конт
    один LLM Worker, независимая проверка, минимальный CLI и контролируемая
    публикация. Все проверки до внешнего write; реальные границы секретов и
    durable reconciliation. Основные пути R2 инструментированы наблюдением R1.
-   **Актуальный checkpoint (2026-10-19; детали и 16 критериев — в
+   **Актуальный checkpoint (2026-10-20; детали и 16 критериев — в
    [статусе реализации](27-implementation-status.md)):** R2/MVP остаются OPEN.
+   **Обновление 2026-10-20 (Batch AKCY—AKCZ):** EXP-1647 остаётся последним
+   успешным текущим локальным Worker→target→same-host verifier→stage проходом;
+   observer частичный. EXP-1651 показала точный fail-closed отказ реального
+   stage при отсутствии caller-pinned verifier-provenance trust. EXP-1637
+   переносит verifier image через SSH public-key authentication, поэтому
+   несовместима с условием MVP «не использовать credentials»; проверенные
+   репозиторные скрипты не содержали альтернативного credential-free remote
+   import пути. Batch AKDA добавил локально тестированный, но не запущенный
+   helper одноразовой HTTP-отдачи образа: он работает без credentials, однако
+   не аутентифицирует serving host; remote import EXP-1654 остаётся DRAFT.
+   Это транспортная гипотеза, а не verifier trust. Для проверки provenance потребуются
+   независимо закреплённый authority key-set и валидные подписи enrollment,
+   host-trust decision и verifier response. Ни одно из этих условий нельзя
+   подменять локальным same-host evidence или synthetic signatures. До
+   исполнения EXP-1654 и подготовки реальных доверенных доказательств remote
+   verifier/approval/publication не запускать; R2/MVP
+   остаются OPEN.
    После EXP-1384 были выполнены EXP-1391—1393 и локальная EXP-1395.
    EXP-1395 добавила replay сохранённого stage через фиксированный trusted-HTTPS
    verifier с caller-pinned публичными trust-записями и exact trust digests в

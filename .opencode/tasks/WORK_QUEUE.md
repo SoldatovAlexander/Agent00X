@@ -58580,3 +58580,105 @@ tests, then the full offline suite once at batch end and `git diff --check`.
 This can diagnose only why the local CLI did not meet EXP-1649's strict expected
 marker; it cannot establish independent verifier trust or human approval.
 R2/MVP remain OPEN.
+
+### Batch AKCZ — resolve the no-credentials conflict in the remote verifier gate (1 task)
+
+#### EXP-1652 — audit whether EXP-1637 is executable under the active goal
+Статус: ACCEPTED 2026-10-20. Static review of
+`scripts/stream_pinned_verifier_image.py` confirmed its only transfer path is
+OpenSSH with `BatchMode=yes`, `StrictHostKeyChecking=yes`,
+`PreferredAuthentications=publickey`, and password and keyboard-interactive
+authentication disabled. This requires ambient public-key credential material
+(key or agent) and conflicts with the active MVP constraint not to use
+credentials. A bounded search of checked-in scripts/docs found no
+credential-free remote image-import path. This is repository-scope evidence,
+not proof that no external mechanism exists. EXP-1637 is not runnable under the
+current goal even if its one-shot gate is later supplied.
+
+No SSH, Docker, network, credential lookup, remote mutation, approval,
+provider action, PR/push/deployment, or cleanup occurred. No code or image pin
+changed. Before any remote import, design and test a credential-free transport
+that keeps the exact image identity/platform/layer checks and then prepare a new
+scoped card; do not use the SSH gate by default. EXP-1651 remains the latest
+actual-stage result: `APPROVAL_REFUSED|reason=verifier-provenance-trust-unavailable`.
+R2/MVP remain OPEN.
+
+### Batch AKDA — prepare a credential-free verifier-image delivery path (1 completed task + 1 DRAFT gate)
+
+#### EXP-1653 — implement a one-shot, read-only LAN archive server
+Статус: ACCEPTED 2026-10-20. Added
+`scripts/serve_pinned_verifier_image_exp1653.py` and its focused tests. The
+helper requires an exact interactive gate before Docker or listener activity;
+inspects only the pinned local verifier image, saves it by immutable ID to
+memory, validates the complete legacy Docker archive with the existing
+manifest/config/DiffID/layer-content auditor, and can expose one GET of that
+public archive on an explicit private IPv4 interface to source IP
+`192.168.88.101`. The generated testdev-console command performs exactly one
+`docker image load` then checks config ID, linux/amd64, ordered DiffIDs and
+empty RepoTags. No SSH, credentials, files, service/container start, or remote
+command execution by this helper. The transport is intentionally unauthenticated
+and unencrypted and is suitable only for this public content-addressed image;
+content identity checks do not authenticate the serving host. It has not been
+run against Docker or the network.
+
+The host route to `192.168.88.101` currently uses `en0`; `ipconfig getifaddr
+en0` returned `192.168.88.5`. These are local route/interface facts only; no
+connection was attempted. Eleven focused tests passed, including loopback HTTP
+allowlist and single-response checks. The direct script entrypoint initially
+failed before Docker/listener activity because its source-root import path was
+missing; this was fixed, and direct execution now reaches the exact TTY gate.
+One direct gated smoke was then interrupted before its phrase was supplied
+because the desktop terminal tab did not become visible; it performed no
+Docker or listener action and consumed no authorization.
+Transfer/auditor focused tests passed
+(33); generated target command passed `bash -n`; batch-end full offline suite
+passed (2,109 tests, 26 skipped); `git diff --check` passed. The separate
+runtime/import card is EXP-1654 and remains DRAFT pending its fresh exact user
+gate. R2/MVP remain OPEN.
+
+#### EXP-1654 — one credential-free HTTP image import on the verifier host
+Статус: DRAFT — requires a fresh exact user gate `RUN EXP-1654 ONCE` in the
+local helper, expiring 2026-10-20 16:19:21 UTC (19:19:21 Europe/Moscow).
+The helper enforces the expiry before Docker/listener activity. Only after
+that gate, run
+`PYTHONDONTWRITEBYTECODE=1 python3 scripts/serve_pinned_verifier_image_exp1653.py --bind-address 192.168.88.5 --port 0`.
+The helper performs one local read-only exact image inspect, one in-memory
+`docker image save` by manifest ID
+`sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f`,
+validates the full archive against config ID
+`sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9`,
+linux/amd64 and the nine pinned ordered DiffIDs, then starts one HTTP listener
+bound only to `192.168.88.5` for at most 900 seconds. It accepts one GET only
+from `192.168.88.101` for its fixed path and serves no other content. The user
+then runs exactly the generated command in the already-open testdev console;
+that command downloads one archive to a `umask 077` temporary file, verifies
+the exact archive SHA-256 before import, performs one `docker image load`,
+then performs one exact-ID inspect, without retagging. A shell `EXIT` trap
+removes only that temporary archive; an abrupt kill may leave it behind.
+Expected remote facts are the exact config ID/platform/ordered DiffIDs and
+empty RepoTags. No SSH, credentials, verifier/container/service start,
+firewall/DNS change, retry or follow-up diagnosis. No remote command is
+executed by Codex. Because the HTTP transfer has no TLS or client
+authentication, its body is public; pre-import archive digest plus post-load
+image identity tuple check integrity but do not prove host identity or verifier
+trust. On timeout/failure stop; a partial/full image may remain. This task is
+not authorized until the exact gate is supplied.
+
+### Batch AKDB — verify the generated target-side import command offline (1 task)
+
+#### EXP-1655 — test digest-before-load, exact post-load tuple and temp cleanup
+Статус: ACCEPTED 2026-10-20. Added four tests that execute the generated
+testdev command under Bash with isolated stub `curl`, `sha256sum`, and `docker`
+programs. They confirm: (1) a matching archive digest precedes exactly one
+image load and exact tuple inspection; (2) a mismatched digest refuses before
+Docker load; (3) import failure emits only the fixed failure marker and
+removes the temporary archive; and (4) a wrong post-load tuple is rejected
+and the temporary archive is removed. These are local synthetic shell tests,
+not a testdev runtime/import.
+
+Combined focused tests passed (37); generated command passed `bash -n`; full
+offline suite passed (2,113 tests, 26 skipped); `git diff --check` passed.
+No network, SSH, credentials, real Docker, testdev, listener, remote mutation,
+approval, provider action, or cleanup outside test temporary directories.
+EXP-1654 remains DRAFT for one fresh, expiring, user-gated import. R2/MVP
+remain OPEN.

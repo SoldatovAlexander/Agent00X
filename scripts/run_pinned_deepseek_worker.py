@@ -36,7 +36,6 @@ from app_contracts.brainbooster_target_profile import (  # noqa: E402
 from app_contracts.verifier_image_pin import (  # noqa: E402
     VERIFIER_RUNTIME_CODE_DIGEST,
     VERIFIER_RUNTIME_IMAGE_ID,
-    VERIFIER_RUNTIME_CONFIG_IMAGE_ID,
 )
 from app_contracts.container_proposal_worker import ContainerProposalWorker  # noqa: E402
 from app_contracts.docker_endpoint import LOCAL_DOCKER_HOST_ARGUMENT  # noqa: E402
@@ -243,6 +242,16 @@ AUTHORIZATION_PROFILES = {
         "process-exp-1585-local-001",
         "task-exp-1585-local-001",
     ),
+    "EXP-1643": (
+        "RUN EXP-1643 ONCE",
+        "process-exp-1643-local-001",
+        "task-exp-1643-local-001",
+    ),
+    "EXP-1645": (
+        "RUN EXP-1645 ONCE",
+        "process-exp-1645-local-001",
+        "task-exp-1645-local-001",
+    ),
 }
 AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-634": "github_rest_api_claim",
@@ -275,6 +284,8 @@ AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-1310": "github_rest_api_claim",
     "EXP-1312": "github_rest_api_claim",
     "EXP-1585": "github_rest_api_claim",
+    "EXP-1643": "github_rest_api_claim",
+    "EXP-1645": "github_rest_api_claim",
 }
 AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-634": "deepseek",
@@ -307,6 +318,8 @@ AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-1310": "local-ollama",
     "EXP-1312": "local-ollama",
     "EXP-1585": "local-ollama",
+    "EXP-1643": "local-ollama",
+    "EXP-1645": "local-ollama",
 }
 TASK_INSTRUCTION = (
     "In backend/routes.py change only /save-session. Preserve its existing "
@@ -394,7 +407,7 @@ def _preflight_docker_images(
 ) -> None:
     _preflight_target_docker_image(docker_executable, run=run)
     _preflight_pinned_docker_image(
-        docker_executable, VERIFIER_RUNTIME_CONFIG_IMAGE_ID, run=run
+        docker_executable, VERIFIER_RUNTIME_IMAGE_ID, run=run
     )
 
 

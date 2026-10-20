@@ -71,6 +71,7 @@ from .verifier_container import DockerContainerVerifier, VerifierContainerConfig
 from .verifier_process import SubprocessVerifier, VerifierProcessConfig
 from .signed_verifier_client import SignedVerifierClient
 from .signed_verifier_service import BRAINBOOSTER_VERIFIER_PROFILE
+from .verifier_classic_store import ClassicStoreBrainboosterVerifier
 
 DEMO_NAME = "worker-cli-synthetic"
 DEMO_DECLARED_PATHS = ("calculator.py",)
@@ -420,6 +421,7 @@ def run_remote_snapshot_with_runtime(
     stage_database_path: Path | str,
     execution_permit: RemoteExecutionPermit,
     verifier_client: SignedVerifierClient | None = None,
+    classic_store_verifier: ClassicStoreBrainboosterVerifier | None = None,
     expected_worker_host_id: str | None = None,
     expected_verifier_host_id: str | None = None,
     test_timeout_seconds: int = 30,
@@ -439,10 +441,19 @@ def run_remote_snapshot_with_runtime(
     """
 
     docker_verifier_selected = (
-        verifier_client is None and type(verifier_config) is VerifierContainerConfig
+        verifier_client is None
+        and classic_store_verifier is None
+        and type(verifier_config) is VerifierContainerConfig
+    )
+    classic_store_verifier_selected = (
+        verifier_client is None
+        and verifier_config is None
+        and type(classic_store_verifier) is ClassicStoreBrainboosterVerifier
     )
     signed_verifier_selected = (
-        type(verifier_client) is SignedVerifierClient and verifier_config is None
+        type(verifier_client) is SignedVerifierClient
+        and verifier_config is None
+        and classic_store_verifier is None
     )
     verifier_trust_decision = (
         verifier_client.host_trust_decision
@@ -450,7 +461,11 @@ def run_remote_snapshot_with_runtime(
         else None
     )
     if (
-        not (docker_verifier_selected or signed_verifier_selected)
+        not (
+            docker_verifier_selected
+            or classic_store_verifier_selected
+            or signed_verifier_selected
+        )
         or type(execution_image) is not str
         or (
             _IMAGE_ID_PATTERN.fullmatch(execution_image) is None
@@ -474,7 +489,7 @@ def run_remote_snapshot_with_runtime(
             )
         )
         or (
-            docker_verifier_selected
+            (docker_verifier_selected or classic_store_verifier_selected)
             and (
                 expected_worker_host_id is not None
                 or expected_verifier_host_id is not None
@@ -499,6 +514,8 @@ def run_remote_snapshot_with_runtime(
         verifier = (
             verifier_client
             if signed_verifier_selected
+            else classic_store_verifier
+            if classic_store_verifier_selected
             else DockerContainerVerifier(verifier_config)
         )
         sandbox_backend = DockerSandboxBackend(execution_image)

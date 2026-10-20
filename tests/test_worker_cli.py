@@ -759,6 +759,101 @@ class PinnedRemoteExecutionCLITests(unittest.TestCase):
             self.assertIs(type(profile.stage_sink), cli.SQLiteStagedArtifactStore)
             self.assertEqual(calls, [])
 
+    def test_explicit_runtime_accepts_fixed_classic_store_verifier(self):
+        captured: dict = {}
+        verifier = cli.ClassicStoreBrainboosterVerifier("/usr/bin/docker")
+
+        def fake_main(argv, **kwargs):
+            captured["profile"] = kwargs["remote_execution_profile"]
+            return 0
+
+        with tempfile.TemporaryDirectory(prefix="pinned-classic-store-runtime-") as root:
+            database = Path(root) / "stage.sqlite3"
+            with patch.object(cli, "main", side_effect=fake_main):
+                code = cli.run_remote_snapshot_with_runtime(
+                    process_id="process-cli-classic-store-001",
+                    task_id="task-cli-classic-store-001",
+                    task_instruction="synthetic classic-store verifier wiring",
+                    declared_change_paths=("backend/routes.py",),
+                    allowed_commands=frozenset({"python3"}),
+                    test_command=("python3", "-m", "unittest"),
+                    execution_image="sha256:" + "c" * 64,
+                    credential_source=None,
+                    proposal_worker=SimpleNamespace(propose=lambda _request: None),
+                    classic_store_verifier=verifier,
+                    stage_database_path=database,
+                    execution_permit=self.permit(
+                        "process-cli-classic-store-001",
+                        "task-cli-classic-store-001",
+                    ),
+                )
+
+        self.assertEqual(code, 0)
+        self.assertIs(captured["profile"].verifier, verifier)
+
+    def test_explicit_runtime_rejects_mixed_verifier_backends_before_side_effects(self):
+        verifier = cli.ClassicStoreBrainboosterVerifier("/usr/bin/docker")
+        config = cli.VerifierContainerConfig(
+            docker_executable="/usr/bin/docker",
+            runtime_image_id="sha256:" + "a" * 64,
+            verifier_code_digest="sha256:" + "b" * 64,
+        )
+        with tempfile.TemporaryDirectory(prefix="mixed-verifier-runtime-") as root:
+            database = Path(root) / "must-not-exist.sqlite3"
+            with patch.object(cli, "main") as main:
+                with self.assertRaisesRegex(
+                    ValueError, "^remote CLI runtime is unavailable$"
+                ):
+                    cli.run_remote_snapshot_with_runtime(
+                        process_id="process-cli-mixed-verifier-001",
+                        task_id="task-cli-mixed-verifier-001",
+                        task_instruction="synthetic mixed verifier wiring",
+                        declared_change_paths=("backend/routes.py",),
+                        allowed_commands=frozenset({"python3"}),
+                        test_command=("python3", "-m", "unittest"),
+                        execution_image="sha256:" + "c" * 64,
+                        credential_source=None,
+                        verifier_config=config,
+                        classic_store_verifier=verifier,
+                        stage_database_path=database,
+                        execution_permit=self.permit(
+                            "process-cli-mixed-verifier-001",
+                            "task-cli-mixed-verifier-001",
+                        ),
+                    )
+            self.assertFalse(database.exists())
+            main.assert_not_called()
+
+        client, worker_host_id, verifier_host_id = self.signed_verifier_client()
+        with tempfile.TemporaryDirectory(prefix="mixed-signed-classic-runtime-") as root:
+            database = Path(root) / "must-not-exist.sqlite3"
+            with patch.object(cli, "main") as main:
+                with self.assertRaisesRegex(
+                    ValueError, "^remote CLI runtime is unavailable$"
+                ):
+                    cli.run_remote_snapshot_with_runtime(
+                        process_id="process-cli-mixed-signed-classic-001",
+                        task_id="task-cli-mixed-signed-classic-001",
+                        task_instruction="synthetic mixed signed/classic verifier wiring",
+                        declared_change_paths=("backend/routes.py",),
+                        allowed_commands=frozenset({"python3"}),
+                        test_command=("python3", "-m", "unittest"),
+                        execution_image="sha256:" + "c" * 64,
+                        credential_source=None,
+                        proposal_worker=SimpleNamespace(propose=lambda _request: None),
+                        verifier_client=client,
+                        classic_store_verifier=verifier,
+                        expected_worker_host_id=worker_host_id,
+                        expected_verifier_host_id=verifier_host_id,
+                        stage_database_path=database,
+                        execution_permit=self.permit(
+                            "process-cli-mixed-signed-classic-001",
+                            "task-cli-mixed-signed-classic-001",
+                        ),
+                    )
+            self.assertFalse(database.exists())
+            main.assert_not_called()
+
     def test_explicit_runtime_accepts_only_trusted_pinned_signed_verifier(self):
         client, worker_host_id, verifier_host_id = self.signed_verifier_client()
         self.assertTrue(client.independent_host_trust_established)

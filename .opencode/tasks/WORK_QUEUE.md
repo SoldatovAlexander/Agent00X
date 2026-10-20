@@ -58214,3 +58214,187 @@ Exactly one `docker image save` ran; full archive config/platform/DiffID and
 OCI-manifest chain passed against existing EXP-1632 pins. No follow-up Docker
 command or remote import. Focused helper tests passed (4); `git diff --check`
 passed. Batch AKCN full offline suite passed (2,083 tests, 26 skipped).
+
+### Batch AKCO — wire the current classic-store verifier into the pinned local runtime (1 task)
+
+#### EXP-1640 — pass the exact classic-store adapter through Worker composition
+Статус: ACCEPTED 2026-10-20 as generic explicit runtime wiring. Control Plane
+source audit found that the pinned Worker runner preflight checked the current
+config ID, but then constructed a plain `DockerContainerVerifier` from the OCI
+manifest ID. On a classic Docker image store, config ID may be the usable local
+reference. Added an optional `classic_store_verifier` runtime dependency,
+accepted only as the exact `ClassicStoreBrainboosterVerifier` type and mutually
+exclusive with Docker config and signed HTTPS backends. Synthetic tests verify
+adapter wiring and reject mixed backends before stage DB creation. The initial
+script-level choice of that adapter was rejected by EXP-1641's one-shot
+preflight on the current local daemon and corrected under Batch AKCQ; the
+pinned local runner uses the manifest ID reported by EXP-1634. Focused suites
+passed (124 tests, 2 skipped); Batch AKCO full offline suite passed (2,085
+tests, 26 skipped). EXP-1637 remains DRAFT and requires its own fresh exact user
+authorization. Generic adapter support does not prove current testdev store or
+runtime, or independent verifier trust. R2/MVP remain OPEN.
+
+### Batch AKCP — execute the pinned verifier image through the classic-store adapter (1 task)
+
+#### EXP-1641 — one synthetic local verifier invocation on exact EXP-1632 image
+Статус: BLOCKED 2026-10-20. The one invocation failed at the
+classic-store config-ID preflight with the fixed error
+`classic verifier image: exact config identity unavailable`; no container run
+occurred. No diagnostic, follow-up Docker query, retry or cleanup followed.
+EXP-1641 is spent and cannot be reused. The result does not distinguish image
+absence from local store identity mismatch. Subsequent accepted EXP-1634 evidence
+shows this local daemon reports the portable manifest ID; the local path will
+therefore use that exact manifest pin, while the classic-store adapter remains
+an explicit option only for a store where its config ID is confirmed.
+
+Original one-shot command (spent):
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_verifier_classic_store.ClassicStoreBrainboosterVerifierTests.test_opt_in_real_pinned_classic_store_image_runs_synthetic_input -q`.
+The test invokes only the fixed local Docker socket and current verifier config
+ID `sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9`;
+the associated portable manifest pin is
+`sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f`,
+and source/code pin is
+`sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7`.
+Adapter preflight checks config ID and linux/amd64, then performs one verifier
+container run with the already fixed `--pull=never`, `--network=none`, read-only,
+resource-limited argv and synthetic fixture. Require PASS with the manifest/code
+verifier identity. The adapter may use its single exact generated-container
+best-effort cleanup only if that invocation errors. No retries, image
+build/import/tag/removal, Worker/model, GitHub/network, credentials, SSH/testdev,
+approval/provider, PR/push/deployment or unrelated Docker queries. Do not retain
+raw child output. If unavailable or failing, report only fixed test status and
+stop. Allowed paths: this test module, queue and docs/27. Full offline suite
+once at this batch end and `git diff --check`. Evidence can establish local
+synthetic verifier runtime only, not repository-specific verification or
+independent host trust. R2/MVP remain OPEN.
+
+### Batch AKCQ — run the current pinned image under the observed local containerd identity (1 task)
+
+#### EXP-1642 — one synthetic local invocation using the exact manifest pin
+Статус: ACCEPTED 2026-10-20 — one local Docker sandbox invocation. Used the pre-existing
+opt-in test with the manifest/config distinction established by EXP-1632/1634;
+do not use or repeat EXP-1641. Exact command:
+`RUN_DOCKER_SANDBOX_TESTS=1 AGENT00X_VERIFIER_IMAGE_ID=sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f AGENT00X_VERIFIER_CODE_DIGEST=sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7 AGENT00X_DOCKER_EXECUTABLE=/usr/local/bin/docker PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests.test_verifier_container.VerifierContainerConfigTests.test_opt_in_real_container_executes_synthetic_request_under_profile -q`.
+This runs only the exact pinned verifier image against a synthetic one-file
+fixture through `DockerContainerVerifier`; its command enforces local
+`--pull=never`, `--network=none`, read-only root, unprivileged UID, resource
+limits, and per-invocation nonce. The test's internal probe asserts those
+runtime boundaries and reports PASS only if the verifier result binds to the
+exact manifest/code identity. The local daemon was previously observed to
+report the manifest ID (EXP-1634); config ID remains separately pinned for a
+classic store. No Worker/model, GitHub, arbitrary repository input, credentials,
+network, SSH/testdev, approval, provider action, PR/push/deployment, image
+mutation, retries or additional Docker query. If the exact test fails, stop; do
+not collect raw child diagnostics or retry. Allowed paths: pinned Worker
+runner, its CLI tests, this queue and docs/27. Run the full offline suite once
+at batch end and `git diff --check`. This establishes local synthetic verifier
+execution only, not source-independent trust or remote verifier readiness.
+Actual result: the exact EXP-1642 command ran once; one opt-in test passed in
+0.919s. The synthetic verifier returned PASS bound to the exact manifest/code
+identity. Its boundary probe passed under the image profile. No follow-up Docker
+command, extra verifier invocation, network request or image mutation occurred.
+Full offline suite passed at batch end: 2,085 tests, 26 skipped;
+`git diff --check` passed. This is local synthetic runtime evidence only; the
+test input was not the BrainBooster snapshot, no Worker ran, and the container
+remains on the same host. It does not establish independent verifier trust,
+remote import, approval or publication. R2/MVP remain OPEN.
+
+### Batch AKCR — current-pin public-snapshot Worker-to-stage attempt (1 task)
+
+#### EXP-1643 — one credential-free local Ollama Worker run
+Статус: BLOCKED 2026-10-20. Entered the exact `RUN EXP-1643 ONCE` gate once.
+The runner stopped with fixed result
+`{"status":"stopped","reason":"local-model-preflight-failed","snapshot_attempts":0,"external_model_attempts":0,"provider_attempts":0}`.
+No retry was made. No Worker inference or pinned snapshot attempt occurred;
+this card is spent. The result does not classify whether the Ollama server,
+version, model or digest was unavailable/mismatched. A distinct local readiness
+card is required before any further Worker attempt. Exact command used:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_pinned_deepseek_worker.py --authorization-card-id EXP-1643 --model-backend local-ollama --verifier-backend pinned-docker --worker-backend restricted-container --credential-source not-applicable --observation-database '/Volumes/DATA/Проекты/Агент 00Х/EXP-1643-observer.sqlite3' '/Volumes/DATA/Проекты/Агент 00Х/EXP-1643-stage.sqlite3'`.
+At the exact terminal prompt, enter only `RUN EXP-1643 ONCE`. Before model
+execution, the runner must validate the exact pinned target image
+`sha256:f22c0b03d5d60c44f433935952199aeaed497b4d3fb3400933e69a144e0fc187`,
+verifier manifest `sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f`,
+verifier code `sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7`,
+fixed local Ollama model digest, and GitHub readiness/quota. Scope: one readiness
+GET, one quota GET, at most 25 anonymous pinned-snapshot GETs, one local Ollama
+inference, restricted target tests and one same-host pinned verifier invocation;
+the runner may persist only the named SQLite evidence. No API credentials,
+Keychain, SSH/testdev, remote verifier, provider write, approval, branch/PR,
+push, deployment, cleanup beyond the runner's exact owned resources, or retries.
+Do not inspect or print raw candidate/source/model/test output. Any preflight or
+target-test failure is final for this card; do not retry. Allowed paths: runner,
+its focused tests, this queue, docs/27, and the two named SQLite evidence files.
+Full offline suite once at this batch end and `git diff --check`. Success would
+be current-pin same-host Worker→target→verifier→stage evidence, not independent
+trust, approval, publication or MVP completion. R2/MVP remain OPEN.
+Actual result: preflight failure as recorded above; no raw model/source/test
+output was retained. Batch-end full offline suite passed: 2,085 tests, 26
+skipped; `git diff --check` passed. No provider write, SSH, approval or external
+publication occurred. R2/MVP remain OPEN.
+
+### Batch AKCS — classify the fixed local Ollama readiness stop (1 task)
+
+#### EXP-1644 — one TTY-gated Ollama metadata-only preflight
+Статус: BLOCKED 2026-10-20. Four focused synthetic tests passed. Entered
+`RUN EXP-1644 ONCE` exactly once; actual bounded result was
+`OLLAMA_PREFLIGHT_FAILED|reason=version_request_failed`. No model endpoint,
+inference, process start, retry or follow-up HTTP request occurred. The reason
+does not prove whether the server is stopped or the version endpoint failed for
+another reason. EXP-1644 is spent. Exact command used:
+`PYTHONDONTWRITEBYTECODE=1 python3 scripts/probe_local_ollama_readiness_exp1644.py`.
+At the prompt enter only `RUN EXP-1644 ONCE`. The helper calls the existing
+`R5LocalOllamaMetadataPreflight` once, which performs at most one GET of fixed
+`/api/version` and one GET of fixed `/api/tags` on `127.0.0.1:11434`, requiring
+version `0.40.3`, unique model `qwen2.5-coder:7b` and pinned digest
+`dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`. It makes
+no chat-completions/inference request and emits only `OLLAMA_PREFLIGHT_MATCHED`
+or a fixed `OLLAMA_PREFLIGHT_FAILED|reason=...` marker. No process/service start,
+model pull, repeated request, credentials, external network, GitHub, Worker,
+Docker, SSH/testdev, approval, provider action, PR/push/deployment or cleanup.
+Failure is final; report marker only. Allowed paths: the fixed helper, its test,
+this queue and docs/27. Batch-end full offline suite and `git diff --check`.
+Batch-end full offline suite: 2,091 tests, 26 skipped; `git diff --check` passed.
+This result cannot establish inference readiness or justify retrying EXP-1643.
+Any server setup/new Worker run requires a separate exact local task card; R2/MVP
+remain OPEN.
+
+### Batch AKCT — provide a temporary loopback Ollama process for one current-pin Worker run (1 task)
+
+#### EXP-1645 — one owned server session and one credential-free Worker attempt
+Статус: BLOCKED 2026-10-20. Started one owned foreground Ollama process with
+`OLLAMA_HOST=127.0.0.1:11434`; after the Worker CLI exited, Ctrl-C stopped that
+same process with exit code 0. Exact version/model metadata preflight passed:
+version `0.40.3`, pinned model digest matched. Entered `RUN EXP-1645 ONCE` once.
+The single CLI attempt failed with fixed
+`failure_code=remote-snapshot-fetch-failed`; its safe observer summary was
+`run_id=run-db18f071c9324182a3d6a9ec782c7f55`, `cursor=23`,
+`completeness=partial`. No model inference, target tests, verifier or stage
+result is claimed. No raw source, model output, test output or logs were read;
+no retry or follow-up HTTP request occurred. This card is spent. Exact commands
+used:
+run the pinned existing binary once in a dedicated interactive terminal:
+`env OLLAMA_HOST=127.0.0.1:11434 /opt/homebrew/bin/ollama serve >/dev/null 2>&1`.
+Keep this exact process session open only for the single Worker attempt below;
+do not run another server or inspect logs. If startup exits, stop this card with
+that bounded process status. If it stays live, run exactly once in a second
+interactive terminal:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_pinned_deepseek_worker.py --authorization-card-id EXP-1645 --model-backend local-ollama --verifier-backend pinned-docker --worker-backend restricted-container --credential-source not-applicable --observation-database '/Volumes/DATA/Проекты/Агент 00Х/EXP-1645-observer.sqlite3' '/Volumes/DATA/Проекты/Агент 00Х/EXP-1645-stage.sqlite3'`.
+At the exact CLI prompt enter only `RUN EXP-1645 ONCE`. The runner performs its
+current pinned target/verifier image inspections, one readiness GET, one quota
+GET, at most 25 anonymous GitHub snapshot GETs, exact local Ollama version/model
+metadata preflight, and at most one credential-free local inference. Target
+tests run in the pinned no-network container; the verifier uses the exact
+manifest/code pin and its synthetic/repository verification runs on the same
+host. Only the two named SQLite evidence files may be written. No API key,
+Keychain, remote host, provider write, approval, branch/PR, push, deployment,
+image mutation or retry. Do not read/print raw source, model output, target
+output or child logs. On any preflight/test failure stop with its fixed summary;
+no retry. After the Worker CLI exits, terminate the exact owned Ollama process
+with Ctrl-C and do not restart it or perform another readiness query. Allowed
+paths: runner, its focused tests, queue, docs/27 and the two named DB files.
+Run full offline suite once at batch end and `git diff --check`. A successful
+result is current-pin local Worker→target→same-host verifier→stage evidence,
+not independent trust, approval, publication or MVP completion. R2/MVP remain
+OPEN. Batch-end full offline suite passed: 2,092 tests, 26 skipped;
+`git diff --check` passed. No provider write, SSH or remote verifier action
+occurred.

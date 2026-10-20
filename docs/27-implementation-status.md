@@ -4,7 +4,7 @@
 
 Версия: 1.1
 
-Дата сверки: 2026-10-19
+Дата сверки: 2026-10-20
 
 **Оперативный checkpoint (Batch AKCJ → EXP-1633, 2026-10-19):** EXP-1632
 подтвердила один локальный portable verifier candidate:
@@ -45,6 +45,73 @@ tests). EXP-1639's single by-ID save then passed the full bounded parser:
 EXP-1269; независимый remote verifier trust, authenticated digest-bound
 approval, controlled real PR, provider recovery и критерий R5 остаются открытыми.
 R2/MVP остаются OPEN.
+
+**Batch AKCO / EXP-1640 (2026-10-20):** обнаружен разрыв в локальной композиции
+после перехода на portable OCI manifest pin и classic-store config ID:
+Worker CLI предварительно проверял config ID, но затем передавал в обычный
+Docker verifier manifest ID, адресуемый не всеми classic Docker stores.
+Добавлена только опциональная композиция запуска: точный
+`ClassicStoreBrainboosterVerifier` может быть передан Worker runtime; runtime принимает ровно один из трёх
+проверенных вариантов verifier (Docker config, этот точный classic-store
+adapter или доверенный signed HTTPS client) и отвергает смешанную конфигурацию
+до открытия stage DB. Adapter сохраняет manifest digest как verifier identity,
+а при запуске сверяет classic-store config ID/platform. Целевые runtime tests
+прошли: 124 tests, 2 skipped; full offline suite — 2,085 tests, 26 skipped;
+`git diff --check` passed. Docker, GitHub, Ollama/model, network, SSH/testdev,
+credentials, approval и provider action не запускались. Это только исправление
+локального same-host wiring: оно не подтверждает сам verifier runtime, не
+заменяет EXP-1637 remote import gate и не доказывает independent-host trust.
+
+**Correction after EXP-1641 (2026-10-20):** the local Docker smoke using the
+classic-store adapter failed its exact config-ID preflight with fixed error
+`classic verifier image: exact config identity unavailable`; the verifier
+container was not started, and no follow-up diagnosis or retry occurred. The
+result is consistent with, but does not independently establish, the
+containerd-backed local daemon's manifest-ID addressing recorded by EXP-1634.
+The local pinned Worker path is therefore configured to invoke
+`DockerContainerVerifier` by the already observed manifest ID; the
+classic-store adapter remains an explicit option for a Docker store whose
+config-ID presence is separately established. EXP-1642 then passed one
+synthetic verifier request through the exact local manifest pin and the
+restricted `--network=none`, `--pull=never` container profile (one test, 0.919s).
+The result binds to the current manifest/code identity. It is same-host synthetic
+runtime evidence only: it did not use the BrainBooster snapshot or a Worker and
+does not establish independent verifier trust. Batch AKCQ full offline suite:
+2,085 tests, 26 skipped; `git diff --check` passed. Independent verifier trust,
+approval, controlled PR and R2/MVP remain OPEN.
+
+**Batch AKCR / EXP-1643 (2026-10-20):** the current-pin local Worker attempt
+used the exact one-shot TTY gate and stopped at bounded local-model preflight
+with `local-model-preflight-failed`; its safe summary reported zero snapshot
+attempts, zero external model attempts and zero provider attempts. No retry.
+This does not classify whether Ollama endpoint/version/model/digest was
+unavailable or mismatched; no Worker inference or stage result is claimed. The
+last successful Worker→target→same-host verifier→stage remains EXP-1269. Next
+action is a distinct read-only local Ollama readiness classification; R2/MVP
+remain OPEN.
+
+**Batch AKCS / EXP-1644 (2026-10-20):** the standalone metadata-only probe made
+one gated preflight call and returned only
+`OLLAMA_PREFLIGHT_FAILED|reason=version_request_failed`. It issued no inference
+request, started no process and did not retry; four synthetic guard tests
+passed. The bounded reason does not establish whether Ollama is stopped or its
+fixed version endpoint failed otherwise. EXP-1643 remains spent; no Worker,
+snapshot or stage result is claimed. Batch AKCS full offline suite: 2,091 tests,
+26 skipped; `git diff --check` passed. A future local server-start/Worker attempt
+needs its own exact task profile; independent verifier trust and R2/MVP remain
+OPEN.
+
+**Batch AKCT / EXP-1645 (2026-10-20):** started the installed Ollama executable
+as one owned process bound only to `127.0.0.1:11434`; it stopped with exit 0
+after the Worker attempt. Exact local model metadata passed (`0.40.3`, expected
+model digest). The one current-pin Worker attempt then returned
+`remote-snapshot-fetch-failed`; observer summary was partial at cursor 23
+(`run-db18f071c9324182a3d6a9ec782c7f55`). This occurred before model inference,
+target tests, verifier or stage; no retry or follow-up request was made. The
+failure does not identify which anonymous GitHub GET/validation failed. Full
+offline suite passed: 2,092 tests, 26 skipped; `git diff --check` passed. The
+last successful Worker→target→same-host verifier→stage result remains EXP-1269;
+independent verifier trust, approval, controlled PR and R2/MVP remain OPEN.
 
 **Исторический checkpoint (Batch AKCC → EXP-1621, 2026-10-19):** последняя
 успешная цепочка с реальным локальным Worker — EXP-1269: pinned public

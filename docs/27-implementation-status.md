@@ -6,24 +6,40 @@
 
 Дата сверки: 2026-10-20
 
-**Актуальный R2/MVP checkpoint (Batch AKCV / EXP-1647, 2026-10-20):** один
-текущий локальный проход восстановлен: pinned public snapshot → local Ollama
-Worker → restricted target tests → pinned same-host verifier → staged digest
-save/readback. Его redacted observer journal частичный и содержит
-`event_sequence_gap`; это не независимая verifier trust и не human approval.
-EXP-1651 подтвердил, что фактический stage отвергается при подготовке approval
-из-за отсутствия caller-pinned verifier-provenance trust. EXP-1653 подготовила
-неисполнявшийся one-shot helper для передачи публичного image по временному
-HTTP на конкретный private IPv4 интерфейс: полный архив проверяется локально,
-а testdev command после загрузки сверяет config ID, platform, ordered DiffIDs
-и tags. Эта схема избегает SSH credentials, но не аутентифицирует transport
-host и не доказывает verifier trust. Единственный remote import — EXP-1654 —
-остаётся DRAFT и требует свежего exact gate до 2026-10-20 16:19:21 UTC
-(19:19:21 Europe/Moscow); после срока нужен новый card/gate. До него helper,
-listener и Docker load не запускать. Затем нужны
-актуальное remote verifier runtime/provenance evidence, signed digest-bound
-human approval и controlled real PR publication. Ни один из этих критериев не
-закрыт; R2/MVP остаются OPEN.
+**Актуальный R2/MVP checkpoint (2026-10-20):** последний успешный локальный
+Worker → target tests → same-host verifier → stage save/readback теперь
+EXP-1662 на текущем verifier pin. Его ограниченный CLI вернул `verified`,
+target tests прошли, а stage digest был прочитан обратно; observer содержит 94
+события с уникальными непрерывными sequence 0–93. Отчёт остаётся `partial`:
+`artifact_content_unresolved`, `checkpoint_partial` и
+`collector_coverage_unverified`. Это same-host evidence без approval или
+publication, а не независимая проверка. EXP-1647 остаётся историческим запуском
+на прежнем pin. EXP-1657 исправила sequence
+reservation для будущих вложенных Worker/model событий, не переписывая старый
+partial journal. EXP-1658/1659 собрали и закрепили текущий verifier candidate
+image `sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0`,
+config `sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42`,
+code `sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`,
+and host bundle `sha256:80c0ecb5fae7eef247b5d4b830a67a49bb818727ea19f6e911d4a8cbe048c0f6`.
+Only local synthetic-container execution and one bounded current-pin Worker
+run have been verified on that pin; no remote import has occurred. EXP-1651's actual-stage approval request
+fails closed without caller-pinned verifier-provenance trust. EXP-1654's
+authorization expired and its old-image profile is superseded. EXP-1660
+prepares a new local current-pin delivery profile; EXP-1661 remains DRAFT for
+one exact, expiring image import and requires a fresh user gate. Even a
+successful import would prove content identity, not serving-host identity or
+independent verifier trust. Remote verifier evidence, signed digest-bound
+human approval and controlled real PR publication remain absent; R2/MVP stay
+OPEN.
+
+The current local verifier-profile digest is
+`sha256:34d973ee7632a397b3941b32408dd7903774ed38c9958ad41bd4e6194ddfd280`;
+the existing Keychain signer is hard-bound to profile
+`sha256:603f0e674e131ef795f115f099cdeb514452a82def41e5b5853f84f62d7ff281`
+and EXP-1383 only. That signer authorization does not cover the current profile
+or new trust records. No Keychain access or signing occurred; a distinct
+compatible signer scope/source must be decided before creating live enrollment
+and host-trust signatures.
 
 **Batch AKDC / EXP-1656 (2026-10-20):** one anonymous, credential-free GitHub
 REST GET confirmed that public `brainbooster_full_v11` `master` still points to
@@ -32,9 +48,10 @@ commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
 snapshot. No source blobs were fetched. This refreshes branch-head metadata
 only; it neither authenticates repository authorship nor changes the source
 trust status. Independent verifier provenance, authenticated digest-bound
-approval and controlled PR remain OPEN. EXP-1654 remains DRAFT pending its
-specific one-shot testdev image-import gate; no remote import was attempted.
-No code changed. R2/MVP remain OPEN.
+approval and controlled PR remain OPEN. EXP-1654 is superseded because its
+authorization expired and it named the old image. EXP-1661 is the current-pin
+one-shot import gate and remains DRAFT; no remote import was attempted.
+R2/MVP remain OPEN.
 
 **Batch AKDD / EXP-1657 and Batch AKDE / EXP-1658–1659 (2026-10-20):** a
 read-only audit of the historical EXP-1647 observer database found duplicate
@@ -53,6 +70,33 @@ The exact synthetic container verifier test passed. Batch-end offline suite:
 performed on this pin; independent verifier provenance, authenticated
 digest-bound approval and controlled PR publication remain OPEN. R2/MVP remain
 OPEN.
+
+**Batch AKDF / EXP-1660 preparation (2026-10-20):** the historical EXP-1654
+gate was retired after expiry. The existing one-shot HTTP archive sender now
+supports a strictly validated EXP-specific request path and temp-file prefix
+while preserving the historical default; a new wrapper binds a fresh TTY gate
+to the current EXP-1658 image/config/DiffID tuple. Synthetic tests cover no-TTY,
+wrong phrase, expiry-before-side-effect, exact path/pin binding, digest-before-
+load and shell syntax. Focused sender suites passed (21 tests); batch-end full
+offline suite passed (2,124 tests, 26 skipped); `git diff --check` passed.
+EXP-1661 remains DRAFT for one exact user-gated remote image import. Only
+synthetic loopback HTTP tests ran; no external network, Docker, testdev listener,
+or remote action has been performed. This transfer profile cannot
+authenticate the serving host and does not establish verifier trust. R2/MVP
+remain OPEN.
+
+**Batch AKDG / EXP-1662 (2026-10-20):** one credential-free local Ollama run
+used the pinned public snapshot, restricted target container and current
+same-host verifier. The bounded result was `verified`; no approval, publication
+or external write occurred. Stage digest
+`sha256:b0b71bdfe8eff7df1e721cceabcc86c4c4e4a833d859e70ab0499197184cc008`
+was saved and read back. The observer journal contains 94 events with unique
+contiguous sequences 0–93 and no `event_sequence_gap`, but remains partial due
+to unresolved artifact content, partial checkpoint and unverified collector
+coverage. Focused CLI tests passed (58); the full offline suite passed at batch
+end (2,125 tests, 26 skipped). This establishes only a bounded same-host local run, not
+independent verifier trust, authenticated approval, or publication. EXP-1661
+remote image import remains DRAFT; R2/MVP remain OPEN.
 
 **Исторический checkpoint (Batch AKCJ → EXP-1633, 2026-10-19):** EXP-1632
 подтвердила один локальный portable verifier candidate:
@@ -242,8 +286,9 @@ serving-host identity nor remote verifier trust. Local route discovery selected
 Docker operation, listener, SSH, credential access or remote mutation ran.
 Focused helper tests passed (11), transfer/auditor tests passed (33), generated
 target command passed `bash -n`, and batch-end full offline suite passed (2,109
-tests, 26 skipped); `git diff --check` passed. EXP-1654 is a separate DRAFT
-one-shot remote import and has not run. R2/MVP remain OPEN.
+tests, 26 skipped); `git diff --check` passed. Its historical EXP-1654
+one-shot import gate is superseded; current-pin EXP-1661 has not run. R2/MVP
+remain OPEN.
 
 **Batch AKDB / EXP-1655 (2026-10-20):** executed the generated testdev-side
 command offline with isolated stub `curl`, `sha256sum` and `docker` programs.
@@ -252,8 +297,9 @@ refusal before Docker, import failure cleanup, and post-load tuple mismatch
 cleanup. Combined focused tests passed (37), generated command passed `bash -n`,
 and full offline suite passed (2,113 tests, 26 skipped). These tests do not
 prove remote transport or image-store behavior. No network/SSH/credentials,
-real Docker, testdev, listener or remote mutation occurred. EXP-1654 remains
-DRAFT and no import has run. R2/MVP remain OPEN.
+real Docker, testdev, listener or remote mutation occurred. EXP-1654 is
+superseded; current-pin EXP-1661 remains DRAFT and no import has run. R2/MVP
+remain OPEN.
 
 **Исторический checkpoint (Batch AKCC → EXP-1621, 2026-10-19):** последняя
 успешная цепочка с реальным локальным Worker — EXP-1269: pinned public
@@ -376,8 +422,8 @@ EXP-1493 и EXP-1494 — отдельные DRAFT transfer/import gates; оба 
 EXP-1465 не применялись: соответствующие карточки BLOCKED и ссылаются на
 устаревшие pins/scope. Следующий remote replay потребует принятия актуальных
 transfer/import gates и новой карточки с отдельным свежим разрешением.
-Кроме того, текущий verifier profile digest
-`sha256:95187a75559f945fdaf40b194f5d8815da21baa6c8f165efc16cded68b57c758`
+Кроме того, после repin Batch AKDE локальный verifier profile digest
+`sha256:34d973ee7632a397b3941b32408dd7903774ed38c9958ad41bd4e6194ddfd280`
 не совпадает с profile digest
 `sha256:603f0e674e131ef795f115f099cdeb514452a82def41e5b5853f84f62d7ff281`,
 жёстко разрешённым в `scripts/exp1383_macos_keychain_signer.swift`; этот signer

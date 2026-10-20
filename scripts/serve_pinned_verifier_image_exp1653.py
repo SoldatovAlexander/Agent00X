@@ -14,6 +14,7 @@ import hashlib
 import http.server
 import ipaddress
 import io
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -149,9 +150,32 @@ def prepare_archive(
     return saved.stdout
 
 
-def remote_import_command(bind_address: str, port: int, archive_sha256: str) -> str:
+def remote_import_command(
+    bind_address: str,
+    port: int,
+    archive_sha256: str,
+    *,
+    request_path: str = REQUEST_PATH,
+    task_prefix: str = "agent00x-exp1654",
+) -> str:
     """Return a shell command for the user to run on the target's open console."""
-    url = f"http://{bind_address}:{port}{REQUEST_PATH}"
+    if (
+        type(request_path) is not str
+        or re.fullmatch(r"/exp-[0-9]+/verifier-image\.tar", request_path) is None
+    ):
+        raise ValueError("request path must be a fixed EXP endpoint")
+    if (
+        validate_bind_address(bind_address) != bind_address
+        or type(port) is not int
+        or not 1 <= port <= 65535
+    ):
+        raise ValueError("endpoint address and port must be explicit")
+    if (
+        type(task_prefix) is not str
+        or re.fullmatch(r"agent00x-exp[0-9]+", task_prefix) is None
+    ):
+        raise ValueError("task prefix must be a fixed EXP identifier")
+    url = f"http://{bind_address}:{port}{request_path}"
     expected = _REMOTE_EXPECTED_TUPLE
     fmt = pinned._REMOTE_INSPECT_FORMAT
     if (
@@ -162,7 +186,7 @@ def remote_import_command(bind_address: str, port: int, archive_sha256: str) -> 
         raise ValueError("archive digest must be lowercase SHA-256 hex")
     return (
         "umask 077; set -eu; "
-        "archive_file=$(mktemp /tmp/agent00x-exp1654.XXXXXX); "
+        f"archive_file=$(mktemp /tmp/{task_prefix}.XXXXXX); "
         "trap 'rm -f \"$archive_file\"' EXIT; "
         f"if ! curl -fsS --max-time {TRANSFER_TIMEOUT_SECONDS} --output \"$archive_file\" '{url}' 2>/dev/null; then "
         "printf '%s\\n' IMAGE_DOWNLOAD_FAILED; exit 1; fi; "
@@ -184,8 +208,14 @@ class _OneShotServer(http.server.HTTPServer):
     allow_reuse_address = False
     request_queue_size = 1
 
-    def __init__(self, address: tuple[str, int], archive: bytes):
+    def __init__(
+        self,
+        address: tuple[str, int],
+        archive: bytes,
+        request_path: str = REQUEST_PATH,
+    ):
         self.archive = archive
+        self.request_path = request_path
         self.request_consumed = False
         self.archive_served = False
         super().__init__(address, _ArchiveHandler, bind_and_activate=True)
@@ -230,7 +260,7 @@ class _ArchiveHandler(http.server.BaseHTTPRequestHandler):
         if self.client_address[0] != TARGET_ADDRESS:
             self._reply(403)
             return
-        if self.path != REQUEST_PATH:
+        if self.path != server.request_path:
             self._reply(404)
             return
         server.archive_served = self._reply(200, server.archive)
@@ -249,6 +279,8 @@ def serve_once(
     port: int,
     output: TextIO = sys.stdout,
     server_factory: Callable[..., _OneShotServer] = _OneShotServer,
+    request_path: str = REQUEST_PATH,
+    task_prefix: str = "agent00x-exp1654",
 ) -> int:
     if (
         validate_bind_address(bind_address) != bind_address
@@ -256,22 +288,36 @@ def serve_once(
         or not 0 <= port <= 65535
         or type(archive) is not bytes
         or len(archive) != pinned.STREAM_SIZE
+        or type(request_path) is not str
+        or re.fullmatch(r"/exp-[0-9]+/verifier-image\.tar", request_path) is None
+        or type(task_prefix) is not str
+        or re.fullmatch(r"agent00x-exp[0-9]+", task_prefix) is None
     ):
         return _emit("PREPARED_INPUT_INVALID", output)
     try:
-        server = server_factory((bind_address, port), archive)
+        if request_path == REQUEST_PATH:
+            server = server_factory((bind_address, port), archive)
+        else:
+            server = server_factory((bind_address, port), archive, request_path)
     except Exception:
         return _emit("LISTENER_FAILED", output)
     with server:
         actual_port = server.server_address[1]
         archive_digest = hashlib.sha256(archive).hexdigest()
         output.write(
-            f"IMAGE_READY|url=http://{bind_address}:{actual_port}{REQUEST_PATH}|"
+            f"IMAGE_READY|url=http://{bind_address}:{actual_port}{request_path}|"
             f"bytes={len(archive)}|archive_sha256={archive_digest}\n"
         )
         output.write("On the testdev console run exactly this one-shot command:\n")
         output.write(
-            remote_import_command(bind_address, actual_port, archive_digest) + "\n"
+            remote_import_command(
+                bind_address,
+                actual_port,
+                archive_digest,
+                request_path=request_path,
+                task_prefix=task_prefix,
+            )
+            + "\n"
         )
         output.flush()
         try:

@@ -1995,6 +1995,34 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             "EXP-1647"
         )
 
+    def test_exp1662_is_a_fresh_one_shot_for_the_current_verifier_pin(self):
+        self.assertEqual(
+            cli.AUTHORIZATION_PROFILES["EXP-1662"],
+            (
+                "RUN EXP-1662 ONCE",
+                "process-exp-1662-local-001",
+                "task-exp-1662-local-001",
+            ),
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_SNAPSHOT_ORIGINS["EXP-1662"],
+            "github_rest_api_claim",
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1662"], "local-ollama"
+        )
+        self.assertEqual(
+            cli.VERIFIER_RUNTIME_IMAGE_ID,
+            "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0",
+        )
+        self.assertEqual(
+            cli.VERIFIER_RUNTIME_CODE_DIGEST,
+            "sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f",
+        )
+        self._assert_local_profile_uses_container_without_constructing_credentials(
+            "EXP-1662"
+        )
+
     def test_model_backend_card_mismatches_stop_before_all_side_effects(self):
         cases = (
             ["--authorization-card-id", "EXP-842"],

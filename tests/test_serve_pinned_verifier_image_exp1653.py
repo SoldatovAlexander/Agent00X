@@ -63,6 +63,8 @@ class ServePinnedVerifierImageExp1653Tests(unittest.TestCase):
         expected_digest: str,
         load_returncode: int = 0,
         inspect_tuple: str | None = None,
+        request_path: str = serve.REQUEST_PATH,
+        task_prefix: str = "agent00x-exp1654",
     ):
         tempdir = tempfile.TemporaryDirectory()
         root = Path(tempdir.name)
@@ -118,7 +120,11 @@ class ServePinnedVerifierImageExp1653Tests(unittest.TestCase):
 
         bind_address, port = "192.168.88.5", 49237
         command = serve.remote_import_command(
-            bind_address, port, expected_digest
+            bind_address,
+            port,
+            expected_digest,
+            request_path=request_path,
+            task_prefix=task_prefix,
         )
         environment = os.environ.copy()
         environment.update(
@@ -128,7 +134,7 @@ class ServePinnedVerifierImageExp1653Tests(unittest.TestCase):
                 "TEST_ARCHIVE_PATH_LOG": str(path_log),
                 "TEST_DOCKER_LOAD_MARKER": str(docker_log),
                 "TEST_EXPECTED_URL": (
-                    f"http://{bind_address}:{port}{serve.REQUEST_PATH}"
+                    f"http://{bind_address}:{port}{request_path}"
                 ),
                 "TEST_EXPECTED_TUPLE": actual_tuple,
                 "TEST_DOCKER_LOAD_RC": str(load_returncode),
@@ -291,6 +297,20 @@ class ServePinnedVerifierImageExp1653Tests(unittest.TestCase):
         self.assertEqual(result.stdout, "IMAGE_IDENTITY_MISMATCH\n")
         self.assertTrue(docker_called)
         self.assertTrue(docker_input.startswith("/tmp/agent00x-exp1654."))
+
+    def test_exp1661_generated_command_hashes_before_one_import_and_cleans_temp(self):
+        archive = b"current-exp1661-archive"
+        digest = hashlib.sha256(archive).hexdigest()
+        result, docker_called, docker_input = self._run_remote_command_stubbed(
+            archive=archive,
+            expected_digest=digest,
+            request_path="/exp-1661/verifier-image.tar",
+            task_prefix="agent00x-exp1661",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "IMAGE_IMPORT_CONFIRMED\n")
+        self.assertTrue(docker_called)
+        self.assertTrue(docker_input.startswith("/tmp/agent00x-exp1661."))
 
     def test_serve_once_prints_only_ephemeral_endpoint_and_user_command(self):
         output = io.StringIO()

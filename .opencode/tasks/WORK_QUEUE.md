@@ -58633,17 +58633,17 @@ Docker or listener action and consumed no authorization.
 Transfer/auditor focused tests passed
 (33); generated target command passed `bash -n`; batch-end full offline suite
 passed (2,109 tests, 26 skipped); `git diff --check` passed. The separate
-runtime/import card is EXP-1654 and remains DRAFT pending its fresh exact user
-gate. R2/MVP remain OPEN.
+runtime/import card was EXP-1654; it is now superseded after expiry and the
+current-pin replacement is EXP-1661. R2/MVP remain OPEN.
 
 #### EXP-1654 — one credential-free HTTP image import on the verifier host
-Статус: DRAFT — requires a fresh exact user gate `RUN EXP-1654 ONCE` in the
-local helper, expiring 2026-10-20 16:19:21 UTC (19:19:21 Europe/Moscow).
-The helper enforces the expiry before Docker/listener activity. Only after
-that gate, run
+Статус: SUPERSEDED 2026-10-20. Its one-shot gate expired at
+2026-10-20 16:19:21 UTC and the card names the old EXP-1632 image. Do not run
+or reuse it. EXP-1661 is the replacement card for the current verifier pin and
+requires a new exact gate. The old profile command was
 `PYTHONDONTWRITEBYTECODE=1 python3 scripts/serve_pinned_verifier_image_exp1653.py --bind-address 192.168.88.5 --port 0`.
-The helper performs one local read-only exact image inspect, one in-memory
-`docker image save` by manifest ID
+The old helper would have performed one local read-only exact image inspect,
+one in-memory `docker image save` by manifest ID
 `sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f`,
 validates the full archive against config ID
 `sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9`,
@@ -58680,7 +58680,7 @@ Combined focused tests passed (37); generated command passed `bash -n`; full
 offline suite passed (2,113 tests, 26 skipped); `git diff --check` passed.
 No network, SSH, credentials, real Docker, testdev, listener, remote mutation,
 approval, provider action, or cleanup outside test temporary directories.
-EXP-1654 remains DRAFT for one fresh, expiring, user-gated import. R2/MVP
+EXP-1654 is superseded by EXP-1661; no remote import was performed. R2/MVP
 remain OPEN.
 
 ### Batch AKDC — refresh the public source pin metadata (1 bounded task)
@@ -58797,3 +58797,116 @@ records. No second Docker build, tag removal/retag, remote transfer/import,
 service, credentials, Worker/model, approval, provider write, commit, push, or
 deployment. On any failed marker or mismatch, stop; retain the candidate and
 leave R2/MVP OPEN.
+
+### Batch AKDF — refresh the one-shot image-import profile for the current verifier pin (1 accepted local task + 1 gated remote task)
+
+#### EXP-1660 — add a fresh expiring delivery gate and synthetic-test its exact current-pin command
+Статус: ACCEPTED 2026-10-20. The shared sender now accepts only a validated
+`/exp-NNNN/verifier-image.tar` path and safe task-specific temporary-file
+prefix, while its EXP-1654 defaults remain unchanged. The new EXP-1660 wrapper
+has its own TTY exact-phrase/expiry checks and binds only to the current
+EXP-1658 image archive and `192.168.88.5`→`192.168.88.101` one-shot transfer
+profile. Synthetic tests cover no-TTY/wrong phrase, expiry before side effects,
+current image preflight/archive pinning, path/prefix isolation, shell syntax,
+digest-before-load, one load, exact post-load tuple and temporary-file cleanup.
+Focused tests for both profiles passed (21); generated shell passed `bash -n`;
+full offline suite passed (2,124 tests, 26 skipped); `git diff --check` passed.
+Only synthetic loopback HTTP tests ran; no external network, Docker, testdev
+listener, SSH or remote action occurred. EXP-1661 remains DRAFT and requires a
+fresh user gate.
+
+Implementation details and exact checks: the historical EXP-1653 helper keeps
+its original defaults; EXP-1660 selects the already inspected EXP-1658
+image/config/platform/DiffIDs/code pins at runtime. The new profile's gate is
+`RUN EXP-1661 ONCE` and its expiry is 2026-10-21 15:00:00 UTC; this is not
+approval to use credentials or perform any verifier request. No live network,
+SSH, testdev, Docker, Worker, model, signer, approval, provider write, commit,
+push or deployment occurred during EXP-1660. Synthetic loopback listener
+tests are not testdev or remote runtime evidence.
+
+Allowed paths: `scripts/serve_pinned_verifier_image_exp1653.py`,
+`scripts/serve_pinned_verifier_image_exp1660.py`,
+`tests/test_serve_pinned_verifier_image_exp1653.py`,
+`tests/test_serve_pinned_verifier_image_exp1660.py`, this queue,
+`docs/24-mvp-final-plan.md`, and `docs/27-implementation-status.md`.
+Checks performed: focused tests for both profiles, generated remote command
+`bash -n`, one complete offline suite at batch end and `git diff --check`.
+The EXP-1647 SQLite evidence was not modified or reused.
+
+#### EXP-1661 — one user-gated current-pin import into the verifier host image store
+Статус: DRAFT. No remote operation has been authorized or attempted. After
+EXP-1660 acceptance, the user may authorize exactly one invocation by entering
+`RUN EXP-1661 ONCE` in the helper's interactive local terminal before expiry
+2026-10-21 15:00:00 UTC. The only remote effect is one Docker image load into
+`alex@192.168.88.101`'s image store, followed by exact inspect of config ID
+`sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42`,
+OS/architecture and ordered nine DiffIDs; expected RepoTags is empty. Local
+preflight inspects and saves only image
+`sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0`,
+platform `linux/amd64`, code digest
+`sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`;
+the full archive must match exact nine DiffIDs and one archive SHA-256 before
+serving. The temporary HTTP listener is bound only to local interface
+`192.168.88.5`, fixed endpoint `/exp-1661/verifier-image.tar`, accepts one GET
+only from `192.168.88.101`, and idles out after at most 900 seconds. No remote
+service/container start, verifier request, credentials, SSH, tag rewrite,
+cleanup except the import command's own temp archive EXIT trap, retry, follow-up
+diagnostic, Worker/model, signer, approval, provider write, PR, push or
+deployment. HTTP does not authenticate host identity; digest and post-load
+identity establish content integrity only, not verifier trust. On timeout or
+uncertain result, stop and leave any imported image as-is pending a new card.
+No execution before the fresh exact user gate.
+
+### Batch AKDG — replay one current-pin Worker run after observer sequencing fix (1 one-shot local task)
+
+#### EXP-1662 — one credential-free Ollama Worker → restricted target → current same-host verifier run
+Статус: ACCEPTED 2026-10-20. The single authorized runner invocation returned
+`verified`; target tests passed and stage digest
+`sha256:b0b71bdfe8eff7df1e721cceabcc86c4c4e4a833d859e70ab0499197184cc008`
+was read back from the evidence database. The observer report contains 94
+events for run `run-081fa6add4be42d1881331216879bc33`, with unique contiguous
+sequences 0–93 and no `event_sequence_gap`. Its completeness remains `partial`
+with `artifact_content_unresolved`, `checkpoint_partial`, and
+`collector_coverage_unverified`; this is bounded same-host evidence, not a
+complete or independent audit. No approval/publication or external write was
+created. Add a new fixed
+`EXP-1662` authorization entry to `scripts/run_pinned_deepseek_worker.py`
+and matching profile tests. Then perform at most one run against the already
+pinned public snapshot: commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`,
+tree `2007066217aadafd9887fb3e3069220333b4fddb`; one local Ollama inference;
+restricted Worker container; exact pinned target image
+`sha256:f22c0b03d5d60c44f433935952199aeaed497b4d3fb3400933e69a144e0fc187`;
+current local verifier image
+`sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0`
+and code digest
+`sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`.
+Write only `EXP-1662-observer.sqlite3` and `EXP-1662-stage.sqlite3`; both
+must be absent/non-symlinks before invocation. Run focused Worker CLI/profile
+tests first. Preflight only these two exact image IDs/platforms and the two
+evidence paths. Require loopback port 11434 initially closed; if all local
+preflight gates pass, start exactly one owned `/opt/homebrew/bin/ollama serve`
+with `OLLAMA_NO_CLOUD=1` and `OLLAMA_HOST=127.0.0.1:11434`, using the already
+installed pinned model only (no pull/download). Continue only if metadata is
+exactly Ollama `0.40.3` and model digest
+`dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364`.
+
+Exact runner command:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_pinned_deepseek_worker.py --authorization-card-id EXP-1662 --model-backend local-ollama --verifier-backend pinned-docker --worker-backend restricted-container --credential-source not-applicable --observation-database '/Volumes/DATA/Проекты/Агент 00Х/EXP-1662-observer.sqlite3' '/Volumes/DATA/Проекты/Агент 00Х/EXP-1662-stage.sqlite3'`.
+At its TTY gate enter exactly `RUN EXP-1662 ONCE`. Scope: one quota/readiness
+GET, at most 25 anonymous pinned-snapshot GETs, one local Ollama metadata
+preflight, at most one model inference, restricted target test and at most
+one current-pin same-host verifier call. Acceptance requires the bounded CLI
+result to be `verified`, target tests pass, stage digest is saved/read back,
+and the Observer report has contiguous unique sequences with no
+`event_sequence_gap`. Preserve failed run evidence and stop on any gate or
+runtime failure; do not retry, inspect raw source/model/child output or SQLite
+payload. Stop only the exact Ollama process started by this card after the
+runner terminates. No credentials, Keychain, SSH/testdev, remote verifier,
+approval, provider write, branch/PR, push, deployment or cleanup. This remains
+same-host evidence and cannot promote independent-trust or approval claims.
+Allowed paths: runner, `tests/test_pinned_deepseek_worker_cli.py`, this queue,
+`docs/24-mvp-final-plan.md`, `docs/27-implementation-status.md`, and the two
+named evidence DBs. Focused tests passed (58); local metadata preflight matched
+the pinned Ollama version/model digest and both exact Docker image IDs/platforms.
+One full offline suite passed at batch end (count recorded in the implementation
+status) and `git diff --check` passed. R2/MVP remain OPEN.

@@ -59,12 +59,19 @@ trust boundaries. Наблюдатель и обучение через конт
    репозиторные скрипты не содержали альтернативного credential-free remote
    import пути. Batch AKDA добавил локально тестированный, но не запущенный
    helper одноразовой HTTP-отдачи образа: он работает без credentials, однако
-   не аутентифицирует serving host; remote import EXP-1654 остаётся DRAFT.
+   не аутентифицирует serving host; EXP-1654 истёк и superseded. Batch AKDF
+   подготовил локальный delivery profile для текущего pin; remote import
+   EXP-1661 остаётся DRAFT до нового точного подтверждения. Batch AKDG
+   выполнил один credential-free локальный Worker run на текущем pin:
+   `verified`, target tests и stage readback прошли; 94 observer-события имеют
+   непрерывные уникальные sequence. Observer всё ещё partial из-за трёх
+   ограничений покрытия, а запуск не создал approval/publication. Это не
+   independent-host evidence и не закрывает R2/MVP.
    Это транспортная гипотеза, а не verifier trust. Для проверки provenance потребуются
    независимо закреплённый authority key-set и валидные подписи enrollment,
    host-trust decision и verifier response. Ни одно из этих условий нельзя
    подменять локальным same-host evidence или synthetic signatures. До
-   исполнения EXP-1654 и подготовки реальных доверенных доказательств remote
+   исполнения EXP-1661 и подготовки реальных доверенных доказательств remote
    verifier/approval/publication не запускать; R2/MVP
    остаются OPEN.
    EXP-1656 (2026-10-20) одним анонимным read-only GitHub REST GET подтвердил,
@@ -75,6 +82,10 @@ trust boundaries. Наблюдатель и обучение через конт
    локально пересобрали и согласованно закрепили verifier image/code/bundle;
    synthetic container test и batch-end suite (2,118 tests, 26 skipped)
    прошли. Новый Worker run на этом pin и remote trust evidence отсутствуют.
+   EXP-1660 обновила одноразовый transfer profile для текущего pin; 21 focused
+   тест и batch-end suite (2,124 tests, 26 skipped) прошли. EXP-1661 всё ещё
+   требует свежего user gate и не подтверждает trust даже после успешного
+   импорта.
    После EXP-1384 были выполнены EXP-1391—1393 и локальная EXP-1395.
    EXP-1395 добавила replay сохранённого stage через фиксированный trusted-HTTPS
    verifier с caller-pinned публичными trust-записями и exact trust digests в

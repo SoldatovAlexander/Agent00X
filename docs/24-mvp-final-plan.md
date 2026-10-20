@@ -67,6 +67,14 @@ trust boundaries. Наблюдатель и обучение через конт
    исполнения EXP-1654 и подготовки реальных доверенных доказательств remote
    verifier/approval/publication не запускать; R2/MVP
    остаются OPEN.
+   EXP-1656 (2026-10-20) одним анонимным read-only GitHub REST GET подтвердил,
+   что `brainbooster_full_v11/master` всё ещё соответствует pinned commit/tree
+   EXP-1647; authorship/source trust этим не подтверждены.
+   EXP-1657 исправила резервирование sequence для вложенного вызова Worker →
+   model channel; старый журнал EXP-1647 не переписывался. EXP-1658/1659
+   локально пересобрали и согласованно закрепили verifier image/code/bundle;
+   synthetic container test и batch-end suite (2,118 tests, 26 skipped)
+   прошли. Новый Worker run на этом pin и remote trust evidence отсутствуют.
    После EXP-1384 были выполнены EXP-1391—1393 и локальная EXP-1395.
    EXP-1395 добавила replay сохранённого stage через фиксированный trusted-HTTPS
    verifier с caller-pinned публичными trust-записями и exact trust digests в

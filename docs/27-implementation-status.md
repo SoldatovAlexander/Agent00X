@@ -25,6 +25,35 @@ listener и Docker load не запускать. Затем нужны
 human approval и controlled real PR publication. Ни один из этих критериев не
 закрыт; R2/MVP остаются OPEN.
 
+**Batch AKDC / EXP-1656 (2026-10-20):** one anonymous, credential-free GitHub
+REST GET confirmed that public `brainbooster_full_v11` `master` still points to
+commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, matching EXP-1647's pinned source
+snapshot. No source blobs were fetched. This refreshes branch-head metadata
+only; it neither authenticates repository authorship nor changes the source
+trust status. Independent verifier provenance, authenticated digest-bound
+approval and controlled PR remain OPEN. EXP-1654 remains DRAFT pending its
+specific one-shot testdev image-import gate; no remote import was attempted.
+No code changed. R2/MVP remain OPEN.
+
+**Batch AKDD / EXP-1657 and Batch AKDE / EXP-1658–1659 (2026-10-20):** a
+read-only audit of the historical EXP-1647 observer database found duplicate
+sequence 67 for the outer Worker intent and nested model intent, with sequence
+69 absent. The journal now reserves the outer intent sequence at the existing
+post-checkpoint/pre-dispatch callback, before nested dispatch. A synthetic
+nested Worker→JournaledModelChannel regression verifies contiguous unique
+sequences; the old EXP-1647 database remains unchanged and its gap is not
+retroactively repaired. The verifier candidate was rebuilt offline and pinned
+as image `sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0`,
+config `sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42`,
+code `sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`;
+the deterministic host bundle is `sha256:80c0ecb5fae7eef247b5d4b830a67a49bb818727ea19f6e911d4a8cbe048c0f6`.
+The exact synthetic container verifier test passed. Batch-end offline suite:
+2,118 tests, 26 skipped, all passing. No remote import or new Worker run was
+performed on this pin; independent verifier provenance, authenticated
+digest-bound approval and controlled PR publication remain OPEN. R2/MVP remain
+OPEN.
+
 **Исторический checkpoint (Batch AKCJ → EXP-1633, 2026-10-19):** EXP-1632
 подтвердила один локальный portable verifier candidate:
 manifest/image ID `sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f`,

@@ -323,6 +323,63 @@ class ObserverRuntimeTests(unittest.TestCase):
             resumed_channel.create_chat_completion(payload, timeout_seconds=17)
         self.assertEqual(len(calls), 1)
 
+    def test_nested_model_call_reserves_worker_intent_sequence_before_dispatch(self):
+        store = ObservationStore()
+
+        class ModelChannel:
+            def create_chat_completion(self, payload, *, timeout_seconds):
+                return {"choice_count": len(payload["messages"])}
+
+        class Worker:
+            channel = None
+
+            def propose(self, _request):
+                self.channel.create_chat_completion(
+                    {"messages": [{"content": "synthetic"}]}, timeout_seconds=1
+                )
+                return WorkerTerminalOutcome(
+                    "blocked", "target_test_outcome_unknown"
+                )
+
+        worker = Worker()
+        run = JournaledProposalWorker(
+            worker,
+            store,
+            process_id="process-nested-model-sequence-001",
+            task_id="task-nested-model-sequence-001",
+            id_factory=fixed_ids(),
+            clock=fixed_clock(),
+        )
+        channel = JournaledModelChannel(ModelChannel())
+        channel.bind(run)
+        worker.channel = channel
+
+        result = run.propose(
+            SimpleNamespace(
+                process_id="process-nested-model-sequence-001",
+                task_id="task-nested-model-sequence-001",
+            )
+        )
+        self.assertEqual(result.outcome, "blocked")
+        run.finish_agent_invocation(status="ok")
+        events = store.events()
+        sequences = [event["sequence"] for event in events]
+        self.assertEqual(sequences, list(range(len(events))))
+        self.assertEqual(
+            [event["event_type"] for event in events[:5]],
+            [
+                "agent_started",
+                "tool_requested",
+                "tool_requested",
+                "tool_completed",
+                "tool_completed",
+            ],
+        )
+        report = build_history_report(
+            list(enumerate(events)), list(enumerate(store.checkpoints()))
+        )
+        self.assertNotIn("event_sequence_gap", {gap["code"] for gap in report["gaps"]})
+
     def test_model_channel_cannot_dispatch_until_bound_to_observer_run(self):
         calls = []
 

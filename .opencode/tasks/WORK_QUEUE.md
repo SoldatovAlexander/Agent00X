@@ -58682,3 +58682,118 @@ No network, SSH, credentials, real Docker, testdev, listener, remote mutation,
 approval, provider action, or cleanup outside test temporary directories.
 EXP-1654 remains DRAFT for one fresh, expiring, user-gated import. R2/MVP
 remain OPEN.
+
+### Batch AKDC — refresh the public source pin metadata (1 bounded task)
+
+#### EXP-1656 — compare public BrainBooster `master` with the pinned snapshot
+Статус: ACCEPTED 2026-10-20. Made exactly one anonymous HTTPS GET, without an
+Authorization header, to
+`https://api.github.com/repos/SoldatovAlexander/brainbooster_full_v11/commits/master`.
+The sanitized response reported commit
+`2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e` and tree
+`2007066217aadafd9887fb3e3069220333b4fddb`, matching the source snapshot used
+by EXP-1647. No additional API calls, blob reads, credentials, Worker/model,
+verifier, approval, provider write, branch/PR/push or deployment occurred. This
+confirms only that the public branch head still matches the already pinned
+snapshot at observation time; it does not establish repository authorship or
+source trust. No code changed and no commit was created. R2/MVP remain OPEN.
+
+### Batch AKDD — close the observed nested observer sequence gap (1 local task)
+
+#### EXP-1657 — reserve the outer Worker intent sequence before nested model dispatch
+Статус: ACCEPTED 2026-10-20 после pin-consistent rebuild и batch-end suite.
+Synthetic nested-call regression и observer-runtime suite проходят (56 tests).
+Первый полный suite выявил stale verifier code/image/host-bundle facts; поэтому
+точно пересобраны и сопоставлены image, code и bundle, а не изменены одни
+ожидания. Финальный suite прошёл (2,118 tests, 26 skipped). Read-only metadata audit
+of `EXP-1647-observer.sqlite3` established 94 events, sequences 0–93, duplicate
+sequence 67, and missing sequence 69. Cursor 67 is the outer
+`ProposalWorker.propose` intent; cursor 68 is the nested
+`ModelChannel.create_chat_completion` intent, also assigned sequence 67. The
+original database and all user evidence artifacts must remain untouched.
+
+Allowed paths: `src/app_contracts/observer_runtime.py`,
+`tests/test_observer_runtime.py`, `.opencode/tasks/WORK_QUEUE.md`,
+`docs/27-implementation-status.md`, and `docs/28-observer-and-learning.md`.
+Use the existing `run_gated_dispatch(on_intent_recorded=...)` callback in
+`JournaledProposalWorker.propose` to advance the run sequence and causal cursor
+after the intent/checkpoint are durably recorded but before Worker dispatch;
+do not increment that intent a second time after dispatch. Add a synthetic
+nested Worker→JournaledModelChannel regression asserting contiguous unique
+sequence values and no `event_sequence_gap` report. Do not weaken validation or
+edit the EXP-1647 database.
+
+Checks: focused `tests/test_observer_runtime.py`, then the agreed full offline
+suite once at batch end and `git diff --check`. No Docker, network, SSH,
+credentials, model/Worker live call, authority signing, approval, provider
+write, commit, push, or deployment. No experiment rerun. This repairs the
+observer sequencing mechanism for future runs; it does not retroactively alter
+EXP-1647 evidence or establish independent verifier trust. R2/MVP remain OPEN.
+
+### Batch AKDE — rebuild and repin the verifier after the observer correction (2 dependent tasks)
+
+#### EXP-1658 — build one offline verifier candidate containing the sequence fix
+Статус: ACCEPTED 2026-10-20. The exact one-shot command
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/export_loaded_verifier_candidate_exp1658.py`
+returned exactly
+`PORTABLE_ARCHIVE_CONFIRMED|manifest=sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0|config=sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42|size=48857457|layers=9|archive_bytes=48871936|code=sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`.
+The isolated runner validated one exact local `linux/amd64` Buildx candidate
+against the pinned target dependency and full portable archive auditor; its
+temporary copy container was removed and the fresh image tag is retained. The
+candidate is not deployed or remotely trusted. Wrapper test passed; the
+executor requires one follow-up bounded inspect for the ordered DiffIDs before
+any active pin changes.
+
+Exact candidate tag:
+`agent00x-verifier:exp-1658`; pinned target dependency:
+`sha256:f22c0b03d5d60c44f433935952199aeaed497b4d3fb3400933e69a144e0fc187`;
+platform `linux/amd64`; expected verifier context code digest
+`sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`.
+The one opt-in runner invocation is
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/export_loaded_verifier_candidate_exp1658.py`.
+It must use isolated Docker config, local Unix daemon, offline Buildx
+(`--pull=false`, `--network=none`), exact tag-absence and base/target preflight,
+and the existing full archive identity auditor. Accept only one bounded
+`PORTABLE_ARCHIVE_CONFIRMED` marker for manifest/config/platform/layers/code
+matching the exact expected code digest. The one-shot command removes its
+temporary copy container; the fresh candidate tag is intentionally retained.
+On failure stop without retry, tag inspect, or cleanup.
+
+Allowed implementation/test paths: `scripts/export_loaded_verifier_candidate_exp1580.py`,
+`scripts/export_loaded_verifier_candidate_exp1658.py`, and
+`tests/test_export_loaded_verifier_candidate_exp1658.py`, plus this queue.
+No target-image change, production pin update, tag removal/retag, network,
+SSH/testdev, credentials, Worker/model, approval, provider write, commit, push,
+or deployment. This is a local candidate build, not a trusted or deployed
+verifier. EXP-1659 remains DRAFT until its exact candidate facts are accepted.
+
+#### EXP-1659 — inspect and repin verifier image/code and host bundle as one set
+Статус: ACCEPTED 2026-10-20 после read-only candidate inspect, согласованного
+repin и успешного batch-end suite (2,118 tests, 26 skipped). The one read-only
+inspect returned
+`IMAGE_TUPLE_CONFIRMED|id=sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0|platform=linux/amd64|size=48857457|diff_ids=sha256:a6dc765193a52cbaede3c93a9ff48b9540948dd0774bbe7031fcb5847606f9ac,sha256:a5c84380b3657bb723a1f71fa963f1e3a3f01e2c6bcba12e3b9a0d336158c7a9,sha256:4a01ba3ac604812ef31dab0006efecd1d572676f7a68afa169a9d57883025006,sha256:d190d09d7bd91836f809045799a7024a54026b3da5de1ccb811627fcf9878b92,sha256:beabc7f2b008356b23800eefa4ad544e11ddb9f695c47f9dbd740c59319dc536,sha256:9b57205ce6c7f897a201da5080de50cf0abddf267a68d5d40e65b33860672413,sha256:ce69400711a693d54ad36863e81a61e853a3a72fd063a5c7abe67c5f91ed7736,sha256:eeeece982ad49e8d6decd0e61a2e63a84d79384bcf7ff25222791ad2bb1bb682,sha256:1b25752190e75eef92e61abad741ae09b2d1ce8108f84af7470ecd7fcf3a7e4f|tag=agent00x-verifier:exp-1658`.
+The exact new bundle facts are
+`BUNDLE_FACTS|sha256=80c0ecb5fae7eef247b5d4b830a67a49bb818727ea19f6e911d4a8cbe048c0f6|members=34|source_bytes=567222|archive_bytes=604160`.
+The one read-only local Docker inspect used the new bounded helper:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/inspect_exp1658_candidate_exp1659.py`.
+The helper inspected only `agent00x-verifier:exp-1658` and accepted the exact
+tuple shown above, emitting no raw diagnostics. If any result differs, stop.
+
+After accepting that exact tuple, the current verifier manifest/config/code
+tuple, its transfer helper expectations and deterministic host-bundle facts
+were updated only from measured outputs. The exact `linux/amd64`,
+`--pull=never`, `--network=none` synthetic verifier-container test against that
+manifest/code pin. Acceptance: candidate archive manifest/config/platform/
+layers and code digest match the new pin; full bundle facts match recomputation;
+the pinned synthetic verifier request passes; batch-end full offline suite
+passes. Allowed paths: the inspector and focused tests, `src/app_contracts/verifier_image_pin.py`,
+`scripts/stream_pinned_verifier_image.py`, `tests/test_stream_pinned_verifier_image.py`,
+`scripts/stream_pinned_verifier_host_bundle.py`, `tests/test_stream_pinned_verifier_host_bundle.py`,
+bundle-derived tests, `docs/24-mvp-final-plan.md`, `docs/27-implementation-status.md`,
+this queue, and any exact pin test shown stale by the full suite.
+
+Do not alter the target runtime pin or reuse stale enrollment/provenance
+records. No second Docker build, tag removal/retag, remote transfer/import,
+service, credentials, Worker/model, approval, provider write, commit, push, or
+deployment. On any failed marker or mismatch, stop; retain the candidate and
+leave R2/MVP OPEN.

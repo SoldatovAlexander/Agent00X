@@ -12,11 +12,11 @@ import sys
 from typing import Callable, Sequence, TextIO
 
 
-IMAGE_ID = "sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f"
-REMOTE_CONFIG_IMAGE_ID = "sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9"
-IMAGE_CODE_DIGEST = "sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7"
-IMAGE_TAG = "agent00x-verifier:exp-1632"
-IMAGE_SIZE = 48857362
+IMAGE_ID = "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0"
+REMOTE_CONFIG_IMAGE_ID = "sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42"
+IMAGE_CODE_DIGEST = "sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f"
+IMAGE_TAG = "agent00x-verifier:exp-1658"
+IMAGE_SIZE = 48857457
 STREAM_SIZE = 48871936
 OS = "linux"
 ARCH = "amd64"
@@ -26,10 +26,10 @@ DIFF_IDS = (
     "sha256:4a01ba3ac604812ef31dab0006efecd1d572676f7a68afa169a9d57883025006",
     "sha256:d190d09d7bd91836f809045799a7024a54026b3da5de1ccb811627fcf9878b92",
     "sha256:beabc7f2b008356b23800eefa4ad544e11ddb9f695c47f9dbd740c59319dc536",
-    "sha256:76f9902e37cc68c835261cdc39fbdd622d98b1c9ed7a4ee694ea790a67ff1c2e",
-    "sha256:859663757df2684787c235e4147f7d5eaee82007cd1487471e0ebae693c4ad68",
-    "sha256:ccb686397a568101cf51993a97d32c193065a46031942a21b8a676fa066cf991",
-    "sha256:e21f3a32238e1146d1176cc62b3a78cbb23ff17b5fa40b62178ad9f75184325d",
+    "sha256:9b57205ce6c7f897a201da5080de50cf0abddf267a68d5d40e65b33860672413",
+    "sha256:ce69400711a693d54ad36863e81a61e853a3a72fd063a5c7abe67c5f91ed7736",
+    "sha256:eeeece982ad49e8d6decd0e61a2e63a84d79384bcf7ff25222791ad2bb1bb682",
+    "sha256:1b25752190e75eef92e61abad741ae09b2d1ce8108f84af7470ecd7fcf3a7e4f",
 )
 _DIFF_ID_LIST = "[" + ",".join(f'"{item}"' for item in DIFF_IDS) + "]"
 # Local preflight keeps binding the exact image identity to its sole RepoTag, so a

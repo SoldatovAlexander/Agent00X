@@ -59,11 +59,11 @@ class ClassicStoreBrainboosterVerifierTests(unittest.TestCase):
     def test_current_classic_store_config_pin_is_exact(self):
         self.assertEqual(
             VERIFIER_RUNTIME_CONFIG_IMAGE_ID,
-            "sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9",
+            "sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42",
         )
         self.assertEqual(
             BRAINBOOSTER_VERIFIER_PROFILE.profile_digest,
-            "sha256:8dc575b00533f5bd6d64a72153438a7f5aa1f49673b267c42166a9f742faf070",
+            "sha256:34d973ee7632a397b3941b32408dd7903774ed38c9958ad41bd4e6194ddfd280",
         )
         self.assertEqual(
             BRAINBOOSTER_VERIFIER_PROFILE.expected_verifier_id,

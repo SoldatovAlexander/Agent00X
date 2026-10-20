@@ -23,9 +23,9 @@ from app_contracts.verifier_process import (  # noqa: E402
 )
 
 
-BUNDLE_SHA256 = "3dcb0413950d005d56e96e39d65b214f466f7ec80e09aec688c73e56b00a9459"
+BUNDLE_SHA256 = "80c0ecb5fae7eef247b5d4b830a67a49bb818727ea19f6e911d4a8cbe048c0f6"
 BUNDLE_MEMBER_COUNT = 34
-BUNDLE_SOURCE_BYTES = 566_893
+BUNDLE_SOURCE_BYTES = 567_222
 BUNDLE_ARCHIVE_BYTES = 604_160
 TARGET_HOST = "alex@192.168.88.101"
 TARGET_PATH = "/home/alex/.local/share/agent00x/verifier-host/exp-1491"

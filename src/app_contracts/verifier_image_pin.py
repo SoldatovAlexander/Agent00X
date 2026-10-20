@@ -5,13 +5,13 @@ code digest from depending on its own image/code pin values.
 """
 
 VERIFIER_RUNTIME_IMAGE_ID = (
-    "sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f"
+    "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0"
 )
-# EXP-1632 validated this portable manifest and OCI config digest against the
+# EXP-1658 validated this portable manifest and OCI config digest against the
 # local containerd-backed image store. This does not establish remote import.
 VERIFIER_RUNTIME_CONFIG_IMAGE_ID = (
-    "sha256:cb5c068a474164060b27942d764304fed521d267a0eb83fdfa530cc90bc249d9"
+    "sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42"
 )
 VERIFIER_RUNTIME_CODE_DIGEST = (
-    "sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7"
+    "sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f"
 )

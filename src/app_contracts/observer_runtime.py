@@ -1375,18 +1375,24 @@ class JournaledProposalWorker:
                 except Exception:
                     return failure
 
+            def intent_recorded(cursor: int) -> None:
+                # Reserve this sequence before invoking the Worker. The Worker
+                # may make nested journaled calls (for example, its model
+                # channel), which must start at the following sequence.
+                self._last_event_id = intent_id
+                self._last_event_cursor = cursor
+                self._sequence += 1
+
             try:
-                intent_cursor, dispatch_result = run_gated_dispatch(
+                _, dispatch_result = run_gated_dispatch(
                     self._store,
                     checkpoint=checkpoint,
                     intent_event=intent,
                     dispatch=dispatch,
+                    on_intent_recorded=intent_recorded,
                 )
             except PreDispatchError:
                 raise WorkerJournalError("worker journal: pre-dispatch gate refused") from None
-            self._last_event_id = intent_id
-            self._last_event_cursor = intent_cursor
-            self._sequence += 1
 
             if dispatch_result is failure:
                 self._append_terminal(

@@ -881,11 +881,11 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertIsInstance(captured["verifier_config"], cli.VerifierContainerConfig)
         self.assertEqual(
             captured["verifier_config"].runtime_image_id,
-            "sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f",
+            "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0",
         )
         self.assertEqual(
             captured["verifier_config"].verifier_code_digest,
-            "sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7",
+            "sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f",
         )
         self.assertEqual(transport.calls, 1)
         self.assertIn('"worker_backend":"restricted-container"', output.getvalue())
@@ -1013,7 +1013,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(
             [call[-1] for call in calls],
-            [cli.TARGET_RUNTIME_IMAGE_ID, "sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f"],
+            [cli.TARGET_RUNTIME_IMAGE_ID, "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0"],
         )
         self.assertTrue(
             all(
@@ -1947,7 +1947,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         )
         self.assertEqual(
             cli.VERIFIER_RUNTIME_IMAGE_ID,
-            "sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f",
+            "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0",
         )
 
     def test_exp1643_uses_local_profile_without_constructing_credentials(self):

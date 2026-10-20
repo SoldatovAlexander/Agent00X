@@ -64,8 +64,8 @@ class ValidateExp1632SaveByIdExp1639Tests(unittest.TestCase):
         self.assertEqual(
             output.getvalue(),
             "IMAGE_SAVE_CHAIN_CONFIRMED|format=docker-legacy|manifest=absent|"
-            "config=verified|size=48857362|archive_bytes=7|layers=9|"
-            "repo_tags=tagless|tag=agent00x-verifier:exp-1632\n",
+            f"config=verified|size={probe.IMAGE_SIZE}|archive_bytes=7|"
+            f"layers={len(probe.DIFF_IDS)}|repo_tags=tagless|tag={probe.IMAGE_TAG}\n",
         )
 
     def test_parser_failure_emits_only_safe_stage_and_never_retries(self):

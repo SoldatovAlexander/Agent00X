@@ -58332,6 +58332,41 @@ output was retained. Batch-end full offline suite passed: 2,085 tests, 26
 skipped; `git diff --check` passed. No provider write, SSH, approval or external
 publication occurred. R2/MVP remain OPEN.
 
+### Batch AKCU — preserve bounded snapshot-source failure facts (1 task)
+
+#### EXP-1646 — classify the last recorded snapshot intake failure safely
+Статус: BLOCKED 2026-10-20. Offline read-only review of the EXP-1645 observer database used
+the repository's redacted history reporter and a second allowlisted projection.
+It confirmed 24 events / 11 checkpoints. Cursor 21 is a pending
+`GitHubSnapshot.GET.blob`; cursor 22 is `tool_failed` with
+`snapshot-source-call-failed`; cursor 23 is `agent_finished/failed`. This
+confirms only that a blob GET call failed. The prior journal did not retain an
+HTTP status or cause; do not infer 404, quota, transport, or content failure and
+do not retry or query GitHub under EXP-1645.
+
+An initial implementation attempt added bounded HTTP-status telemetry, but the
+full offline suite exposed an architectural coupling: `observer_runtime.py` is
+part of the pinned verifier import closure. Importing GitHub snapshot exceptions
+there violated closure tests, and editing the module made the pinned verifier
+code digest stale. The proposed code and tests were fully removed; no production
+source change from this attempt remains. Focused synthetic tests had passed, but
+they did not cover verifier closure/pin consequences. The attempted suite ran
+2,094 tests with 26 skipped and reported seven failures: four related to this
+closure/digest impact and three host-bundle/import checks. No live requests,
+credentials, Worker/model, Docker, SSH/testdev, approval or provider action ran.
+`git diff --check` passes after rollback. Do not update verifier pins as a side
+effect; design a solution outside the pinned verifier closure or create a
+separate exact local rebuild/re-pin task with full runtime evidence.
+
+The original offline finding remains useful but cannot classify the historic
+EXP-1645 GET further. Do not infer HTTP status, quota, transport, or content
+failure and do not retry or query GitHub under EXP-1645.
+
+No external operation was performed. The restored baseline full offline suite
+passed (2,092 tests, 26 skipped). Batch AKCU cannot be accepted; any new
+telemetry design needs a new card with an explicit verifier-closure/pin analysis.
+R2/MVP remain OPEN.
+
 ### Batch AKCS — classify the fixed local Ollama readiness stop (1 task)
 
 #### EXP-1644 — one TTY-gated Ollama metadata-only preflight
@@ -58398,3 +58433,150 @@ not independent trust, approval, publication or MVP completion. R2/MVP remain
 OPEN. Batch-end full offline suite passed: 2,092 tests, 26 skipped;
 `git diff --check` passed. No provider write, SSH or remote verifier action
 occurred.
+
+### Batch AKCV — fresh current-pin Worker attempt after the recorded blob-GET stop (1 task)
+
+#### EXP-1647 — one local Ollama Worker → restricted target → same-host verifier attempt
+Статус: ACCEPTED 2026-10-20. EXP-1645 was spent and was not repeated. The new
+one-shot card passed the exact local model preflight (`0.40.3`, expected digest)
+and completed once with `status=verified`; no second run occurred. The runner's
+safe output bound the result to commit `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`,
+tree `2007066217aadafd9887fb3e3069220333b4fddb`, snapshot content digest
+`sha256:dee0211b7ee40f6f0eeefa7ee8a4b7a46ee0e52521cdefe335f398557346b9ad`,
+staged change digest
+`sha256:6bb481a722681a4c3136f08800da8cff081ecf0aa16a1ce31d1a02abaceeecce`,
+and verifier identity digest
+`sha256:23a653127ae4ec1b73d87f0f1dfc3f421eb652b22134d1c7b6686443d469e239`.
+The redacted observer report recorded 94 events and 46 checkpoints through
+cursor 93, including fixed-pin validation, target test sandbox return code 0,
+same-host verifier call completion, stage save/readback and clean agent finish.
+The history remains partial and includes `event_sequence_gap` plus unresolved
+artifact-content/collector-coverage gaps. Read-only immutable SQLite metadata
+confirmed one stage row with the same staged-change digest; the stage payload
+was not read or emitted. The exact owned Ollama process stopped with exit 0.
+No external write, approval, PR, SSH or deployment occurred. Batch-end full
+offline suite passed: 2,093 tests, 26 skipped; `git diff --check` passed.
+This is a successful current-pin local Worker→target→same-host verifier→stage
+run, not independent-host trust, authenticated approval, controlled PR or MVP
+completion. R2/MVP remain OPEN.
+
+The exact command used was:
+`RUN_DOCKER_SANDBOX_TESTS=1 PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_pinned_deepseek_worker.py --authorization-card-id EXP-1647 --model-backend local-ollama --verifier-backend pinned-docker --worker-backend restricted-container --credential-source not-applicable --observation-database '/Volumes/DATA/Проекты/Агент 00Х/EXP-1647-observer.sqlite3' '/Volumes/DATA/Проекты/Агент 00Х/EXP-1647-stage.sqlite3'`.
+At the exact CLI TTY gate enter only `RUN EXP-1647 ONCE`. Scope was one
+model-readiness check, one anonymous quota/readiness check, at most 25
+anonymous pinned-snapshot GETs, at most one local inference, restricted target
+tests and at most one pinned same-host verifier invocation, with target image
+`sha256:f22c0b03d5d60c44f433935952199aeaed497b4d3fb3400933e69a144e0fc187`,
+verifier manifest `sha256:f49397ccfb59beefa21161c86379e17ae754acee810cedd3fc5de4f5494d913f`
+and code digest
+`sha256:705c3803ca36374ee0ab0bef80fb4d77b3211dd60e8168a7729a3fed46c7a2c7`.
+No API credentials, Keychain, remote host, provider write, approval,
+PR/push/deployment, image mutation or retry. Raw source, model output, target
+output and child logs were not inspected or printed. Only the two named SQLite
+evidence files were written. Same-host result only; R2/MVP remain OPEN.
+
+### Batch AKCW — reconcile MVP exit criteria with EXP-1647 evidence (1 task)
+
+#### EXP-1648 — update the R2 exit matrix without promoting trust claims
+Статус: DONE 2026-10-20. Updated criteria 1, 2, 7, 10, 13 and 14 in
+`docs/27-implementation-status.md` to cite the current successful EXP-1647
+Worker→target→same-host verifier→stage evidence instead of stale EXP-1269-only
+wording. Recorded the exact snapshot/stage/verifier digests and observer
+run/cursor, while retaining the partial-observer and unresolved artifact/
+collector gaps. Independent remote verifier trust, authenticated digest-bound
+human approval and controlled real PR remain OPEN. No source, runtime, trust
+pin, evidence database or plan criteria were changed; no network, credentials,
+Worker/model, Docker, SSH, approval, provider action, PR/push/deployment or
+commit occurred. `git diff --check` passed. This documentation reconciliation
+does not itself advance acceptance. EXP-1637 remote image import remains DRAFT
+until a separate fresh exact user confirmation; R2/MVP remain OPEN.
+
+### Batch AKCX — exercise the actual approval fail-closed gate on EXP-1647 (1 task)
+
+#### EXP-1649 — one read-only unsigned-approval CLI refusal without verifier trust
+Статус: BLOCKED 2026-10-20. Invoked the existing `create_approval_request`
+CLI logic once against the exact EXP-1647 stage/digest. The wrapper emitted
+`APPROVAL_GATE_UNEXPECTED`, so its strict success/refusal predicate did not
+match. Per card, captured CLI stdout/stderr were not inspected, printed,
+persisted or used for diagnostics; no retry occurred. The wrapper held output
+only in memory; no request file, signature or provider operation was created.
+The reason remains deliberately unclassified. Full offline suite passed:
+2,093 tests, 26 skipped. The original card is spent.
+
+#### EXP-1650 — classify the EXP-1649 CLI outcome using fixed markers
+Статус: BLOCKED 2026-10-20. The TTY wrapper returned the fixed marker
+`RUN_NOT_CONFIRMED`; its phrase parser did not match, so the approval-request
+CLI was not invoked. No stage data was read and no output was captured. No
+retry or shell correction was made under this card. EXP-1650 is spent; issue a
+new task with a tested gate wrapper before any diagnostic invocation.
+
+Original intended scope (not executed): one new read-only invocation of the existing
+`create_approval_request` CLI against `EXP-1647-stage.sqlite3` and exact staged
+digest `sha256:6bb481a722681a4c3136f08800da8cff081ecf0aa16a1ce31d1a02abaceeecce`.
+Use the same public repository slug and synthetic metadata IDs 1/1, and supply
+no verifier authority key-set or credential. Require a TTY-only gate
+`RUN EXP-1650 ONCE`. Capture stdout/stderr in memory and emit only one of these
+fixed outcomes: (a) `APPROVAL_REFUSED|reason=verifier-provenance-trust-unavailable`
+for the exact expected refusal; (b) `APPROVAL_REFUSED|reason=stage-database-unavailable`
+for the exact known stage-store error; (c) `UNSIGNED_REQUEST_IN_MEMORY` for exit
+0 with non-empty output, discarding it without display or file write; or
+(d) `APPROVAL_RESULT_UNCLASSIFIED` for anything else. No free-form output or
+stderr may be printed or persisted. On any outcome stop; no repeat.
+
+This is a diagnosis-only local read of the exact stage. No network/GitHub,
+credentials, authority files, Keychain, Worker/model, Docker, SSH/testdev,
+stage mutation, signature, approval write, provider action, PR, push, deployment
+or cleanup. It cannot establish verifier trust or human approval. Allowed paths:
+the named stage DB, queue and docs/27. One focused run, `git diff --check`, and
+the full offline suite once at this batch end. R2/MVP remain OPEN.
+once against `EXP-1647-stage.sqlite3` and staged digest
+`sha256:6bb481a722681a4c3136f08800da8cff081ecf0aa16a1ce31d1a02abaceeecce`.
+Use the public source repository slug and synthetic non-secret binding metadata
+`AGENT_GITHUB_INSTALLATION_ID=1`, `AGENT_GITHUB_REPOSITORY_ID=1`; supply no
+verifier authority key-set, signer, credential source or key. Capture all CLI
+stdout/stderr in memory. Emit only `APPROVAL_REFUSED|reason=verifier-provenance-trust-unavailable`
+if exit code is 2, stdout is empty, and stderr is exactly the expected fixed
+refusal. Any other result emits one fixed `APPROVAL_GATE_UNEXPECTED` marker and
+must not print captured content. This card is for the fail-closed path only:
+never write a request file, create an approval, sign, or publish.
+
+No network/GitHub, credentials, authority files, Keychain, model/Worker, Docker,
+SSH/testdev, trust pin, stage mutation, approval write, provider action, PR,
+push, deployment or cleanup. Allowed input is only the existing EXP-1647 stage;
+output is a fixed marker. Run one focused check, `git diff --check`, and the
+complete offline suite once at batch end. A pass shows the actual staged change
+cannot produce an unsigned approval request without caller-pinned verifier
+provenance trust; it does not establish a trusted verifier, signer identity or
+human approval. R2/MVP remain OPEN.
+
+### Batch AKCY — diagnose actual EXP-1647 approval readiness with fixed outputs (1 task)
+
+#### EXP-1651 — one TTY-gated actual-stage approval-request classification
+Статус: ACCEPTED 2026-10-20. Five focused guard tests passed. The helper was
+run exactly once with `RUN EXP-1651 ONCE` and emitted
+`APPROVAL_REFUSED|reason=verifier-provenance-trust-unavailable`. It loaded the
+actual EXP-1647 stage read-only, but produced no approval request, signature,
+or provider effect. No raw CLI output or patch was displayed or persisted.
+EXP-1649's earlier `APPROVAL_GATE_UNEXPECTED` remains unclassified and was not
+repeated. The separate EXP-1650 wrapper rejected its gate before the CLI.
+
+Batch-end full offline suite passed: 2,098 tests, 26 skipped;
+`git diff --check` passed. Use only
+`scripts/probe_exp1647_approval_gate_exp1651.py` on
+the existing `EXP-1647-stage.sqlite3` and exact staged digest
+`sha256:6bb481a722681a4c3136f08800da8cff081ecf0aa16a1ce31d1a02abaceeecce`.
+The helper was unit-tested to require an exact TTY gate, capture both streams,
+and emit only fixed categories for the trusted-provenance refusal, a small
+allowlist of stage errors, unexpected output, or an in-memory unsigned request.
+At its prompt enter only `RUN EXP-1651 ONCE`. It uses no authority key-set,
+signer or credentials; all environment metadata IDs are synthetic. It must not
+write a request, stage, signature or other file, and must not display raw CLI
+stdout/stderr or patch contents. Any one result spends the card; no repeat.
+
+No network/GitHub, Keychain, Docker, Worker/model, SSH/testdev, approval
+signature, provider write, PR/push/deployment, or cleanup. Allowed paths: the
+named helper/test, queue, docs/27 and the pre-existing stage database. Focused
+tests, then the full offline suite once at batch end and `git diff --check`.
+This can diagnose only why the local CLI did not meet EXP-1649's strict expected
+marker; it cannot establish independent verifier trust or human approval.
+R2/MVP remain OPEN.

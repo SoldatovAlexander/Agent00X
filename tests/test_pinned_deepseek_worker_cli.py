@@ -1975,6 +1975,26 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             "EXP-1645"
         )
 
+    def test_exp1647_is_a_fresh_one_shot_with_the_same_pinned_local_profile(self):
+        self.assertEqual(
+            cli.AUTHORIZATION_PROFILES["EXP-1647"],
+            (
+                "RUN EXP-1647 ONCE",
+                "process-exp-1647-local-001",
+                "task-exp-1647-local-001",
+            ),
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_SNAPSHOT_ORIGINS["EXP-1647"],
+            "github_rest_api_claim",
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1647"], "local-ollama"
+        )
+        self._assert_local_profile_uses_container_without_constructing_credentials(
+            "EXP-1647"
+        )
+
     def test_model_backend_card_mismatches_stop_before_all_side_effects(self):
         cases = (
             ["--authorization-card-id", "EXP-842"],

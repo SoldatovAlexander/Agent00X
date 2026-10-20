@@ -252,6 +252,11 @@ AUTHORIZATION_PROFILES = {
         "process-exp-1645-local-001",
         "task-exp-1645-local-001",
     ),
+    "EXP-1647": (
+        "RUN EXP-1647 ONCE",
+        "process-exp-1647-local-001",
+        "task-exp-1647-local-001",
+    ),
 }
 AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-634": "github_rest_api_claim",
@@ -286,6 +291,7 @@ AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-1585": "github_rest_api_claim",
     "EXP-1643": "github_rest_api_claim",
     "EXP-1645": "github_rest_api_claim",
+    "EXP-1647": "github_rest_api_claim",
 }
 AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-634": "deepseek",
@@ -320,6 +326,7 @@ AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-1585": "local-ollama",
     "EXP-1643": "local-ollama",
     "EXP-1645": "local-ollama",
+    "EXP-1647": "local-ollama",
 }
 TASK_INSTRUCTION = (
     "In backend/routes.py change only /save-session. Preserve its existing "

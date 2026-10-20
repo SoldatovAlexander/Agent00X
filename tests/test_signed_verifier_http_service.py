@@ -38,6 +38,9 @@ from app_contracts.executor import (
 from app_contracts.signed_verifier_http_service import (
     SignedVerifierHTTPService,
     create_loopback_http_server,
+    create_private_lan_http_server,
+    _create_single_request_http_server,
+    is_private_lan_ipv4,
     create_loopback_https_server,
 )
 from app_contracts.signed_verifier_client import (
@@ -45,7 +48,10 @@ from app_contracts.signed_verifier_client import (
     SignedVerifierHTTPSTransport,
 )
 from app_contracts.signed_verifier_protocol import serialize_signed_verifier_invocation
-from app_contracts.signed_verifier_service import VerifierProfile
+from app_contracts.signed_verifier_service import (
+    SignedVerifierServiceError,
+    VerifierProfile,
+)
 from app_contracts.signer_key_source import Ed25519SeedCredentialSource
 from app_contracts.verifier_attestation import verify_signed_verifier_response
 from app_contracts.verifier_process import (
@@ -187,6 +193,58 @@ class SignedVerifierHTTPServiceTests(unittest.TestCase):
             now_factory=lambda: datetime.now(timezone.utc),
         )
         return service, verifier, key
+
+    def test_private_lan_address_validation_is_rfc1918_ipv4_only(self):
+        for address in ("10.20.0.4", "172.16.10.1", "192.168.88.101"):
+            with self.subTest(address=address):
+                self.assertTrue(is_private_lan_ipv4(address))
+        for address in (
+            "127.0.0.1", "0.0.0.0", "169.254.1.2", "224.0.0.1",
+            "8.8.8.8", "192.168.88.999", "::1", "192.168.088.1",
+        ):
+            with self.subTest(address=address):
+                self.assertFalse(is_private_lan_ipv4(address))
+
+    def test_private_lan_server_checks_exact_peer_before_http_dispatch(self):
+        service, verifier, _key = self.make_service()
+        server = _create_single_request_http_server(
+            service,
+            0,
+            bind_host="127.0.0.1",
+            allowed_peer_address="192.168.88.101",
+            request_timeout_seconds=2,
+        )
+        try:
+            self.assertTrue(server.verify_request(None, ("192.168.88.101", 12345)))
+            self.assertFalse(server.verify_request(None, ("192.168.88.102", 12345)))
+            self.assertFalse(server.verify_request(None, ("127.0.0.1", 12345)))
+            self.assertFalse(server.verify_request(None, ("::1", 12345)))
+            self.assertEqual(verifier.calls, [])
+            self.assertIsNone(server.last_response_status)
+        finally:
+            server.server_close()
+
+    def test_private_lan_server_rejects_invalid_bind_or_peer_before_binding(self):
+        service, _verifier, _key = self.make_service()
+        invalid_pairs = (
+            ("0.0.0.0", "192.168.88.5"),
+            ("127.0.0.1", "192.168.88.5"),
+            ("192.168.88.101", "127.0.0.1"),
+            ("192.168.88.101", "192.168.88.101"),
+            ("8.8.8.8", "192.168.88.5"),
+        )
+        for bind, peer in invalid_pairs:
+            with self.subTest(bind=bind, peer=peer):
+                with self.assertRaisesRegex(
+                    SignedVerifierServiceError,
+                    "^signed verifier HTTP service: server configuration rejected$",
+                ):
+                    create_private_lan_http_server(
+                        service,
+                        0,
+                        bind_address=bind,
+                        allowed_peer_address=peer,
+                    )
 
     def test_valid_request_is_signed_once_and_remains_profile_bound(self):
         service, verifier, signing_key = self.make_service()

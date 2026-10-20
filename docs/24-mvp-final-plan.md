@@ -48,32 +48,125 @@ trust boundaries. Наблюдатель и обучение через конт
    один LLM Worker, независимая проверка, минимальный CLI и контролируемая
    публикация. Все проверки до внешнего write; реальные границы секретов и
    durable reconciliation. Основные пути R2 инструментированы наблюдением R1.
-   **Актуальный checkpoint (2026-10-20; детали и 16 критериев — в
+   **Актуальный checkpoint (2026-10-21; детали и 16 критериев — в
    [статусе реализации](27-implementation-status.md)):** R2/MVP остаются OPEN.
-   **Обновление 2026-10-20 (Batch AKCY—AKCZ):** EXP-1647 остаётся последним
-   успешным текущим локальным Worker→target→same-host verifier→stage проходом;
-   observer частичный. EXP-1651 показала точный fail-closed отказ реального
-   stage при отсутствии caller-pinned verifier-provenance trust. EXP-1637
+   **Исторический delivery checkpoint после Batch AKDV (2026-10-20;
+   superseded by the 2026-10-21 update below):** EXP-1662 был последним успешным локальным
+   Worker→target→same-host verifier→stage проходом на image
+   `sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0`
+   и code `sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`.
+   EXP-1661 и EXP-1676 истекли по `TRANSFER_TIMEOUT` до GET; импорта на testdev
+   нет. EXP-1679 подготовила текущий source bundle
+   `sha256:f5d4f1cde44d484cb4b336a29d110723706fcb8874544bccde4f079610fcf562`
+   (34 members, 573846 source bytes, 614400 archive bytes), но не передавала
+   его. Этот bundle не доказывает пересборку pinned image из актуальных исходников.
+   Описание testdev как личного Ubuntu-компьютера в частной LAN — заявление
+   оператора, а не platform/runtime attestation. Independent verifier,
+   authenticated approval, controlled PR и полнота observer остаются открытыми.
+   EXP-1683 после одного read-only inspect закрепила локальный candidate pin:
+   image `sha256:a68ce6da5d5884809d7db627868ec168c4618badf3ebbf709f5d672fcfdca8ad`,
+   config `sha256:bbae0284355b7b3937a07f5a20ed7d003686aac09a1438bf0a57274bc6aa9469`,
+   code `sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f`.
+   В Worker run на этом pin всё ещё не было evidence на момент EXP-1683;
+   Batch AKED позже провёл успешный локальный run, но не передавал его на testdev.
+   После закрепления host-side pin текущий source bundle пересчитан:
+   `sha256:2ab1490ffa4cc69de131364eb39246180dc1dd948ae91d86b0ccc77ad37e33e9`
+   (34 members, 573896 source bytes, 614400 archive bytes); он также остаётся
+   непереданным.
+   **Обновление 2026-10-21 (Batch AKED / EXP-1689):** свежий
+   credential-free local-Ollama run на этом pin завершился `verified`:
+   snapshot commit/tree совпали с pins, restricted target tests прошли,
+   verifier вернул результат, stage digest
+   `sha256:25c83fb12cd23a5eb519c2222541b94c18313078d5c958572817911aa1ac9faa`
+   был read back, verification digest —
+   `sha256:f28675c5975793e47cda653502dc3d2829315e2459adfe1459a41caecbc02cd3`.
+   Observer: 94 события, cursor 93, без `event_sequence_gap`, но `partial` с
+   тремя известными gap codes. Approval не создана, publication не запускалась.
+   Это current-pin same-host evidence, не независимая проверка; image и
+   source bundle остаются непереданными на testdev. R2/MVP открыты.
+   **Обновление 2026-10-20 (Batch AKCY—AKDI):** последний успешный текущий
+   локальный Worker→target→same-host verifier→stage проход — EXP-1662; observer
+   содержит 94 уникальных непрерывных события, но остаётся partial по трём
+   причинам покрытия. EXP-1663 повторно показала fail-closed отказ approval
+   именно для текущего EXP-1662 stage без verifier-provenance trust. EXP-1647
+   остаётся историческим проходом на прежнем verifier pin. EXP-1637
    переносит verifier image через SSH public-key authentication, поэтому
    несовместима с условием MVP «не использовать credentials»; проверенные
    репозиторные скрипты не содержали альтернативного credential-free remote
    import пути. Batch AKDA добавил локально тестированный, но не запущенный
    helper одноразовой HTTP-отдачи образа: он работает без credentials, однако
    не аутентифицирует serving host; EXP-1654 истёк и superseded. Batch AKDF
-   подготовил локальный delivery profile для текущего pin; remote import
-   EXP-1661 остаётся DRAFT до нового точного подтверждения. Batch AKDG
+   подготовил локальный delivery profile для текущего pin; EXP-1661 и его
+   замена EXP-1676 завершились `TRANSFER_TIMEOUT` до GET, импорт не доказан.
+   Batch AKDG
    выполнил один credential-free локальный Worker run на текущем pin:
    `verified`, target tests и stage readback прошли; 94 observer-события имеют
    непрерывные уникальные sequence. Observer всё ещё partial из-за трёх
    ограничений покрытия, а запуск не создал approval/publication. Это не
-   independent-host evidence и не закрывает R2/MVP.
+   independent-host evidence и не закрывает R2/MVP. Approval, подпись и
+   публикация остаются не выполнены. Batch AKDI добавил в CLI только
+   редактированный структурный summary Observer (`event_count`,
+   `checkpoint_count`, partial completeness, фиксированные gap codes); он не
+   повышает уровень доверия или полноту журнала. Focused tests: 67 (2 skipped),
+   EXP-1663 gate tests: 5; полный offline suite Batch AKDI: 2,132 (26 skipped).
    Это транспортная гипотеза, а не verifier trust. Для проверки provenance потребуются
    независимо закреплённый authority key-set и валидные подписи enrollment,
    host-trust decision и verifier response. Ни одно из этих условий нельзя
    подменять локальным same-host evidence или synthetic signatures. До
-   исполнения EXP-1661 и подготовки реальных доверенных доказательств remote
-   verifier/approval/publication не запускать; R2/MVP
-   остаются OPEN.
+   получения свежих доверенных доказательств remote verifier/approval/publication
+   не запускать; R2/MVP
+   остаются OPEN. EXP-1665 provisioned a distinct current-profile authority
+   key in a separate Keychain item and produced public key-set digest
+   `sha256:6e93f28e31c9bb18e529b33f184983c4c49ccdfb132273cc66337989cf8eea60`;
+   пользователь закрепил именно этот публичный digest 2026-10-20. Это pin
+   целостности key-set, а не independent provenance и не разрешение на подпись.
+   EXP-1666 signer подготовлен для этого профиля; реальная подпись, чтение
+   Keychain, trust record и verifier request не выполнялись. Следующее
+   существенное продвижение требует достаточного независимо проверяемого
+   evidence текущего deployment/runtime и разделения хостов, затем отдельных
+   точных разрешений на подписи enrollment, host-decision и verifier response.
+   EXP-1661 и EXP-1676 — истёкшие одноразовые transfer/import попытки без GET;
+   новые попытки требуют отдельных точных карточек и сами по себе не подтвердят
+   независимость host/runtime. Поэтому подпись, approval и publication сейчас
+   не запускать. Batch AKDK добавил локальный signer для текущего authority
+   key; Batch AKDL и AKDM проверили synthetic Swift→Python enrollment и
+   enrollment-bound host-decision chain. Verifier явно сохранил
+   `independent_host_trust_established=false`. Pinned digest и отдельные точные
+   разрешения на реальные подписи остаются обязательными. Batch AKDN
+   дополнительно блокирует live signing до явного user pin; synthetic trust
+   chain остаётся доступен без Keychain. Batch AKDO добавил для новых Worker
+   runs redacted content-addressed pending-action artifacts, не изменяя
+   `state_ref` и сохраняя честные gaps `partial`/collector coverage; полный
+   offline suite прошёл 2,143 теста (26 skipped). Batch AKDP закрепил
+   user-approved публичный key-set digest без подписи. EXP-1672 остаётся DRAFT:
+   пользователь выбрал операторскую trust-модель и уточнил, что `testdev` —
+   его Ubuntu-компьютер в частной локальной сети, а не публичный VPS. Это
+   снижает публичную сетевую экспозицию, но не является platform-signed
+   runtime attestation и не доказывает отсутствие компрометации хоста.
+   Остались точная карточка evidence-сбора и отдельное свежее разрешение;
+   аппаратную или compromise-resistant attestation не заявлять. Один
+   анонимный `git ls-remote` вызов
+   2026-10-20 подтвердил, что публичный `brainbooster_full_v11` HEAD всё ещё
+   равен `2c172801c27ec92e38835fbb0ddd6ab7b8fc0c0e`; это подтверждает только
+   текущее совпадение HEAD с pin, не authorship или source trust.
+   Один анонимный public GitHub commit API GET того же SHA на 2026-10-20
+   вернул `verification.verified=true`, `reason=valid`, author
+   `SoldatovAlexander` и committer `web-flow`. Это текущий bounded ответ GitHub,
+   а не независимая локальная проверка ключа или доказательство, что ключ
+   контролирует владелец репозитория; более ранние API observations были
+   другими и остаются историческими. Позднее изолированный локальный GPG check
+   подтвердил подпись тем же публичным ключом GitHub Web Flow, fingerprint
+   `968479A1AFF927E37D1A566BB5690EEEBB952194`; это не связывает signing key с
+   владельцем. Проверка была незапланированным read-only Control Plane
+   отклонением без заранее оформленной task card и не засчитывается как
+   принятое evidence; детали отражены в Batch AKDQ документа 27 и очереди.
+   Batch AKDR добавил для новых Worker runs content-addressed
+   `observer-logical-state/v1` manifest, который содержит только фиксированные
+   checkpoint metadata и явные unavailable components. Он выставляет
+   `restorable=false`, сохраняет `completeness=partial` и не является snapshot
+   или replay. Report разрешает state/pending refs, не раскрывая содержимое;
+   offline suite Batch AKDR прошёл 2,144 теста (26 skipped). Критерии
+   наблюдателя 13/14 и R2/MVP остаются частичными/открытыми.
    EXP-1656 (2026-10-20) одним анонимным read-only GitHub REST GET подтвердил,
    что `brainbooster_full_v11/master` всё ещё соответствует pinned commit/tree
    EXP-1647; authorship/source trust этим не подтверждены.
@@ -83,9 +176,9 @@ trust boundaries. Наблюдатель и обучение через конт
    synthetic container test и batch-end suite (2,118 tests, 26 skipped)
    прошли. Новый Worker run на этом pin и remote trust evidence отсутствуют.
    EXP-1660 обновила одноразовый transfer profile для текущего pin; 21 focused
-   тест и batch-end suite (2,124 tests, 26 skipped) прошли. EXP-1661 всё ещё
-   требует свежего user gate и не подтверждает trust даже после успешного
-   импорта.
+   тест и batch-end suite (2,124 tests, 26 skipped) прошли. EXP-1661/1676
+   завершились до получения файла; ни один импорт не подтверждён, а новый
+   transfer не подтвердил бы verifier trust даже при успешной проверке digest.
    После EXP-1384 были выполнены EXP-1391—1393 и локальная EXP-1395.
    EXP-1395 добавила replay сохранённого stage через фиксированный trusted-HTTPS
    verifier с caller-pinned публичными trust-записями и exact trust digests в
@@ -1919,6 +2012,20 @@ Focused CLI suite: 19 passed. Full suite: 1316 tests (1300 passed, 16 skipped).
 Batch LG / EXP-726 is DRAFT: the user must run its fixed command from
 their own interactive terminal and freshly confirm `RUN EXP-726 ONCE`; Codex
 will not relaunch an inaccessible hidden prompt. No new live call has occurred.
+R2/MVP remain OPEN.
+
+**EXP-1679 / Batch AKDV (2026-10-20):** prepared locally a one-shot,
+credential-free LAN delivery profile for the exact deterministic verifier-host
+source bundle. The profile binds an explicit private IPv4 sender and one
+allowlisted peer, writes only into a unique private target, validates archive
+digest/manifest/member facts before extraction, and emits a digest-first
+console command whose final operation is only an inert launcher `--help` smoke.
+Eight focused synthetic tests passed. The sender/listener and generated target
+command were not executed; no testdev, network, Docker, SSH, signer or verifier
+request occurred. No verifier host or independent-runtime evidence is claimed.
+The user identifies testdev as their own Ubuntu computer, accessible only on
+their local network and used exclusively for their needs; this operator-provided
+context is not technical attestation.
 R2/MVP remain OPEN.
 
 Batch LH / EXP-727 and Batch LI / EXP-728 extend that regression through the
@@ -3940,3 +4047,70 @@ remain OPEN.
 до отдельного разрешения на read-only inspect. Worker, независимый verifier,
 approval и PR evidence не изменились. Batch-end full suite: 2,000 tests,
 26 skipped; `git diff --check` прошёл. R2/MVP остаются OPEN.
+
+**Batch AKDS / EXP-1675 (2026-10-20):** локально подготовлен one-shot HTTPS
+transport к verifier по явно указанному private-LAN IPv4 bind и exact peer
+allowlist; loopback остаётся режимом по умолчанию, pinned TLS identity —
+`testdev.local`. RFC1918 allowlisting ограничивает сетевой доступ, но само по
+себе не аутентифицирует оператора и не доказывает целостность/изоляцию
+testdev. Новый bootstrap остаётся untrusted до operator review и действующего
+подписанного enrollment/host decision. Bundle pin синхронизирован локально:
+`sha256:f5d4f1cde44d484cb4b336a29d110723706fcb8874544bccde4f079610fcf562`.
+Проверки завершились успешно: 35 focused tests (2 skipped), 26 bundle tests,
+полный offline suite — 2,151 тест (26 skipped), `git diff --check`. Никакого
+remote transfer, testdev invocation, Docker, signing или verifier request не
+было; R2/MVP остаются OPEN.
+
+**EXP-1661 / EXP-1676 checkpoint (2026-10-20):** both single-use HTTP image
+delivery listeners expired with `TRANSFER_TIMEOUT` before receiving a GET.
+The current verifier image has not been shown to be imported on testdev; no
+remote verifier runtime or result, live signature, digest-bound approval,
+provider receipt or real PR exists. EXP-1675 is local synthetic LAN-transport
+evidence only. `testdev` is the user's personal Ubuntu machine on a private
+LAN; the selected operator-reviewed model is not platform attestation or proof
+of isolation. Do not treat the expired commands as reusable authorization.
+R2/MVP remain OPEN.
+
+**EXP-1684 update (2026-10-20):** the only attempt to exercise the refreshed
+local verifier pin in the Worker flow stopped at Ollama metadata preflight,
+after the one anonymous GitHub quota/readiness GET and before any pinned
+snapshot (`snapshot_attempts=0`), model inference, target test, verifier call,
+or stage. No retry was performed. The EXP-1683
+image remains a validated local candidate/current pin, not a successfully
+exercised Worker verifier. Independent verifier trust, authenticated approval,
+controlled PR, observer completeness, and R2/MVP remain open.
+
+**EXP-1676 user-reported result reconciliation (2026-10-21):** the user reports
+that the old testdev import command printed `IMAGE_IMPORT_CONFIRMED`, but the
+sender log records `TRANSFER_TIMEOUT` at 20:33 UTC on 2026-10-20 before any GET.
+The discrepancy is unresolved; this is not yet verified image-store evidence.
+The report concerns old image `sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0`,
+not current image `sha256:a68ce6da5d5884809d7db627868ec168c4618badf3ebbf709f5d672fcfdca8ad`.
+R2/MVP remain OPEN.
+
+**EXP-1685 local Ollama diagnosis (2026-10-21):** one bounded read-only
+preflight against `127.0.0.1:11434` returned
+`OLLAMA_PROBE_FAILED|version_request_failed`; no version metadata was received.
+No inference, Worker or snapshot occurred. Further local runtime diagnosis
+needs its own scoped task. R2/MVP remain OPEN.
+
+**EXP-1686 local runtime check (2026-10-21):** the pinned Ollama CLI exists
+and reports version `0.40.3`, but no process was listening on fixed loopback
+port 11434 and the CLI could not connect to an instance. No service was
+started. A separately scoped local startup/readiness experiment is still
+needed before another Worker attempt; no remote or provider action occurred.
+
+**EXP-1687 local Ollama metadata smoke (2026-10-21):** one explicitly
+loopback-bound, no-cloud Ollama process returned the pinned version and model
+digest; it was stopped after metadata validation. No inference or download
+occurred. This clears the metadata prerequisite only; the refreshed verifier
+pin still lacks a successful Worker run and remote independent-verifier evidence.
+
+**EXP-1688 local Worker attempt (2026-10-21):** one fresh run on the refreshed
+verifier pin stopped at the runner's local model preflight, despite the
+separate EXP-1687 metadata smoke matching the pinned Ollama version/digest.
+No snapshot, inference, target test, verifier request or stage was reached.
+The EXP-1688 card incorrectly expected the CLI to start Ollama; source
+inspection confirms it expects a separately running loopback service. This was
+a Control Plane card-scope error, not an established application defect. The
+card was not retried. R2/MVP remain OPEN.

@@ -616,3 +616,25 @@ the real GitHub publication path and does not establish collector completeness,
 durability against privileged modification, or independent trust. Evidence is
 from focused local tests and the batch-end offline suite; criteria 13/14 remain
 PARTIAL.
+
+## 12. Addressable metadata-only state references (EXP-1674, 2026-10-20)
+
+New pinned-Worker runs configured with the optional observer artifact store now
+write a content-addressed `observer-logical-state/v1` manifest for each atomic
+checkpoint+intent pair. It records only fixed checkpoint identifiers/cursor,
+completeness and restore mode, the separate redacted pending-action reference,
+and a fixed list of logical-state components that were not captured. The
+manifest explicitly declares `capture_mode=metadata_only` and
+`restorable=false`; it does not serialize process or model memory, workspace
+files, source contents or credentials. If either artifact write/validation
+fails, the pre-dispatch journal gate refuses the action.
+
+When the attached artifact store can resolve and read the manifest, the
+structural report emits only the fixed gap code
+`checkpoint_state_metadata_only` plus the content digest/byte count; it never
+returns manifest payloads. `completeness=partial`, `restore_mode=none`, and
+collector-coverage gaps are retained. This removes an unresolved-reference gap
+only for new runs with the optional store; historical checkpoints and reports
+remain unchanged. The feature improves addressability and explicit gap
+reporting, not state restoration, replay, collector completeness, production
+durability or trusted audit. Criteria 13/14 remain PARTIAL.

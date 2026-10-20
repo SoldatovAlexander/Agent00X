@@ -1401,11 +1401,13 @@ def _observer_report_for_cli(worker: object | None, store: object | None) -> dic
         checkpoints = read_checkpoints()
         if type(events) not in (tuple, list) or type(checkpoints) not in (tuple, list):
             raise ValueError
+        artifact_resolver = getattr(store, "artifact_store", None)
         report = build_history_report(
             list(enumerate(events)),
             list(enumerate(checkpoints)),
             run_id=reference["run_id"],
             as_of_cursor=reference["as_of_cursor"],
+            artifact_resolver=artifact_resolver,
         )
         snapshot = report.get("snapshot")
         gaps = report.get("gaps")

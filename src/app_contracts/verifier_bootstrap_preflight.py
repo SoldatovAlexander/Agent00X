@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 
@@ -22,13 +23,19 @@ from .signed_verifier_service import BRAINBOOSTER_VERIFIER_PROFILE
 MAX_BOOTSTRAP_BYTES = 8193  # Launcher emits <=8192 canonical JSON bytes plus LF.
 _ENDPOINT = "https://testdev.local/v1/verify"
 _SCHEMA = "agent00x-ephemeral-verifier-bootstrap/v1"
+_LAN_SCHEMA = "agent00x-private-lan-verifier-bootstrap/v2"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _KEY = re.compile(r"[0-9a-f]{64}\Z")
-_FIELDS = frozenset({
+_BASE_FIELDS = frozenset({
     "schema", "status", "endpoint_url", "listen_host", "connect_port",
     "tls_ca_certificate_pem", "tls_ca_sha256", "verifier_profile_digest",
     "verifier_key_id", "verifier_public_key", "verifier_public_key_sha256",
 })
+_LAN_FIELDS = _BASE_FIELDS | {"transport_mode", "allowed_peer_address"}
+_RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 
 class VerifierBootstrapPreflightError(ValueError):
@@ -43,6 +50,9 @@ class BoundPublicVerifierBootstrap:
     connect_port: int
     tls_ca_sha256: str
     verifier_public_key_sha256: str
+    listen_host: str = "127.0.0.1"
+    allowed_peer_address: str | None = None
+    transport_mode: str = "loopback"
     trust_established: bool = False
 
 
@@ -55,6 +65,11 @@ class PinnedPublicVerifierEnrollmentBootstrap:
     verifier_profile_digest: str
     verifier_key_id: str
     verifier_public_key: bytes = field(repr=False)
+    listen_host: str = "127.0.0.1"
+    allowed_peer_address: str | None = None
+    connect_port: int = 0
+    tls_ca_certificate_pem: bytes = field(default=b"", repr=False)
+    transport_mode: str = "loopback"
     trust_established: bool = False
 
 
@@ -95,17 +110,23 @@ def parse_pinned_public_verifier_bootstrap(
             object_pairs_hook=_unique_pairs,
             parse_constant=_reject_constant,
         )
+        if type(record) is not dict:
+            raise ValueError
+        schema = record.get("schema")
+        expected_fields = (
+            _BASE_FIELDS if schema == _SCHEMA
+            else _LAN_FIELDS if schema == _LAN_SCHEMA
+            else None
+        )
         if (
-            type(record) is not dict
-            or set(record) != _FIELDS
+            expected_fields is None
+            or set(record) != expected_fields
             or json.dumps(
                 record, sort_keys=True, separators=(",", ":"),
                 ensure_ascii=True, allow_nan=False,
             ).encode("ascii") != payload
-            or record["schema"] != _SCHEMA
             or record["status"] != "ready"
             or record["endpoint_url"] != _ENDPOINT
-            or record["listen_host"] != "127.0.0.1"
             or type(record["connect_port"]) is not int
             or not 1024 <= record["connect_port"] <= 65535
             or record["verifier_profile_digest"]
@@ -114,6 +135,26 @@ def parse_pinned_public_verifier_bootstrap(
             != BRAINBOOSTER_VERIFIER_PROFILE.signer_key_id
         ):
             raise ValueError
+        if schema == _SCHEMA:
+            if (
+                record["listen_host"] != "127.0.0.1"
+                or record.get("allowed_peer_address") is not None
+            ):
+                raise ValueError
+            listen_host = "127.0.0.1"
+            allowed_peer_address = None
+            transport_mode = "loopback"
+        else:
+            listen_host = record["listen_host"]
+            allowed_peer_address = record["allowed_peer_address"]
+            if (
+                record.get("transport_mode") != "private_lan"
+                or _private_lan_ipv4(listen_host) is None
+                or _private_lan_ipv4(allowed_peer_address) is None
+                or listen_host == allowed_peer_address
+            ):
+                raise ValueError
+            transport_mode = "private_lan"
         pem = record["tls_ca_certificate_pem"]
         if type(pem) is not str or not 1 <= len(pem) <= 4096:
             raise ValueError
@@ -154,6 +195,9 @@ def parse_pinned_public_verifier_bootstrap(
             connect_port=record["connect_port"],
             tls_ca_sha256=ca_digest,
             verifier_public_key_sha256=key_digest,
+            listen_host=listen_host,
+            allowed_peer_address=allowed_peer_address,
+            transport_mode=transport_mode,
         )
     except Exception:
         raise VerifierBootstrapPreflightError(
@@ -182,8 +226,34 @@ def parse_pinned_public_verifier_enrollment_bootstrap(
             verifier_profile_digest=record["verifier_profile_digest"],
             verifier_key_id=record["verifier_key_id"],
             verifier_public_key=bytes.fromhex(record["verifier_public_key"]),
+            listen_host=bound.listen_host,
+            allowed_peer_address=bound.allowed_peer_address,
+            connect_port=bound.connect_port,
+            tls_ca_certificate_pem=record["tls_ca_certificate_pem"].encode("ascii"),
+            transport_mode=bound.transport_mode,
         )
     except Exception:
         raise VerifierBootstrapPreflightError(
             "verifier bootstrap preflight: public input rejected"
         ) from None
+
+
+def _private_lan_ipv4(value: object) -> ipaddress.IPv4Address | None:
+    if type(value) is not str:
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if (
+        type(address) is not ipaddress.IPv4Address
+        or str(address) != value
+        or not any(address in network for network in _RFC1918_NETWORKS)
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_unspecified
+        or address.is_reserved
+    ):
+        return None
+    return address

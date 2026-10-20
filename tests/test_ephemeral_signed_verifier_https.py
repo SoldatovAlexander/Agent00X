@@ -30,6 +30,7 @@ from app_contracts.signed_verifier_http_service import (
     SignedVerifierHTTPService,
     create_ephemeral_verifier_tls_context,
     create_loopback_https_server,
+    create_private_lan_https_server,
 )
 from app_contracts.signed_verifier_service import BRAINBOOSTER_VERIFIER_PROFILE
 import serve_ephemeral_signed_verifier_https as launcher
@@ -37,8 +38,8 @@ from serve_ephemeral_signed_verifier_https import main
 
 
 class FakeServer:
-    def __init__(self, port: int, tls_context: object):
-        self.server_address = ("127.0.0.1", port)
+    def __init__(self, port: int, tls_context: object, bind_address="127.0.0.1"):
+        self.server_address = (bind_address, port)
         self.tls_enabled = True
         self.tls_context = tls_context
         self.timeout = None
@@ -74,6 +75,7 @@ class EphemeralVerifierBootstrapTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("--port", output.getvalue())
+        self.assertIn("--bind-address", output.getvalue())
         self.assertEqual(errors.getvalue(), "")
 
     def test_actual_help_entrypoint_has_usage_only_and_no_startup(self):
@@ -115,11 +117,15 @@ class EphemeralVerifierBootstrapTests(unittest.TestCase):
         server_holder = []
         output, errors = io.StringIO(), io.StringIO()
 
-        def make_server(service, port, context, *, request_timeout_seconds):
+        def make_server(
+            service, port, context, *, request_timeout_seconds,
+            bind_address="127.0.0.1", allowed_peer_address=None,
+        ):
             self.assertIsInstance(service, SignedVerifierHTTPService)
             self.assertIs(service._signing_key, signing_key)
             self.assertEqual(request_timeout_seconds, 30.0)
-            server = FakeServer(port, context)
+            server = FakeServer(port, context, bind_address)
+            server.allowed_peer_address = allowed_peer_address
             server_holder.append(server)
             return server
 
@@ -160,6 +166,80 @@ class EphemeralVerifierBootstrapTests(unittest.TestCase):
                 output, errors = io.StringIO(), io.StringIO()
                 code = main(
                     ["--port", port],
+                    verifier_factory=lambda: calls.append("verifier"),
+                    tls_identity_factory=lambda: calls.append("tls"),
+                    signer_factory=lambda: calls.append("signer"),
+                    stdout=output,
+                    stderr=errors,
+                )
+                self.assertEqual(code, 2)
+                self.assertEqual(calls, [])
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(
+                    errors.getvalue(),
+                    "signed verifier HTTPS service: startup or request failed\n",
+                )
+
+    def test_private_lan_mode_emits_v2_public_bootstrap_and_exact_bind_pair(self):
+        signing_key = Ed25519PrivateKey.from_private_bytes(b"l" * 32)
+        ca_certificate = b"synthetic public CA"
+        ca_digest = hashlib.sha256(ca_certificate).hexdigest()
+        verifier = service_fixtures.AcceptingVerifier(BRAINBOOSTER_VERIFIER_PROFILE)
+        captured = {}
+
+        def make_server(
+            service, port, context, *, request_timeout_seconds,
+            bind_address, allowed_peer_address,
+        ):
+            captured.update(
+                bind_address=bind_address,
+                allowed_peer_address=allowed_peer_address,
+                timeout=request_timeout_seconds,
+            )
+            server = FakeServer(49_153, context, bind_address)
+            server.allowed_peer_address = allowed_peer_address
+            return server
+
+        output, errors = io.StringIO(), io.StringIO()
+        code = main(
+            [
+                "--port", "0",
+                "--bind-address", "192.168.88.101",
+                "--allowed-peer-address", "192.168.88.5",
+            ],
+            verifier_factory=lambda: verifier,
+            tls_identity_factory=lambda: (object(), ca_certificate, ca_digest),
+            signer_factory=lambda: signing_key,
+            server_factory=make_server,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(code, 0, errors.getvalue())
+        record = json.loads(output.getvalue())
+        self.assertEqual(record["schema"], "agent00x-private-lan-verifier-bootstrap/v2")
+        self.assertEqual(record["transport_mode"], "private_lan")
+        self.assertEqual(record["listen_host"], "192.168.88.101")
+        self.assertEqual(record["allowed_peer_address"], "192.168.88.5")
+        self.assertEqual(record["connect_port"], 49_153)
+        self.assertEqual(captured["bind_address"], "192.168.88.101")
+        self.assertEqual(captured["allowed_peer_address"], "192.168.88.5")
+        self.assertEqual(captured["timeout"], 30.0)
+        self.assertEqual(errors.getvalue(), "")
+
+    def test_invalid_private_lan_arguments_stop_before_key_or_verifier_creation(self):
+        invalid_arguments = (
+            ["--port", "0", "--bind-address", "0.0.0.0", "--allowed-peer-address", "192.168.88.5"],
+            ["--port", "0", "--bind-address", "8.8.8.8", "--allowed-peer-address", "192.168.88.5"],
+            ["--port", "0", "--bind-address", "192.168.88.101"],
+            ["--port", "0", "--bind-address", "192.168.88.101", "--allowed-peer-address", "192.168.88.101"],
+            ["--port", "0", "--allowed-peer-address", "192.168.88.5"],
+        )
+        for arguments in invalid_arguments:
+            with self.subTest(arguments=arguments):
+                calls = []
+                output, errors = io.StringIO(), io.StringIO()
+                code = main(
+                    arguments,
                     verifier_factory=lambda: calls.append("verifier"),
                     tls_identity_factory=lambda: calls.append("tls"),
                     signer_factory=lambda: calls.append("signer"),

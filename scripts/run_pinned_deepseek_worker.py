@@ -68,6 +68,10 @@ from app_contracts.github_http_transport import (  # noqa: E402
     GitHubHTTPTransportError,
 )
 from app_contracts.observation_store import SQLiteObservationStore  # noqa: E402
+from app_contracts.observer_artifact_store import SQLiteObserverArtifactStore  # noqa: E402
+from app_contracts.observer_checkpoint_artifacts import (  # noqa: E402
+    ArtifactCapturingObservationStore,
+)
 from app_contracts.observer_runtime import (  # noqa: E402
     JournaledModelChannel,
     JournaledProposalWorker,
@@ -262,6 +266,21 @@ AUTHORIZATION_PROFILES = {
         "process-exp-1662-local-001",
         "task-exp-1662-local-001",
     ),
+    "EXP-1684": (
+        "RUN EXP-1684 ONCE",
+        "process-exp-1684-local-001",
+        "task-exp-1684-local-001",
+    ),
+    "EXP-1688": (
+        "RUN EXP-1688 ONCE",
+        "process-exp-1688-local-001",
+        "task-exp-1688-local-001",
+    ),
+    "EXP-1689": (
+        "RUN EXP-1689 ONCE",
+        "process-exp-1689-local-001",
+        "task-exp-1689-local-001",
+    ),
 }
 AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-634": "github_rest_api_claim",
@@ -298,6 +317,9 @@ AUTHORIZATION_SNAPSHOT_ORIGINS = {
     "EXP-1645": "github_rest_api_claim",
     "EXP-1647": "github_rest_api_claim",
     "EXP-1662": "github_rest_api_claim",
+    "EXP-1684": "github_rest_api_claim",
+    "EXP-1688": "github_rest_api_claim",
+    "EXP-1689": "github_rest_api_claim",
 }
 AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-634": "deepseek",
@@ -334,6 +356,9 @@ AUTHORIZATION_MODEL_BACKENDS = {
     "EXP-1645": "local-ollama",
     "EXP-1647": "local-ollama",
     "EXP-1662": "local-ollama",
+    "EXP-1684": "local-ollama",
+    "EXP-1688": "local-ollama",
+    "EXP-1689": "local-ollama",
 }
 TASK_INSTRUCTION = (
     "In backend/routes.py change only /save-session. Preserve its existing "
@@ -412,6 +437,36 @@ def _validate_new_observation_path(value: str | Path) -> Path:
         raise ValueError(
             "pinned Worker CLI: observation journal path is unavailable"
         ) from None
+
+
+def _validate_new_artifact_path(value: str | Path) -> Path:
+    try:
+        path = Path(value)
+        if (
+            not path.is_absolute()
+            or path == Path(path.anchor)
+            or ".." in path.parts
+            or path.is_symlink()
+            or path.exists()
+            or path.parent.is_symlink()
+            or not path.parent.is_dir()
+        ):
+            raise ValueError
+        return path
+    except Exception:
+        raise ValueError(
+            "pinned Worker CLI: observer artifact path is unavailable"
+        ) from None
+
+
+def _open_private_artifact_store(path: Path) -> SQLiteObserverArtifactStore:
+    """Create the new artifact database under a restrictive process umask."""
+
+    previous_umask = os.umask(0o077)
+    try:
+        return SQLiteObserverArtifactStore(path)
+    finally:
+        os.umask(previous_umask)
 
 
 def _preflight_docker_images(
@@ -608,6 +663,10 @@ def main(
         help="optional new absolute SQLite journal for bounded Worker-call evidence",
     )
     parser.add_argument(
+        "--observer-artifact-database",
+        help="new private SQLite store for bounded content-addressed checkpoint metadata; requires --observation-database",
+    )
+    parser.add_argument(
         "--check-credential-source",
         action="store_true",
         help="report only whether AI_PROCESS_API is present; do not run the worker",
@@ -706,6 +765,7 @@ def main(
         if (
             args.stage_database is not None
             or args.observation_database is not None
+            or args.observer_artifact_database is not None
             or args.credential_source == "hidden-terminal"
         ):
             print(
@@ -758,6 +818,23 @@ def main(
             if args.observation_database is not None
             else None
         )
+        if args.observer_artifact_database is not None and observation_path is None:
+            raise ValueError(
+                "pinned Worker CLI: artifact database requires an observation journal"
+            )
+        artifact_path = (
+            _validate_new_artifact_path(args.observer_artifact_database)
+            if args.observer_artifact_database is not None
+            else None
+        )
+        selected_paths = [stage_path]
+        if observation_path is not None:
+            selected_paths.append(observation_path)
+        if artifact_path is not None:
+            selected_paths.append(artifact_path)
+        resolved_paths = [path.resolve(strict=False) for path in selected_paths]
+        if len(set(resolved_paths)) != len(resolved_paths):
+            raise ValueError("pinned Worker CLI: database paths must be distinct")
         docker_executable = find_docker("docker")
         if type(docker_executable) is not str or not docker_executable:
             raise ValueError("pinned Worker CLI: Docker is unavailable")
@@ -871,6 +948,11 @@ def main(
                     if observation_path is not None
                     else {}
                 ),
+                **(
+                    {"observer_artifact_database": str(artifact_path)}
+                    if artifact_path is not None
+                    else {}
+                ),
             },
             ensure_ascii=False,
             allow_nan=False,
@@ -915,10 +997,18 @@ def main(
             return 2
 
     observation_store = None
+    artifact_store = None
     execution_worker = None
     if observation_path is not None:
         try:
-            observation_store = SQLiteObservationStore(observation_path)
+            journal_store = SQLiteObservationStore(observation_path)
+            if artifact_path is not None:
+                artifact_store = _open_private_artifact_store(artifact_path)
+                observation_store = ArtifactCapturingObservationStore(
+                    journal_store, artifact_store
+                )
+            else:
+                observation_store = journal_store
             execution_worker = JournaledProposalWorker(
                 proposal_worker,
                 observation_store,
@@ -930,6 +1020,10 @@ def main(
         except Exception:
             if observation_store is not None:
                 observation_store.close()
+            elif "journal_store" in locals():
+                journal_store.close()
+            if artifact_store is not None:
+                artifact_store.close()
             print(
                 '{"status":"stopped","reason":"observation-journal-unavailable",'
                 '"provider_attempts":0}',
@@ -1153,6 +1247,8 @@ def main(
     finally:
         if observation_store is not None:
             observation_store.close()
+        if artifact_store is not None:
+            artifact_store.close()
 
 
 if __name__ == "__main__":

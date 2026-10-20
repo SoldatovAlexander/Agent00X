@@ -5,12 +5,13 @@ code digest from depending on its own image/code pin values.
 """
 
 VERIFIER_RUNTIME_IMAGE_ID = (
-    "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0"
+    "sha256:a68ce6da5d5884809d7db627868ec168c4618badf3ebbf709f5d672fcfdca8ad"
 )
-# EXP-1658 validated this portable manifest and OCI config digest against the
-# local containerd-backed image store. This does not establish remote import.
+# EXP-1682 validated this portable manifest and config digest from the current
+# local verifier context; EXP-1683 confirmed the exact local tag tuple. This
+# does not establish remote import or deployment.
 VERIFIER_RUNTIME_CONFIG_IMAGE_ID = (
-    "sha256:d65ca82a1d944f76b7c86163f4f3bcd0c4b4e3c603ce5005e510fcb86ee73c42"
+    "sha256:bbae0284355b7b3937a07f5a20ed7d003686aac09a1438bf0a57274bc6aa9469"
 )
 VERIFIER_RUNTIME_CODE_DIGEST = (
     "sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f"

@@ -448,6 +448,26 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
                     ):
                         cli._validate_new_observation_path(invalid)
 
+    def test_observer_artifact_database_path_is_new_absolute_and_private(self):
+        with tempfile.TemporaryDirectory(prefix="pinned-worker-artifact-path-") as root:
+            database = Path(root) / "artifacts.sqlite3"
+            self.assertEqual(cli._validate_new_artifact_path(database), database)
+            store = cli._open_private_artifact_store(database)
+            store.close()
+            self.assertEqual(database.stat().st_mode & 0o777, 0o600)
+
+            existing = Path(root) / "existing.sqlite3"
+            existing.touch()
+            link = Path(root) / "artifact-link.sqlite3"
+            link.symlink_to(existing)
+            for invalid in (Path("relative.sqlite3"), Path(root), existing, link):
+                with self.subTest(path=str(invalid)):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "^pinned Worker CLI: observer artifact path is unavailable$",
+                    ):
+                        cli._validate_new_artifact_path(invalid)
+
     def test_observer_store_is_opened_only_after_confirmation_and_passed_to_runtime(self):
         transport = ValidReadinessTransport(fresh_readiness())
         captured = {}
@@ -881,7 +901,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertIsInstance(captured["verifier_config"], cli.VerifierContainerConfig)
         self.assertEqual(
             captured["verifier_config"].runtime_image_id,
-            "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0",
+            "sha256:a68ce6da5d5884809d7db627868ec168c4618badf3ebbf709f5d672fcfdca8ad",
         )
         self.assertEqual(
             captured["verifier_config"].verifier_code_digest,
@@ -1013,7 +1033,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(
             [call[-1] for call in calls],
-            [cli.TARGET_RUNTIME_IMAGE_ID, "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0"],
+            [cli.TARGET_RUNTIME_IMAGE_ID, "sha256:a68ce6da5d5884809d7db627868ec168c4618badf3ebbf709f5d672fcfdca8ad"],
         )
         self.assertTrue(
             all(
@@ -1947,7 +1967,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         )
         self.assertEqual(
             cli.VERIFIER_RUNTIME_IMAGE_ID,
-            "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0",
+            "sha256:a68ce6da5d5884809d7db627868ec168c4618badf3ebbf709f5d672fcfdca8ad",
         )
 
     def test_exp1643_uses_local_profile_without_constructing_credentials(self):
@@ -1995,7 +2015,7 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
             "EXP-1647"
         )
 
-    def test_exp1662_is_a_fresh_one_shot_for_the_current_verifier_pin(self):
+    def test_exp1662_profile_identity_is_separate_from_current_image_pin(self):
         self.assertEqual(
             cli.AUTHORIZATION_PROFILES["EXP-1662"],
             (
@@ -2011,16 +2031,68 @@ class PinnedDeepSeekWorkerCliTests(unittest.TestCase):
         self.assertEqual(
             cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1662"], "local-ollama"
         )
-        self.assertEqual(
-            cli.VERIFIER_RUNTIME_IMAGE_ID,
-            "sha256:228e703737010ccc001b5d784f35711ca49a00e3af4be5f0a8fcdd2fe06350a0",
-        )
-        self.assertEqual(
-            cli.VERIFIER_RUNTIME_CODE_DIGEST,
-            "sha256:36f4f81cd98355665992fd9feb0f8ac4f3a6807b2ffb1b332956b694e9031d5f",
-        )
         self._assert_local_profile_uses_container_without_constructing_credentials(
             "EXP-1662"
+        )
+
+    def test_exp1684_is_a_fresh_credential_free_profile_for_the_current_pin(self):
+        self.assertEqual(
+            cli.AUTHORIZATION_PROFILES["EXP-1684"],
+            (
+                "RUN EXP-1684 ONCE",
+                "process-exp-1684-local-001",
+                "task-exp-1684-local-001",
+            ),
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_SNAPSHOT_ORIGINS["EXP-1684"],
+            "github_rest_api_claim",
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1684"], "local-ollama"
+        )
+        self._assert_local_profile_uses_container_without_constructing_credentials(
+            "EXP-1684"
+        )
+
+    def test_exp1688_is_a_distinct_fresh_profile_after_model_readiness_probe(self):
+        self.assertEqual(
+            cli.AUTHORIZATION_PROFILES["EXP-1688"],
+            (
+                "RUN EXP-1688 ONCE",
+                "process-exp-1688-local-001",
+                "task-exp-1688-local-001",
+            ),
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_SNAPSHOT_ORIGINS["EXP-1688"],
+            "github_rest_api_claim",
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1688"], "local-ollama"
+        )
+        self._assert_local_profile_uses_container_without_constructing_credentials(
+            "EXP-1688"
+        )
+
+    def test_exp1689_profile_uses_separately_managed_local_ollama(self):
+        self.assertEqual(
+            cli.AUTHORIZATION_PROFILES["EXP-1689"],
+            (
+                "RUN EXP-1689 ONCE",
+                "process-exp-1689-local-001",
+                "task-exp-1689-local-001",
+            ),
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_SNAPSHOT_ORIGINS["EXP-1689"],
+            "github_rest_api_claim",
+        )
+        self.assertEqual(
+            cli.AUTHORIZATION_MODEL_BACKENDS["EXP-1689"], "local-ollama"
+        )
+        self._assert_local_profile_uses_container_without_constructing_credentials(
+            "EXP-1689"
         )
 
     def test_model_backend_card_mismatches_stop_before_all_side_effects(self):

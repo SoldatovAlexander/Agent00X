@@ -73,6 +73,9 @@ def main(argv: list[str] | None = None, *, stdout=None, stderr=None) -> int:
         return 2
     output.write(
         "BOOTSTRAP_PIN_CONFIRMED"
+        f"|mode={bound.transport_mode}"
+        f"|listen={bound.listen_host}"
+        f"|peer={bound.allowed_peer_address or 'none'}"
         f"|port={bound.connect_port}"
         f"|ca={bound.tls_ca_sha256}"
         f"|signer={bound.verifier_public_key_sha256}"

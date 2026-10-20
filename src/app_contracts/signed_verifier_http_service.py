@@ -1,9 +1,8 @@
 """Fixed one-shot HTTP adapter for the signed verifier service.
 
-This service binds only to loopback. A separately governed reverse proxy must
-provide TLS termination and caller access control before any remote use. The
-HTTP adapter itself does not authenticate callers or establish independent
-host trust.
+Loopback is the default. An explicit private-LAN mode can bind to one RFC1918
+address and admit one exact peer address, but source-IP filtering does not
+authenticate callers or establish independent host trust.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import ipaddress
 import math
 import os
 import re
@@ -50,6 +50,10 @@ _REJECTED_BODY = b'{"error":"request_rejected"}'
 _UNAVAILABLE_BODY = b'{"error":"verifier_unavailable"}'
 _EPHEMERAL_TLS_DNS_NAME = "testdev.local"
 _MAX_EPHEMERAL_TLS_MATERIAL_BYTES = 65_536
+_RFC1918_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
 
 
 @dataclass(frozen=True)
@@ -279,7 +283,79 @@ def create_loopback_http_server(
     request_timeout_seconds: float = 30.0,
 ) -> HTTPServer:
     """Bind a single-request HTTP server only to IPv4 loopback."""
+    return _create_single_request_http_server(
+        service,
+        port,
+        bind_host="127.0.0.1",
+        allowed_peer_address=None,
+        request_timeout_seconds=request_timeout_seconds,
+    )
 
+
+def create_private_lan_http_server(
+    service: SignedVerifierHTTPService,
+    port: int,
+    *,
+    bind_address: str,
+    allowed_peer_address: str,
+    request_timeout_seconds: float = 30.0,
+) -> HTTPServer:
+    """Bind one request to an explicit RFC1918 IPv4 address/peer pair.
+
+    Source-IP filtering is only an access-control boundary. It does not
+    authenticate the peer or establish verifier-host trust.
+    """
+    if (
+        _private_lan_ipv4(bind_address) is None
+        or _private_lan_ipv4(allowed_peer_address) is None
+        or bind_address == allowed_peer_address
+    ):
+        raise SignedVerifierServiceError(
+            "signed verifier HTTP service: server configuration rejected"
+        )
+    return _create_single_request_http_server(
+        service,
+        port,
+        bind_host=bind_address,
+        allowed_peer_address=allowed_peer_address,
+        request_timeout_seconds=request_timeout_seconds,
+    )
+
+
+def _private_lan_ipv4(value: object) -> ipaddress.IPv4Address | None:
+    if type(value) is not str:
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if (
+        type(address) is not ipaddress.IPv4Address
+        or str(address) != value
+        or not any(address in network for network in _RFC1918_NETWORKS)
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_unspecified
+        or address.is_reserved
+    ):
+        return None
+    return address
+
+
+def is_private_lan_ipv4(value: object) -> bool:
+    """Return whether value is a canonical RFC1918 IPv4 literal."""
+    return _private_lan_ipv4(value) is not None
+
+
+def _create_single_request_http_server(
+    service: SignedVerifierHTTPService,
+    port: int,
+    *,
+    bind_host: str,
+    allowed_peer_address: str | None,
+    request_timeout_seconds: float,
+) -> HTTPServer:
     try:
         timeout_valid = (
             type(request_timeout_seconds) in {int, float}
@@ -300,6 +376,16 @@ def create_loopback_http_server(
 
     class Server(HTTPServer):
         allow_reuse_address = False
+
+        def verify_request(self, _request, client_address):
+            if allowed_peer_address is None:
+                return True
+            return (
+                type(client_address) in {tuple, list}
+                and len(client_address) >= 1
+                and type(client_address[0]) is str
+                and client_address[0] == allowed_peer_address
+            )
 
         def get_request(self):
             connection, address = super().get_request()
@@ -357,9 +443,10 @@ def create_loopback_http_server(
             return
 
     try:
-        server = Server(("127.0.0.1", port), Handler)
+        server = Server((bind_host, port), Handler)
         server.timeout = float(request_timeout_seconds)
         server.last_response_status = None
+        server.allowed_peer_address = allowed_peer_address
         return server
     except Exception:
         raise SignedVerifierServiceError(
@@ -387,6 +474,45 @@ def create_loopback_https_server(
 
     server = create_loopback_http_server(
         service, port, request_timeout_seconds=request_timeout_seconds
+    )
+    try:
+        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+        server.tls_enabled = True
+        return server
+    except Exception:
+        try:
+            server.server_close()
+        except Exception:
+            pass
+        raise SignedVerifierServiceError(
+            "signed verifier HTTPS service: server unavailable"
+        ) from None
+
+
+def create_private_lan_https_server(
+    service: SignedVerifierHTTPService,
+    port: int,
+    tls_context: ssl.SSLContext,
+    *,
+    bind_address: str,
+    allowed_peer_address: str,
+    request_timeout_seconds: float = 30.0,
+) -> HTTPServer:
+    """Serve one TLS request on an exact private-LAN address/peer pair."""
+    if (
+        type(tls_context) is not ssl.SSLContext
+        or tls_context.protocol != ssl.PROTOCOL_TLS_SERVER
+        or tls_context.minimum_version < ssl.TLSVersion.TLSv1_2
+    ):
+        raise SignedVerifierServiceError(
+            "signed verifier HTTPS service: TLS configuration rejected"
+        )
+    server = create_private_lan_http_server(
+        service,
+        port,
+        bind_address=bind_address,
+        allowed_peer_address=allowed_peer_address,
+        request_timeout_seconds=request_timeout_seconds,
     )
     try:
         server.socket = tls_context.wrap_socket(server.socket, server_side=True)

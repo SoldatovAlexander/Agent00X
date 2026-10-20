@@ -512,8 +512,10 @@ def build_history_report(
     for _, checkpoint in selected_checkpoints:
         safe_checkpoint_refs: dict[str, list[str]] = {}
         checkpoint_refs: list[str] = []
+        state_reference = checkpoint.get("state_ref")
         invalid_reference = False
         unresolved_reference = False
+        state_manifest_metadata_only = False
         for field in checkpoint_reference_fields:
             if field not in checkpoint:
                 continue
@@ -545,33 +547,50 @@ def build_history_report(
             ):
                 unresolved_reference = True
                 continue
-            if artifact_ref in resolved_artifacts:
-                continue
-            if cutoff is not None:
-                unresolved_reference = True
-                temporally_unverified_event_ids.add(checkpoint["trigger_event_id"])
-                continue
-            if artifact_resolver is None:
-                unresolved_reference = True
-                continue
-            if len(resolved_artifacts) >= MAX_ARTIFACT_REFERENCES:
-                raise HistoryReportError(
-                    "history report: artifact reference limit exceeded"
-                )
-            try:
-                resolution = artifact_resolver.resolve(artifact_ref)
-                if (
-                    type(resolution) is not ArtifactResolution
-                    or resolution.artifact_ref != artifact_ref
-                    or type(resolution.content_digest) is not str
-                    or re.fullmatch(r"sha256:[0-9a-f]{64}", resolution.content_digest) is None
-                    or type(resolution.content_bytes) is not int
-                    or not 0 < resolution.content_bytes <= MAX_RECORD_BYTES
-                ):
-                    raise ValueError
-                resolved_artifacts[artifact_ref] = resolution
-            except Exception:
-                unresolved_reference = True
+            if artifact_ref not in resolved_artifacts:
+                if cutoff is not None:
+                    unresolved_reference = True
+                    temporally_unverified_event_ids.add(checkpoint["trigger_event_id"])
+                    continue
+                if artifact_resolver is None:
+                    unresolved_reference = True
+                    continue
+                if len(resolved_artifacts) >= MAX_ARTIFACT_REFERENCES:
+                    raise HistoryReportError(
+                        "history report: artifact reference limit exceeded"
+                    )
+                try:
+                    resolution = artifact_resolver.resolve(artifact_ref)
+                    if (
+                        type(resolution) is not ArtifactResolution
+                        or resolution.artifact_ref != artifact_ref
+                        or type(resolution.content_digest) is not str
+                        or re.fullmatch(r"sha256:[0-9a-f]{64}", resolution.content_digest) is None
+                        or type(resolution.content_bytes) is not int
+                        or not 0 < resolution.content_bytes <= MAX_RECORD_BYTES
+                    ):
+                        raise ValueError
+                    resolved_artifacts[artifact_ref] = resolution
+                except Exception:
+                    unresolved_reference = True
+                    continue
+            if artifact_ref == state_reference and artifact_resolver is not None:
+                read_json = getattr(artifact_resolver, "read_json", None)
+                if callable(read_json):
+                    try:
+                        state_manifest = json.loads(read_json(artifact_ref))
+                        state_manifest_metadata_only = (
+                            type(state_manifest) is dict
+                            and state_manifest.get("schema")
+                            == "observer-logical-state/v1"
+                            and state_manifest.get("scope")
+                            == "checkpoint-metadata-only"
+                            and state_manifest.get("capture_mode")
+                            == "metadata_only"
+                            and state_manifest.get("restorable") is False
+                        )
+                    except Exception:
+                        state_manifest_metadata_only = False
 
         if invalid_reference:
             gaps.append(
@@ -585,6 +604,14 @@ def build_history_report(
             gaps.append(
                 {
                     "code": "artifact_content_unresolved",
+                    "event_ids": [checkpoint["trigger_event_id"]],
+                    "checkpoint_ids": [checkpoint["checkpoint_id"]],
+                }
+            )
+        if state_manifest_metadata_only:
+            gaps.append(
+                {
+                    "code": "checkpoint_state_metadata_only",
                     "event_ids": [checkpoint["trigger_event_id"]],
                     "checkpoint_ids": [checkpoint["checkpoint_id"]],
                 }

@@ -22,6 +22,7 @@ from app_contracts.signed_verifier_service import BRAINBOOSTER_VERIFIER_PROFILE
 from app_contracts.verifier_bootstrap_preflight import (
     VerifierBootstrapPreflightError,
     parse_pinned_public_verifier_bootstrap,
+    parse_pinned_public_verifier_enrollment_bootstrap,
 )
 from inspect_pinned_verifier_bootstrap import main
 import serve_ephemeral_signed_verifier_https as launcher
@@ -114,6 +115,78 @@ class VerifierBootstrapPreflightTests(unittest.TestCase):
         self.assertEqual(bound.connect_port, 49153)
         self.assertFalse(bound.trust_established)
 
+    def test_private_lan_v2_bootstrap_is_explicit_bound_and_untrusted(self):
+        signer = ed25519.Ed25519PrivateKey.from_private_bytes(b"5" * 32)
+        raw = launcher._serialize_public_bootstrap(
+            port=49154,
+            ca_certificate_pem=self.ca,
+            ca_sha256=hashlib.sha256(self.ca).hexdigest(),
+            signing_key=signer,
+            listen_host="192.168.88.101",
+            allowed_peer_address="192.168.88.5",
+        ) + b"\n"
+        bound = self._parse(raw)
+        self.assertEqual(bound.transport_mode, "private_lan")
+        self.assertEqual(bound.listen_host, "192.168.88.101")
+        self.assertEqual(bound.allowed_peer_address, "192.168.88.5")
+        self.assertEqual(bound.connect_port, 49154)
+        self.assertFalse(bound.trust_established)
+
+        enrollment = parse_pinned_public_verifier_enrollment_bootstrap(
+            raw,
+            expected_sha256="sha256:" + hashlib.sha256(raw).hexdigest(),
+        )
+        self.assertEqual(enrollment.endpoint_url, "https://testdev.local/v1/verify")
+        self.assertEqual(enrollment.verifier_public_key, signer.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        ))
+        self.assertEqual(enrollment.tls_ca_certificate_pem, self.ca)
+        self.assertEqual(enrollment.transport_mode, "private_lan")
+        self.assertFalse(enrollment.trust_established)
+        with tempfile.TemporaryDirectory(prefix="private-lan-bootstrap-") as root:
+            source = Path(root) / "bootstrap.json"
+            source.write_bytes(raw)
+            digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+            output, errors = io.StringIO(), io.StringIO()
+            code = main(
+                [str(source), "--expected-sha256", digest],
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(code, 0, errors.getvalue())
+            self.assertIn(
+                "BOOTSTRAP_PIN_CONFIRMED|mode=private_lan|listen=192.168.88.101|peer=192.168.88.5|port=49154",
+                output.getvalue(),
+            )
+            self.assertNotIn(self.ca.decode("ascii"), output.getvalue())
+            self.assertNotIn(signer.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            ).hex(), output.getvalue())
+
+    def test_private_lan_v2_rejects_invalid_transport_and_addresses(self):
+        signer = ed25519.Ed25519PrivateKey.from_private_bytes(b"6" * 32)
+        raw = launcher._serialize_public_bootstrap(
+            port=49155,
+            ca_certificate_pem=self.ca,
+            ca_sha256=hashlib.sha256(self.ca).hexdigest(),
+            signing_key=signer,
+            listen_host="192.168.88.101",
+            allowed_peer_address="192.168.88.5",
+        )
+        record = json.loads(raw)
+        for field, value in (
+            ("transport_mode", "ssh_forward"),
+            ("listen_host", "0.0.0.0"),
+            ("listen_host", "8.8.8.8"),
+            ("allowed_peer_address", "127.0.0.1"),
+            ("allowed_peer_address", "192.168.88.101"),
+        ):
+            with self.subTest(field=field, value=value):
+                changed = dict(record)
+                changed[field] = value
+                with self.assertRaises(VerifierBootstrapPreflightError):
+                    self._parse(self._encoded(changed))
+
     def test_digest_mismatch_and_noncanonical_json_are_rejected(self):
         raw = self._encoded()
         with self.assertRaises(VerifierBootstrapPreflightError):
@@ -168,7 +241,10 @@ class VerifierBootstrapPreflightTests(unittest.TestCase):
             output, errors = io.StringIO(), io.StringIO()
             code = main([str(source), "--expected-sha256", digest], stdout=output, stderr=errors)
             self.assertEqual(code, 0, errors.getvalue())
-            self.assertIn("BOOTSTRAP_PIN_CONFIRMED|port=49152", output.getvalue())
+            self.assertIn(
+                "BOOTSTRAP_PIN_CONFIRMED|mode=loopback|listen=127.0.0.1|peer=none|port=49152",
+                output.getvalue(),
+            )
             self.assertIn("|trust=unestablished\n", output.getvalue())
             self.assertNotIn(self.ca.decode("ascii"), output.getvalue())
             self.assertNotIn(self.public_key.hex(), output.getvalue())

@@ -24,3 +24,12 @@ Worker-wrapper code/tests from this work were committed and pushed as
 `9aa8afa`; this report is intended as a narrow follow-up record. The wider
 working tree remains dirty, so unrelated changes are excluded from this
 commit.
+
+EXP-3094 then generated a Git-native diff from the exact stored base and
+verified file in isolated temporary repositories. One `git apply --check`
+and apply succeeded, and the resulting bytes matched the verified artifact.
+Generated patch digest:
+`sha256:98d2943a2c1aea98b0f654f766551a60cb9146135eb12230f20050bc9262a0a6`.
+The temporary repositories were removed; this did not modify the actual
+brainbooster checkout or its stage record. The final full offline suite passed
+2,976 tests with 27 skipped (117.885 s), and `git diff --check` passed.
